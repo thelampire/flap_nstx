@@ -113,6 +113,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                    plot_scatter=False,
                                                    plot_for_publication=True,
                                                    gaussian_blur=gaussian_blur,
+                                                   sigma_low=2,
                                                    calculate_half_fft=False,
                                                    test_into_pdf=True,
                                                    return_results=True,
@@ -126,7 +127,7 @@ def plot_results_for_pop_2022(plot_figure=2,
         result=calculate_nstx_gpi_angular_velocity(exp_id=141319,
                                                    time_range=[0.5524,0.5526],
                                                    normalize='roundtrip',
-                                                   normalize_for_velocity=True,
+                                                   normalize_for_velocity=False,
                                                    plot=False,
                                                    pdf=True,
                                                    nocalc=False,
@@ -175,39 +176,42 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                       velocity_base='cog',
                                                       return_results=True,
                                                       plot_gas=False,
-                                                      structure_pixel_calc=False,
+                                                      structure_pixel_calc=True,
                                                       structure_pdf_save=False,
                                                       test_structures=False,
                                                       save_data_for_publication=False,)
-
+        coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
+        coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
         ind_start=np.argmin(np.abs(str_fitting['Time']-(0.552500-6*2.5e-6)))
         overplot_points=np.zeros([3,3,2])
 
         for ind_y in range(3):
             for ind_x in range(3):
-                overplot_points[ind_x,ind_y,:]=str_fitting['COG max'][ind_start+ind_y*3+ind_x,:]
+                overplot_points[ind_y,ind_x,0]=str_fitting['Position max'][ind_start+ind_y*3+ind_x,0]*3.75e-3+1402.8097e-3
+                overplot_points[ind_y,ind_x,1]=str_fitting['Position max'][ind_start+ind_y*3+ind_x,1]*3.75e-3+70.544312e-3
                 print(str_fitting['Time'][ind_start+ind_y*3+ind_x])
+        print(overplot_points)
         show_nstx_gpi_video_frames(exp_id=141319,
-                                        start_time=0.552500-6*2.5e-6,
-                                        n_frame=9,
-                                        logz=False,
-                                        z_range=[0,3900],
-                                        plot_filtered=False,
-                                        normalize=False,
-                                        cache_data=False,
-                                        plot_flux=False,
-                                        plot_separatrix=True,
-                                        flux_coordinates=False,
-                                        device_coordinates=True,
-                                        new_plot=False,
-                                        save_pdf=True,
-                                        colormap='gist_ncar',
-                                        save_for_paraview=False,
-                                        colorbar_visibility=False,
-                                        save_data_for_publication=True,
-                                        data_filename=wd+fig_dir+'/data_accessibility/fig_1413190.552500_9_frame.txt',
-                                        overplot_points=overplot_points
-                                        )
+                                   start_time=0.552500-6*2.5e-6,
+                                   n_frame=9,
+                                   logz=False,
+                                   z_range=[0,3900],
+                                   plot_filtered=False,
+                                   normalize=False,
+                                   cache_data=False,
+                                   plot_flux=False,
+                                   plot_separatrix=True,
+                                   flux_coordinates=False,
+                                   device_coordinates=True,
+                                   new_plot=False,
+                                   save_pdf=True,
+                                   colormap='gist_ncar',
+                                   save_for_paraview=False,
+                                   colorbar_visibility=False,
+                                   save_data_for_publication=True,
+                                   data_filename=wd+fig_dir+'/data_accessibility/fig_1413190.552500_9_frame.txt',
+                                   overplot_points=overplot_points,
+                                   )
 
         pdf.savefig()
         pdf.close()
@@ -270,7 +274,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                       nlevel=51,
                                                       nocalc=True,
                                                       filter_level=5,
-                                                      normalize_for_size=False,
+                                                      normalize_for_size=True,
                                                       normalize_for_velocity=True,
                                                       threshold_coeff=1.,
                                                       normalize_f_high=1e3,
@@ -278,7 +282,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                       velocity_base='cog',
                                                       return_results=True,
                                                       plot_gas=False,
-                                                      structure_pixel_calc=True,
+                                                      structure_pixel_calc=False,
                                                       structure_pdf_save=False,
                                                       test_structures=False,
                                                       save_data_for_publication=False,
@@ -735,9 +739,9 @@ def plot_results_for_pop_2022(plot_figure=2,
             ax.set_title('Median '+y_vector[key]['ylabel']+' evolution')
             ax.set_xlabel('$t-t_{ELM}$ [$\mu$s]')
             ax.set_ylabel(y_vector[key]['ylabel']+' ['+y_vector[key]['unit']+']')
-            ax.set_xlim([-500,500])
+            ax.set_xlim([-200,200])
             ax.xaxis.set_major_locator(MaxNLocator(5))
-            ax.set_xticks(ticks=[-500,-250,0,250,500])
+            ax.set_xticks(ticks=[-200,-100,0,100,200])
             ax.yaxis.set_major_locator(MaxNLocator(5))
             ax.text(-0.5, 1.2, corner_text, transform=ax.transAxes, size=9)
         plt.tight_layout(pad=0.1)
