@@ -72,7 +72,7 @@ class NoobError(Exception):
 
 def plot_results_for_pop_2022(plot_figure=2,
                               plot_all=False,
-                              save_data_into_txt=False,
+                              save_data_into_txt=True,
                               gaussian_blur=True,
                               subtraction_order=2,
                               flap_or_skim='FLAP',
@@ -82,8 +82,14 @@ def plot_results_for_pop_2022(plot_figure=2,
     if plot_all:
         plot_figure=-1
         for i in range(12):
-            plot_results_for_pop_2022(plot_figure=i,
-                                      save_data_into_txt=save_data_into_txt)
+            try:
+                plot_results_for_pop_2022(plot_figure=i,
+                                          gaussian_blur=gaussian_blur,
+                                          subtraction_order=subtraction_order,
+                                          flap_or_skim=flap_or_skim,
+                                          save_data_into_txt=save_data_into_txt)
+            except:
+                print('Figure '+str(i)+' couldn\'t be plotted')
 
 
     """
@@ -120,7 +126,7 @@ def plot_results_for_pop_2022(plot_figure=2,
 
                                                    subtraction_order_for_velocity=subtraction_order,
                                                    sample_to_plot=[20873,20874],
-                                                   save_data_for_publication=True,
+                                                   save_data_for_publication=save_data_into_txt,
                                                    data_filename=wd+fig_dir+'/data_accessibility/fig_34')
 
     if plot_figure == 4:
@@ -140,19 +146,13 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                    plot_ccf=True,
                                                    subtraction_order_for_velocity=subtraction_order,
                                                    sample_to_plot=[20874],
-                                                   save_data_for_publication=True,
+                                                   save_data_for_publication=save_data_into_txt,
                                                    data_filename=wd+fig_dir+'/data_accessibility/fig_34')
-    """
-    Flowchart of the Fourier Mellin based method
-    """
-    if plot_figure == 5:
-        print('This is the flowchart figure, no need to plot.')
-
 
     """
     Example set of subsequent frames clearly exhibiting rotation
     """
-    if plot_figure == 6:
+    if plot_figure == 5:
         plt.figure()
         ax,fig=plt.subplots(figsize=(3.35*2,5.5))
         pdf=PdfPages(wd+fig_dir+'/fig_1413190.552500_9_frame.pdf')
@@ -179,7 +179,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                       structure_pixel_calc=True,
                                                       structure_pdf_save=False,
                                                       test_structures=False,
-                                                      save_data_for_publication=False,)
+                                                      save_data_for_publication=save_data_into_txt)
         coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
         coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
         ind_start=np.argmin(np.abs(str_fitting['Time']-(0.552500-6*2.5e-6)))
@@ -208,8 +208,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                    colormap='gist_ncar',
                                    save_for_paraview=False,
                                    colorbar_visibility=False,
-                                   save_data_for_publication=True,
-                                   data_filename=wd+fig_dir+'/data_accessibility/fig_1413190.552500_9_frame.txt',
+                                   save_data_for_publication=save_data_into_txt,
                                    overplot_points=overplot_points,
                                    )
 
@@ -219,7 +218,7 @@ def plot_results_for_pop_2022(plot_figure=2,
     """
     Filament rotation estimation for the single shot
     """
-    if plot_figure == 7:
+    if plot_figure == 6:
 
         plt.rc('font', family='serif', serif='Helvetica')
         labelsize=7.
@@ -285,7 +284,7 @@ def plot_results_for_pop_2022(plot_figure=2,
                                                       structure_pixel_calc=False,
                                                       structure_pdf_save=False,
                                                       test_structures=False,
-                                                      save_data_for_publication=False,
+                                                      save_data_for_publication=save_data_into_txt,
                                                       )
 
         plot_index=np.logical_and(np.logical_not(np.isnan(frame_properties['Velocity ccf FLAP'][:,0])),
@@ -440,39 +439,40 @@ def plot_results_for_pop_2022(plot_figure=2,
         pdf_pages.close()
 
         if save_data_into_txt:
-            filename=wd+fig_dir+'/data_accessibility/figure_7abcd.txt'
+            filename=wd+fig_dir+'/data_accessibility/figure_6abcd.txt'
             file1=open(filename, 'w+')
-            time=result['Time']
-            radial_velocity=result['Velocity ccf FLAP'][:,0]
-            poloidal_velocity=result['Velocity ccf FLAP'][:,1]
-            angular_velocity=result['Angular velocity ccf FLAP']
-            expansion_velocity=result['Expansion velocity ccf FLAP']
+            time=frame_properties['Time']
+            radial_velocity=frame_properties['Velocity ccf FLAP'][:,0]
+            angular_velocity=frame_properties['Angular velocity ccf FLAP']
+            expansion_velocity=frame_properties['Expansion velocity ccf FLAP']
+            separatrix_distance=str_fitting['Separatrix dist max']
 
-            file1.write('#Time (ms)\n')
+            file1.write('#Time (us)\n')
             for i in range(1, len(time)):
                 file1.write(str(time[i])+'\t')
 
-            file1.write('\n#Radial velocity (m/s)\n')
-            for i in range(1, len(radial_velocity)):
-                file1.write(str(radial_velocity[i])+'\t')
-
-            file1.write('\n#Poloidal velocity (m/s)\n')
-            for i in range(1, len(poloidal_velocity)):
-                file1.write(str(poloidal_velocity[i])+'\t')
-
             file1.write('\n#Angular velocity (rad/s)\n')
             for i in range(1, len(angular_velocity)):
-                file1.write(str(angular_velocity[i])+'\t')
+                file1.write(str(angular_velocity[i]/1e3)+'\t')
 
             file1.write('\n#Expansion velocity (1/s)\n')
             for i in range(1, len(expansion_velocity)):
                 file1.write(str(expansion_velocity[i])+'\t')
+
+            file1.write('\n#Radial velocity (m/s)\n')
+            for i in range(1, len(radial_velocity)):
+                file1.write(str(radial_velocity[i]/1e3)+'\t')
+
+            file1.write('\n#r-r_sep (mm)\n')
+            for i in range(1, len(separatrix_distance)):
+                file1.write(str(separatrix_distance[i])+'\t')
+
             file1.close()
 
     """
     Evolution of the rotation and expansion distribution functions
     """
-    if plot_figure == 8:
+    if plot_figure == 7:
         time_vec, y_vector = plot_nstx_gpi_angular_velocity_distribution(plot_for_publication=True,
                                                                          window_average=500e-6,
                                                                          subtraction_order=subtraction_order,
@@ -597,10 +597,11 @@ def plot_results_for_pop_2022(plot_figure=2,
         if save_data_into_txt:
             for ind in [5,7]:
                 if ind == 5:
-                    filename=wd+fig_dir+'/data_accessibility/figure_8ab.txt'
+                    filename=wd+fig_dir+'/data_accessibility/figure_7ab.txt'
+                    key='Angular velocity ccf '+flap_or_skim+' log'
                 if ind == 7:
-                    filename=wd+fig_dir+'/data_accessibility/figure_8cd.txt'
-
+                    filename=wd+fig_dir+'/data_accessibility/figure_7cd.txt'
+                    key='Expansion velocity ccf '+flap_or_skim+''
                 file1=open(filename, 'w+')
 
                 file1.write('#Time (ms)\n')
@@ -609,19 +610,19 @@ def plot_results_for_pop_2022(plot_figure=2,
 
                 file1.write('\n#Median\n')
                 for i in range(1, len(y_vector[key]['median'])):
-                    file1.write(str(y_vector[key]['median'])+'\t')
+                    file1.write(str(y_vector[key]['median'][i])+'\t')
 
                 file1.write('\n#10th perc.\n')
                 for i in range(1, len(y_vector[key]['10th'])):
-                    file1.write(str(y_vector[key]['10th'])+'\t')
+                    file1.write(str(y_vector[key]['10th'][i])+'\t')
 
                 file1.write('\n#90th perc.\n')
                 for i in range(1, len(y_vector[key]['90th'])):
-                    file1.write(str(y_vector[key]['90th'])+'\t')
+                    file1.write(str(y_vector[key]['90th'][i])+'\t')
 
                 file1.write('\n#Distribution bins\n')
                 for i in range(1, len(y_vector[key]['bins'])):
-                    file1.write(str(y_vector[key]['bins'])+'\t')
+                    file1.write(str(y_vector[key]['bins'][i])+'\t')
                 file1.write('\n#Distribution\n')
 
                 for i in range(len(y_vector[key]['data'][0,:])):
@@ -636,7 +637,7 @@ def plot_results_for_pop_2022(plot_figure=2,
     vrad,r-r_sep distribution plotting
     """
 
-    if plot_figure == 9:
+    if plot_figure == 8:
         time_vec, y_vector = plot_nstx_gpi_velocity_distribution(plot_for_publication=False,
                                                                  correlation_threshold=0.7,
                                                                  pdf=False,
@@ -752,9 +753,9 @@ def plot_results_for_pop_2022(plot_figure=2,
         if save_data_into_txt:
             for key in ['Velocity ccf radial','Distance']:
                 if key == 'Velocity ccf radial':
-                    filename=wd+fig_dir+'/data_accessibility/figure_9ab.txt'
+                    filename=wd+fig_dir+'/data_accessibility/figure_8ab.txt'
                 if key == 'Distance':
-                    filename=wd+fig_dir+'/data_accessibility/figure_9cd.txt'
+                    filename=wd+fig_dir+'/data_accessibility/figure_8cd.txt'
                 file1=open(filename, 'w+')
 
                 file1.write('#Time (ms)\n')
@@ -763,19 +764,19 @@ def plot_results_for_pop_2022(plot_figure=2,
 
                 file1.write('\n#Median\n')
                 for i in range(1, len(y_vector[key]['median'])):
-                    file1.write(str(y_vector[key]['median'])+'\t')
+                    file1.write(str(y_vector[key]['median'][i])+'\t')
 
                 file1.write('\n#10th perc.\n')
                 for i in range(1, len(y_vector[key]['10th'])):
-                    file1.write(str(y_vector[key]['10th'])+'\t')
+                    file1.write(str(y_vector[key]['10th'][i])+'\t')
 
                 file1.write('\n#90th perc.\n')
                 for i in range(1, len(y_vector[key]['90th'])):
-                    file1.write(str(y_vector[key]['90th'])+'\t')
+                    file1.write(str(y_vector[key]['90th'][i])+'\t')
 
                 file1.write('\n#Distribution bins\n')
                 for i in range(1, len(y_vector[key]['bins'])):
-                    file1.write(str(y_vector[key]['bins'])+'\t')
+                    file1.write(str(y_vector[key]['bins'][i])+'\t')
                 file1.write('\n#Distribution\n')
 
                 for i in range(len(y_vector[key]['data'][0,:])):
@@ -789,7 +790,7 @@ def plot_results_for_pop_2022(plot_figure=2,
     """
     Dependence on the r-r_sep and v_rad vs. rotation
     """
-    if plot_figure == 10:
+    if plot_figure == 9:
         plot_angular_vs_translational_velocity(tau_range=[-200e-6,200e-6],
                                                subtraction_order=2,
                                                plot_for_pop_paper=True,
@@ -801,7 +802,7 @@ def plot_results_for_pop_2022(plot_figure=2,
     """
     Dependence on plasma parameters
     """
-    if plot_figure == 11:
+    if plot_figure == 10:
         plot_gpi_profile_dependence_ultimate(plot_correlation_matrix=True,
                                              pdf=True,
                                              plot=True,
@@ -816,6 +817,13 @@ def plot_results_for_pop_2022(plot_figure=2,
                                              threshold_corr=True,
                                              corr_thres_multiplier=1.,
                                              n_sigma=2)
+        #No need for data accessibility txt file because the data are in the figure.
+    """
+    Shear induced filament rotation sketch
+    """
+    if plot_figure == 11:
+        print('This is the sketch of the filament rotation mechanism')
+
 
     if plot_figure == 12:
         calculate_shear_layer_vpol(nocalc=True,
@@ -824,21 +832,17 @@ def plot_results_for_pop_2022(plot_figure=2,
                                    test=False,
                                    plot_shear_profile=True,
                                    shot_to_plot=141319,
-                                   save_data_for_publication=False,
-                                   return_results=False)
+                                   return_results=False,
+                                   save_data_into_txt=save_data_into_txt,
+                                   save_data_filename=wd+fig_dir+'/data_accessibility/fig_12_vpol_profile.txt')
 
 
-    """
-    Shear induced filament rotation sketch
-    """
-    if plot_figure == 13:
-        raise ValueError('This is the sketch of the filament rotation mechanism')
 
 
     """
     Form factors vs. experimental observations
     """
-    if plot_figure == 14:
+    if plot_figure == 13:
         model_angular_velocity=calculate_shear_induced_angular_velocity(shear_avg_t_elm_range=[-5e-3,-200e-6],
                                                                         plot_error=False,
                                                                         test=False,
@@ -990,7 +994,22 @@ def plot_results_for_pop_2022(plot_figure=2,
                 ax.set_ylabel(model_angular_velocity['data'][plot_x_vs_y[ind_plot][1]]['label'])
             else:
                 ax.set_ylabel(model_angular_velocity['data'][plot_x_vs_y[ind_plot][1]]['label']+' [k'+model_angular_velocity['data'][plot_x_vs_y[ind_plot][1]]['unit']+']')
+            if save_data_into_txt:
+                if ind_plot == 0:
+                    filename=wd+fig_dir+'/data_accessibility/figure_13c.txt'
+                else:
+                    filename=wd+fig_dir+'/data_accessibility/figure_13d.txt'
+                file1=open(filename, 'w+')
 
+                file1.write('#Experimental angular velocity (1/s)\n')
+                for i in range(1, len(xdata)):
+                    file1.write(str(xdata[i])+'\t')
+
+                file1.write('\n#Model angular velocity (1/s)\n')
+                for i in range(1, len(ydata)):
+                    file1.write(str(ydata[i])+'\t')
+
+                file1.close()
         plt.tight_layout(pad=0.1)
 
         pdf_object.savefig()
@@ -998,7 +1017,7 @@ def plot_results_for_pop_2022(plot_figure=2,
         matplotlib.use('qt5agg')
 
         if save_data_into_txt:
-            filename=wd+fig_dir+'/data_accessibility/figure_16ab.txt'
+            filename=wd+fig_dir+'/data_accessibility/figure_13ab.txt'
             file1=open(filename, 'w+')
 
             file1.write('#Time (ms)\n')
