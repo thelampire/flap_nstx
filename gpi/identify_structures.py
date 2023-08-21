@@ -65,7 +65,8 @@ def identify_structures(#General inputs
                         filter_struct=True,                     #Filter out the structures with less than filter_level number of contours
                         filter_level=None,                      #The number of contours threshold for structures filtering (default:nlevel//4)
                         remove_interlaced_structures=False,     #Filter out the structures which are interlaced. Only the largest structures is preserved, others are removed.
-
+                        video_resolution=None,
+                        structure_video_save=False,
                         #Watershed specific inputs
                         threshold_method='otsu',
 
@@ -146,6 +147,9 @@ def identify_structures(#General inputs
 
     x_coord=data_object.coordinate(x_coord_name)[0]
     y_coord=data_object.coordinate(y_coord_name)[0]
+
+    x_coord_pix=data_object.coordinate('Image x')[0]
+    y_coord_pix=data_object.coordinate('Image y')[0]
 
     if test:
         print(x_coord.shape,y_coord.shape)
@@ -409,15 +413,19 @@ def identify_structures(#General inputs
             mask = np.zeros(data.shape, dtype="uint8")
             mask[labels == label] = 255
             	# detect contours in the mask and grab the largest one
-            cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,  cv2.CHAIN_APPROX_SIMPLE)
+            cnts = cv2.findContours(mask.copy(),
+                                    cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE)
 
             cnts = imutils.grab_contours(cnts)
             max_contour_prelim = max(cnts, key=cv2.contourArea)
             max_contour = np.squeeze(max_contour_prelim)
             try:
                 if spatial:
-                    max_contour=np.asarray([x_coord[max_contour[:,1],max_contour[:,0]],
-                                            y_coord[max_contour[:,1],max_contour[:,0]]])
+                    max_contour=np.asarray([x_coord[max_contour[:,1],
+                                                    max_contour[:,0]],
+                                            y_coord[max_contour[:,1],
+                                                    max_contour[:,0]]])
                 else:
                     max_contour=max_contour.T
 
@@ -440,6 +448,8 @@ def identify_structures(#General inputs
                                          y=vertices[:,1],
                                          x_data=x_coord[indices],
                                          y_data=y_coord[indices],
+                                         x_data_pix=x_coord_pix[indices],
+                                         y_data_pix=y_coord_pix[indices],
                                          data=data[indices],
                                          test=test)
 
@@ -560,11 +570,20 @@ def identify_structures(#General inputs
 
     structures=fitted_structures
     if test: print('N after fitting:',len(structures))
-    if plot_result:
-        fig,ax=plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-        #fig,ax=plt.subplots(figsize=(10,10))
 
-        plt.contourf(x_coord, y_coord, data, levels=nlevel)
+    if plot_result:
+        if structure_video_save:
+            my_dpi=80
+            fig,ax=plt.subplots(figsize=(video_resolution[0]/my_dpi,
+                                         video_resolution[1]/my_dpi),
+                                dpi=my_dpi)
+        else:
+            fig,ax=plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+        if levels is not None:
+            plt.contourf(x_coord, y_coord, data, levels=nlevel)
+        else:
+            plt.contourf(x_coord, y_coord, data, levels=levels)
+
         ax.set_aspect(1.0)
         plt.colorbar()
 
@@ -633,32 +652,6 @@ def identify_structures(#General inputs
                              b*np.sin(R)*np.cos(phi))
 
                 if plot_result or plot_full: #This plots the structures and the fit ellipses one by one
-                    def _plot_ellipses_centers(ax_cur,
-                                               x_polygon,
-                                               y_polygon,
-                                               x_ellipse,
-                                               y_ellipse,
-                                               structure):
-                        ax_cur.plot(x_polygon,
-                                    y_polygon)    #Plot the half path polygon
-
-                        ax_cur.plot(x_ellipse,
-                                    y_ellipse)  #Plot the ellipse
-
-                        ax_cur.plot([structure['Center'][0]-structure['Axes length'][0]*np.cos(structure['Angle']),
-                                     structure['Center'][0]+structure['Axes length'][0]*np.cos(structure['Angle'])],
-                                    [structure['Center'][1]-structure['Axes length'][0]*np.sin(structure['Angle']),
-                                     structure['Center'][1]+structure['Axes length'][0]*np.sin(structure['Angle'])],
-                                    color='magenta')
-
-                        ax_cur.scatter(structure['Centroid'][0],
-                                       structure['Centroid'][1],
-                                       color='yellow')
-
-                        ax_cur.scatter(structure['Center of gravity'][0],
-                                       structure['Center of gravity'][1],
-                                       color='red')
-
                     if plot_result:
                         _plot_ellipses_centers(ax, x_polygon, y_polygon, x_ellipse, y_ellipse, structures[i_str])
                     if plot_full:
@@ -689,6 +682,9 @@ def identify_structures(#General inputs
                 plt.show()
                 plt.pause(0.001)
 
+        plt.xlim([x_coord.min(),x_coord.max()])
+        plt.ylim([y_coord.min(),y_coord.max()])
+
         if save_data_for_publication:
             exp_id=data_object.exp_id
             time=data_object.coordinate('Time')[0][0,0]
@@ -704,3 +700,52 @@ def identify_structures(#General inputs
             file1.close()
 
     return structures
+
+def _plot_ellipses_centers(ax_cur,
+                           x_polygon,
+                           y_polygon,
+                           x_ellipse,
+                           y_ellipse,
+                           structure,
+                           polygon_color=None,
+                           ellipse_color=None,
+                           polygon_linewidth=1,
+                           ellipse_linewidth=1,
+                           ):
+
+    #Plot the half path polygon
+    if polygon_color is not None:
+        ax_cur.plot(x_polygon,
+                    y_polygon,
+                    color=polygon_color,
+                    linewidth=polygon_linewidth
+                    )
+    else:
+        ax_cur.plot(x_polygon,
+                    y_polygon)
+
+    #Plot the ellipse
+    if ellipse_color is not None:
+        ax_cur.plot(x_ellipse,
+                    y_ellipse,
+                    color=ellipse_color,
+                    linewidth=ellipse_linewidth,
+                    )
+    else:
+        ax_cur.plot(x_ellipse,
+                    y_ellipse,
+                    )
+
+    ax_cur.plot([structure['Center'][0]-structure['Axes length'][0]*np.cos(structure['Angle']),
+                 structure['Center'][0]+structure['Axes length'][0]*np.cos(structure['Angle'])],
+                [structure['Center'][1]-structure['Axes length'][0]*np.sin(structure['Angle']),
+                 structure['Center'][1]+structure['Axes length'][0]*np.sin(structure['Angle'])],
+                color='magenta')
+
+    ax_cur.scatter(structure['Centroid'][0],
+                   structure['Centroid'][1],
+                   color='yellow')
+
+    ax_cur.scatter(structure['Center of gravity'][0],
+                   structure['Center of gravity'][1],
+                   color='red')

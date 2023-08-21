@@ -105,7 +105,11 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            remove_orphans=True,                  #Structures which
                            calculate_rough_diff_velocities=False,#Calculate velocities from average or maximum structuers (deprecated)
                            structure_pixel_calc=False,           #Calculate and plot the structure sizes in pixels
+                           tracking='weighted',                  #Tracking methods 'overlap' or 'weighted'
+                           tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
 
+                           score_threshold=0.7,                  #Threshold for tracking of the structures based on the weighted tracking.
+                           matrix_weight={'iou':2/3,'cccf':1/3},
                            #Plot options:
                            plot=True,                            #Plot the results
                            pdf=False,                            #Print the results into a PDF
@@ -114,10 +118,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                            overplot_average=True,
                            plot_scatter=False,
-
+                           plot_tracking=True,
                            structure_video_save=False,           #Save the video of the overplot ellipses
+                           video_resolution=(1024,1024),
                            structure_pdf_save=False,             #Save the struture finding algorithm's plot output into a PDF (can create very large PDF's, the number of pages equals the number of frames)
-
                            plot_time_range=None,                 #Plot the results in a different time range than the data is read from
                            plot_for_publication=False,           #Modify the plot sizes to single column sizes and golden ratio axis ratios
                            plot_vertical_line_at=None,
@@ -185,6 +189,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     SETTING UP THE FILENAME FOR DATA SAVING
     """
 
+    if tracking == 'weighted':
+        from shapely.geometry import Polygon as PolygonShapely
+        from shapely.ops import unary_union
+        from scipy.signal import correlate2d
+        from scipy.optimize import linear_sum_assignment
+
     if filename is None:
         comment=''
         if normalize is not None:
@@ -231,7 +241,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         import matplotlib
         matplotlib.use('agg')
 
-    if not nocalc:
+    if not nocalc or structure_video_save:
         if structure_pdf_save:
             filename=flap_nstx.tools.filename(exp_id=exp_id,
                                               working_directory=wd+'/plots',
@@ -389,488 +399,453 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         sample_0=flap.get_data_object_ref('GPI_SLICED_FULL',
                                           exp_id=exp_id).coordinate('Sample')[0][0,0,0]
 
-        data_dict={'max':np.zeros([len(time)]),
-                   'avg':np.zeros([len(time)]),
-                   'stddev':np.zeros([len(time)]),
-                   'raw':np.zeros([len(time)]),
+        if not (structure_video_save and nocalc):
+            data_dict={'max':np.zeros([len(time)]),
+                       'avg':np.zeros([len(time)]),
+                       'stddev':np.zeros([len(time)]),
+                       'raw':np.zeros([len(time)]),
 
-                   'unit':None,
-                   'label':None,
-                   }
+                       'unit':None,
+                       'label':None,
+                       }
 
-        frame_properties={'shot':exp_id,
-                          'Time':time,
-                          'data':{},
-                          'derived':{},
-                          'structures':[],
-                          }
+            frame_properties={'shot':exp_id,
+                              'Time':time,
+                              'data':{},
+                              'derived':{},
+                              'structures':[],
+                              }
 
-        """
-        Frame characterizing parameters
-        """
-        coordinate_names=[d.coordinates[i].unit.name for i in range(len(d.coordinates))]
-        distance_unit='pix'
-        time_unit='sample'
-        for ind in range(len(coordinate_names)):
-            if coordinate_names[ind] == 'Time':
-                time_unit=d.coordinates[ind].unit.unit
-            if coordinate_names[ind] == 'Device R':
-                distance_unit=d.coordinates[ind].unit.unit
-
-
-        key='Angle'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$\phi$'
-        frame_properties['data'][key]['unit']='deg'
-
-        key='Angle of least inertia'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$\phi_{ALI}$'
-        frame_properties['data'][key]['unit']='deg'
-
-        key='Area'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Area'
-        frame_properties['data'][key]['unit']='$'+distance_unit+'^2$'
-
-        key='Axes length minor'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='a'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Axes length major'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='a'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Center of gravity radial'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$COG_{rad}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Center of gravity poloidal'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$COG_{pol}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Centroid radial'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Centr. rad.'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Centroid poloidal'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Centr. pol.'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Convexity'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Convexity'
-        frame_properties['data'][key]['unit']=''
-
-        key='Elongation'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Elong.'
-        frame_properties['data'][key]['unit']=''
-
-        key='Frame COG radial'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Frame COG poloidal'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Position radial'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='R'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Position poloidal'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='z'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Roundness'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Round.'
-        frame_properties['data'][key]['unit']=''
-
-        key='Separatrix dist'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$r-r_{sep}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Size radial'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$d_{rad}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Size poloidal'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$d_{pol}$'
-        frame_properties['data'][key]['unit']=distance_unit
-
-        key='Solidity'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='Solidity'
-        frame_properties['data'][key]['unit']=''
-
-        key='Str number'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='N'
-        frame_properties['data'][key]['unit']=''
-
-        key='Total bending energy'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$E_{bend}$'
-        frame_properties['data'][key]['unit']=''
-
-        key='Total curvature'
-        frame_properties['data'][key]=copy.deepcopy(data_dict)
-        frame_properties['data'][key]['label']='$\kappa_{tot}$'
-        frame_properties['data'][key]['unit']=''
-
-        """
-        Differential parameters
-        """
-
-        differential_keys=['Velocity radial COG',
-                           'Velocity poloidal COG',
-                           'Velocity radial centroid',
-                           'Velocity poloidal centroid',
-                           'Velocity radial position',
-                           'Velocity poloidal position',
-
-                           'Expansion fraction area',
-                           'Expansion fraction axes',
-                           'Angular velocity angle',
-                           'Angular velocity ALI',
-                           ]
-
-        key='Angular velocity angle'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']=''
-        frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-        key='Angular velocity ALI'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']=''
-        frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-        key='Expansion fraction area'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$f_E$'
-        frame_properties['derived'][key]['unit']='1/'+time_unit
-
-        key='Expansion fraction axes'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$f_{E,area}$'
-        frame_properties['derived'][key]['unit']='1/'+time_unit
-
-        key='Velocity radial position'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{rad,pos}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        key='Velocity poloidal position'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{pol,pos}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        key='Velocity radial COG'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{rad,COG}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        key='Velocity poloidal COG'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{pol,COG}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        key='Velocity radial centroid'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{rad,centroid}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        key='Velocity poloidal centroid'
-        frame_properties['derived'][key]=copy.deepcopy(data_dict)
-        frame_properties['derived'][key]['label']='$v_{pol,centroid}$'
-        frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-        #Inicializing for frame handling
-        frame=None
-        structures_dict=None
-
-        if test or test_structures or structure_pdf_save:
-            my_dpi=80
-            plt.figure(figsize=(800/my_dpi, 600/my_dpi), dpi=my_dpi)
-
-        if not skip_mdsplus and data_object is None:
-            elm_time=(frame_properties['Time'][-1]+frame_properties['Time'][0])/2
-
-            R_sep=flap.get_data('NSTX_MDSPlus',
-                                name='\EFIT02::\RBDRY',
-                                exp_id=exp_id,
-                                object_name='SEP R OBJ').slice_data(slicing={'Time':elm_time}).data
-
-            z_sep=flap.get_data('NSTX_MDSPlus',
-                                name='\EFIT02::\ZBDRY',
-                                exp_id=exp_id,
-                                object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
-
-            sep_GPI_ind=np.where(np.logical_and(R_sep > coeff_r[2],
-                                                np.logical_and(z_sep > coeff_z[2],
-                                                               z_sep < coeff_z[2]+79*coeff_z[0]+64*coeff_z[1])))
-            sep_GPI_ind=np.asarray(sep_GPI_ind[0])
-            sep_GPI_ind=np.insert(sep_GPI_ind,0,sep_GPI_ind[0]-1)
-            sep_GPI_ind=np.insert(sep_GPI_ind,len(sep_GPI_ind),sep_GPI_ind[-1]+1)
-
-            z_sep_GPI=z_sep[(sep_GPI_ind)]
-            R_sep_GPI=R_sep[sep_GPI_ind]
-            GPI_z_vert=coeff_z[0]*np.arange(80)/80*64+coeff_z[1]*np.arange(80)+coeff_z[2]
-            R_sep_GPI_interp=np.interp(GPI_z_vert,np.flip(z_sep_GPI),np.flip(R_sep_GPI))
-            z_sep_GPI_interp=GPI_z_vert
-
-        for i_frames in range(0,n_frames):
-
-            print(str(int(i_frames/(n_frames-1)*100.))+"% done from the calculation.")
-
-            slicing_frame={'Sample':sample_0+i_frames}
+            """
+            Frame characterizing parameters
+            """
+            coordinate_names=[d.coordinates[i].unit.name for i in range(len(d.coordinates))]
+            distance_unit='pix'
+            time_unit='sample'
+            for ind in range(len(coordinate_names)):
+                if coordinate_names[ind] == 'Time':
+                    time_unit=d.coordinates[ind].unit.unit
+                if coordinate_names[ind] == 'Device R':
+                    distance_unit=d.coordinates[ind].unit.unit
 
 
-            frame=flap.slice_data(object_name,
-                                  exp_id=exp_id,
-                                  slicing=slicing_frame,
-                                  output_name='GPI_FRAME')
+            key='Angle'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$\phi$'
+            frame_properties['data'][key]['unit']='deg'
 
-            frame.data=np.asarray(frame.data, dtype='float64')
+            key='Angle of least inertia'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$\phi_{ALI}$'
+            frame_properties['data'][key]['unit']='deg'
 
-            if structure_video_save or structure_pdf_save:
-                plt.cla()
-                test_structures=True
+            key='Area'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Area'
+            frame_properties['data'][key]['unit']='$'+distance_unit+'^2$'
 
-            structures_dict = identify_structures(str_finding_method=str_finding_method,
-                                                                data_object='GPI_FRAME',
-                                                                threshold_level=intensity_thres_level_str_size,
-                                                                exp_id=exp_id,
-                                                                filter_level=filter_level,
-                                                                nlevel=nlevel,
-                                                                levels=levels,
-                                                                mfilter_range=5,
-                                                                spatial=not structure_pixel_calc,
-                                                                pixel=structure_pixel_calc,
-                                                                remove_interlaced_structures=remove_interlaced_structures,
-                                                                ellipse_method=ellipse_method,
-                                                                str_size_lower_thres=str_size_lower_thres,
-                                                                elongation_threshold=elongation_threshold,
-                                                                test=test,
-                                                                plot_result=test_structures,
-                                                                save_data_for_publication=save_data_for_publication)
+            key='Axes length minor'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='a'
+            frame_properties['data'][key]['unit']=distance_unit
 
-            frame_properties['structures'].append(structures_dict)
+            key='Axes length major'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='a'
+            frame_properties['data'][key]['unit']=distance_unit
 
-            if not structure_video_save:
-                #plt.pause(0.001)
+            key='Center of gravity radial'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$COG_{rad}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Center of gravity poloidal'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$COG_{pol}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Centroid radial'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Centr. rad.'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Centroid poloidal'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Centr. pol.'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Convexity'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Convexity'
+            frame_properties['data'][key]['unit']=''
+
+            key='Elongation'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Elong.'
+            frame_properties['data'][key]['unit']=''
+
+            key='Frame COG radial'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$COG_{frame,rad}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Frame COG poloidal'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$COG_{frame,rad}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Position radial'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='R'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Position poloidal'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='z'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Roundness'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Round.'
+            frame_properties['data'][key]['unit']=''
+
+            key='Separatrix dist'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$r-r_{sep}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Size radial'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$d_{rad}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Size poloidal'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$d_{pol}$'
+            frame_properties['data'][key]['unit']=distance_unit
+
+            key='Solidity'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='Solidity'
+            frame_properties['data'][key]['unit']=''
+
+            key='Str number'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='N'
+            frame_properties['data'][key]['unit']=''
+
+            key='Total bending energy'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$E_{bend}$'
+            frame_properties['data'][key]['unit']=''
+
+            key='Total curvature'
+            frame_properties['data'][key]=copy.deepcopy(data_dict)
+            frame_properties['data'][key]['label']='$\kappa_{tot}$'
+            frame_properties['data'][key]['unit']=''
+
+            """
+            Differential parameters
+            """
+
+            differential_keys=['Velocity radial COG',
+                               'Velocity poloidal COG',
+                               'Velocity radial centroid',
+                               'Velocity poloidal centroid',
+                               'Velocity radial position',
+                               'Velocity poloidal position',
+
+                               'Expansion fraction area',
+                               'Expansion fraction axes',
+                               'Angular velocity angle',
+                               'Angular velocity ALI',
+                               ]
+
+            key='Angular velocity angle'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']=''
+            frame_properties['derived'][key]['unit']='rad/'+time_unit
+
+            key='Angular velocity ALI'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']=''
+            frame_properties['derived'][key]['unit']='rad/'+time_unit
+
+            key='Expansion fraction area'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$f_E$'
+            frame_properties['derived'][key]['unit']='1/'+time_unit
+
+            key='Expansion fraction axes'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$f_{E,area}$'
+            frame_properties['derived'][key]['unit']='1/'+time_unit
+
+            key='Velocity radial position'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{rad,pos}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            key='Velocity poloidal position'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{pol,pos}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            key='Velocity radial COG'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{rad,COG}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            key='Velocity poloidal COG'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{pol,COG}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            key='Velocity radial centroid'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{rad,centroid}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            key='Velocity poloidal centroid'
+            frame_properties['derived'][key]=copy.deepcopy(data_dict)
+            frame_properties['derived'][key]['label']='$v_{pol,centroid}$'
+            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+            #Inicializing for frame handling
+            frame=None
+            structures_dict=None
+
+            if test or test_structures or structure_pdf_save:
+                fig_dpi=80
+                plt.figure(figsize=(800/fig_dpi, 600/fig_dpi), dpi=fig_dpi)
+
+            if not skip_mdsplus and data_object is None:
+                elm_time=(frame_properties['Time'][-1]+frame_properties['Time'][0])/2
+
+                R_sep=flap.get_data('NSTX_MDSPlus',
+                                    name='\EFIT02::\RBDRY',
+                                    exp_id=exp_id,
+                                    object_name='SEP R OBJ').slice_data(slicing={'Time':elm_time}).data
+
+                z_sep=flap.get_data('NSTX_MDSPlus',
+                                    name='\EFIT02::\ZBDRY',
+                                    exp_id=exp_id,
+                                    object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
+
+                sep_GPI_ind=np.where(np.logical_and(R_sep > coeff_r[2],
+                                                    np.logical_and(z_sep > coeff_z[2],
+                                                                   z_sep < coeff_z[2]+79*coeff_z[0]+64*coeff_z[1])))
+                sep_GPI_ind=np.asarray(sep_GPI_ind[0])
+                sep_GPI_ind=np.insert(sep_GPI_ind,0,sep_GPI_ind[0]-1)
+                sep_GPI_ind=np.insert(sep_GPI_ind,len(sep_GPI_ind),sep_GPI_ind[-1]+1)
+
+                z_sep_GPI=z_sep[(sep_GPI_ind)]
+                R_sep_GPI=R_sep[sep_GPI_ind]
+                GPI_z_vert=coeff_z[0]*np.arange(80)/80*64+coeff_z[1]*np.arange(80)+coeff_z[2]
+                R_sep_GPI_interp=np.interp(GPI_z_vert,np.flip(z_sep_GPI),np.flip(R_sep_GPI))
+                z_sep_GPI_interp=GPI_z_vert
+
+            for i_frames in range(0,n_frames):
+
+                print(str(int(i_frames/(n_frames-1)*100.))+"% done from the calculation.")
+
+                slicing_frame={'Sample':sample_0+i_frames}
+
+
+                frame=flap.slice_data(object_name,
+                                      exp_id=exp_id,
+                                      slicing=slicing_frame,
+                                      output_name='GPI_FRAME')
+
+                frame.data=np.asarray(frame.data, dtype='float64')
+
+                if structure_video_save or structure_pdf_save:
+                    plt.cla()
+                    test_structures=True
+
+                structures_dict = identify_structures(str_finding_method=str_finding_method,
+                                                      data_object='GPI_FRAME',
+                                                      threshold_level=intensity_thres_level_str_size,
+                                                      exp_id=exp_id,
+                                                      filter_level=filter_level,
+                                                      nlevel=nlevel,
+                                                      levels=levels,
+                                                      mfilter_range=5,
+                                                      spatial=not structure_pixel_calc,
+                                                      pixel=structure_pixel_calc,
+                                                      remove_interlaced_structures=remove_interlaced_structures,
+                                                      ellipse_method=ellipse_method,
+                                                      str_size_lower_thres=str_size_lower_thres,
+                                                      elongation_threshold=elongation_threshold,
+                                                      test=test,
+                                                      plot_result=test_structures,
+                                                      video_resolution=video_resolution,
+                                                      structure_video_save=structure_video_save,
+                                                      save_data_for_publication=save_data_for_publication)
+
+                frame_properties['structures'].append(structures_dict)
+
                 if structure_pdf_save:
                     plt.title(str(exp_id)+' @ '+"{:.3f}".format(time[i_frames]*1e3)+'ms')
                     plt.show()
                     pdf_structures.savefig()
-            else:
-                test_structures=False
-                fig = plt.gcf()
-                plt.title(str(exp_id)+' @ '+"{:.3f}".format(time[i_frames]*1e3)+'ms')
-                fig.canvas.draw()
-                # Get the RGBA buffer from the figure
-                w,h = fig.canvas.get_width_height()
-                try:
-                    buf = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-                    if buf.shape[0] == h*2 * w*2 * 3:
-                        buf.shape = ( h*2, w*2, 3 )
+
+                if structures_dict is not None and len(structures_dict) != 0:
+                    valid_structure_size=True
+                else:
+                    valid_structure_size=False
+
+                """
+                Structure size calculation based on the contours
+                """
+
+                #Crude average size calculation
+                if valid_structure_size:
+                    #Calculating the average properties of the structures present in one frame
+                    n_str=len(structures_dict)
+                    areas=np.zeros(len(structures_dict))
+                    intensities=np.zeros(len(structures_dict))
+
+                    for i_str in range(n_str):
+                        #Average size calculation based on the number of structures
+                        areas[i_str]=structures_dict[i_str]['Area']
+                        intensities[i_str]=structures_dict[i_str]['Intensity']
+
+                    #Calculating the averages based on the input setting
+                    if weighting == 'number':
+                        weight=np.zeros(n_str)
+                        weight[:]=1./n_str
+                    elif weighting == 'intensity':
+                        weight=intensities/np.sum(intensities)
+                    elif weighting == 'area':
+                        weight=areas/np.sum(areas)
+
+                    for i_str in range(n_str):
+                        #Quantities from Ellipse fitting
+                        fit_obj_cur=structures_dict[i_str][fit_shape]
+                        frame_properties['data']['Size radial']['avg'][i_frames]+=fit_obj_cur.size[0]*weight[i_str]
+                        frame_properties['data']['Size poloidal']['avg'][i_frames]+=fit_obj_cur.size[1]*weight[i_str]
+                        frame_properties['data']['Position radial']['avg'][i_frames]+=fit_obj_cur.center[0]*weight[i_str]
+                        frame_properties['data']['Position poloidal']['avg'][i_frames]+=fit_obj_cur.center[1]*weight[i_str]
+                        frame_properties['data']['Angle']['avg'][i_frames]+=fit_obj_cur.angle*weight[i_str]
+                        frame_properties['data']['Elongation']['avg'][i_frames]+=fit_obj_cur.elongation*weight[i_str]
+                        frame_properties['data']['Axes length minor']['avg'][i_frames]+=np.min(fit_obj_cur.axes_length)*weight[i_str]
+                        frame_properties['data']['Axes length major']['avg'][i_frames]+=np.max(fit_obj_cur.axes_length)*weight[i_str]
+
+                        #Quantities from polygons
+                        polygon_cur=structures_dict[i_str]['Polygon']
+                        frame_properties['data']['Centroid radial']['avg'][i_frames]+=polygon_cur.centroid[0]*weight[i_str]
+                        frame_properties['data']['Centroid poloidal']['avg'][i_frames]+=polygon_cur.centroid[1]*weight[i_str]
+                        frame_properties['data']['Center of gravity radial']['avg'][i_frames]+=polygon_cur.center_of_gravity[0]*weight[i_str]
+                        frame_properties['data']['Center of gravity poloidal']['avg'][i_frames]+=polygon_cur.center_of_gravity[1]*weight[i_str]
+                        frame_properties['data']['Area']['avg'][i_frames]+=polygon_cur.area*weight[i_str]
+                        frame_properties['data']['Angle of least inertia']['avg'][i_frames]+=polygon_cur.principal_axes_angle*weight[i_str]
+                        frame_properties['data']['Roundness']['avg'][i_frames]+=polygon_cur.roundness*weight[i_str]
+                        frame_properties['data']['Solidity']['avg'][i_frames]+=polygon_cur.solidity*weight[i_str]
+                        frame_properties['data']['Convexity']['avg'][i_frames]+=polygon_cur.convexity*weight[i_str]
+                        frame_properties['data']['Total curvature']['avg'][i_frames]+=polygon_cur.total_curvature*weight[i_str]
+                        frame_properties['data']['Total bending energy']['avg'][i_frames]+=polygon_cur.total_bending_energy*weight[i_str]
+
+                    #Calculating the properties of the structure having the maximum area or intensity
+                    if maxing == 'area':
+                        ind_max=np.argmax(areas)
+                    elif maxing == 'intensity':
+                        ind_max=np.argmax(intensities)
+
+                    #Properties of the max structure:
+                    fit_obj_cur=structures_dict[ind_max][fit_shape]
+                    frame_properties['data']['Size radial']['max'][i_frames]=fit_obj_cur.size[0]
+                    frame_properties['data']['Size poloidal']['max'][i_frames]=fit_obj_cur.size[1]
+                    frame_properties['data']['Position radial']['max'][i_frames]=fit_obj_cur.center[0]
+                    frame_properties['data']['Position poloidal']['max'][i_frames]=fit_obj_cur.center[1]
+                    frame_properties['data']['Angle']['max'][i_frames]=fit_obj_cur.angle
+                    frame_properties['data']['Elongation']['max'][i_frames]=fit_obj_cur.elongation
+                    frame_properties['data']['Axes length minor']['max'][i_frames]=np.min(fit_obj_cur.axes_length)
+                    frame_properties['data']['Axes length major']['max'][i_frames]=np.max(fit_obj_cur.axes_length)
+
+                    polygon_cur=structures_dict[ind_max]['Polygon']
+                    frame_properties['data']['Centroid radial']['max'][i_frames]=polygon_cur.centroid[0]
+                    frame_properties['data']['Centroid poloidal']['max'][i_frames]=polygon_cur.centroid[1]
+                    frame_properties['data']['Center of gravity radial']['max'][i_frames]=polygon_cur.center_of_gravity[0]
+                    frame_properties['data']['Center of gravity poloidal']['max'][i_frames]=polygon_cur.center_of_gravity[1]
+                    frame_properties['data']['Area']['max'][i_frames]=polygon_cur.area
+                    frame_properties['data']['Angle of least inertia']['max'][i_frames]=polygon_cur.principal_axes_angle
+                    frame_properties['data']['Roundness']['max'][i_frames]=polygon_cur.roundness
+                    frame_properties['data']['Solidity']['max'][i_frames]=polygon_cur.solidity
+                    frame_properties['data']['Convexity']['max'][i_frames]=polygon_cur.convexity
+                    frame_properties['data']['Total curvature']['max'][i_frames]=polygon_cur.total_curvature
+                    frame_properties['data']['Total bending energy']['max'][i_frames]=polygon_cur.total_bending_energy
+
+                    #The center of gravity for the entire frame
+                    if structure_pixel_calc:
+                        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image x')[0]*frame.data)/np.sum(frame.data)
                     else:
-                        buf.shape = ( h, w, 3 )
-                    buf = cv2.cvtColor(buf, cv2.COLOR_RGBA2BGR)
+                        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Device R')[0]*frame.data)/np.sum(frame.data)
+                    frame_properties['data']['Frame COG radial']['avg'][i_frames]=frame_properties['data']['Frame COG radial']['max'][i_frames]
+
+                    if structure_pixel_calc:
+                        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image y')[0]*frame.data)/np.sum(frame.data)
+                    else:
+                        frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.sum(frame.coordinate('Device z')[0]*frame.data)/np.sum(frame.data)
+                    frame_properties['data']['Frame COG poloidal']['avg'][i_frames]=frame_properties['data']['Frame COG poloidal']['max'][i_frames]
+
+                    #The number of structures in a frame
+                    frame_properties['data']['Str number']['max'][i_frames]=n_str
+                    frame_properties['data']['Str number']['avg'][i_frames]=n_str
+
+                    #Calculate the distance from the separatrix
                     try:
-                        video
-                    except NameError:
-                        height = buf.shape[0]
-                        width = buf.shape[1]
-                        video_codec_code='mp4v'
-                        comment=str_finding_method+'_bgthr_'+str(threshold_bg_multiplier)
-                        filename=flap_nstx.tools.filename(exp_id=exp_id,
-                                                          working_directory=wd+'/plots',
-                                                          time_range=time_range,
-                                                          purpose='fit structures',
-                                                          comment=comment)
-                        filename=wd+'/plots/NSTX_GPI_'+str(exp_id)+'_'+"{:.3f}".format(time[0]*1e3)+'_fit_structures_'+str_finding_method+'.mp4'
-                        video = cv2.VideoWriter(filename,
-                                                cv2.VideoWriter_fourcc(*video_codec_code),
-                                                float(24),
-                                                (width,height),
-                                                isColor=True)
-                    video.write(buf)
-                except:
-                    print('Video frame cannot be saved. Passing...')
+                    # if True:
+                        for key in ['max','avg']:
+                            if not skip_mdsplus:
+                                frame_properties['data']['Separatrix dist'][key][i_frames]=np.min(np.sqrt((frame_properties['data']['Position radial'][key][i_frames]-R_sep_GPI_interp)**2 +
+                                                                                                          (frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI_interp)**2))
+                            else:
+                                frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
+                            ind_z_min=np.argmin(np.abs(z_sep_GPI-frame_properties['data']['Position poloidal'][key][i_frames]))
+                            if z_sep_GPI[ind_z_min] >= frame_properties['data']['Position poloidal'][key][i_frames]:
+                                ind1=ind_z_min
+                                ind2=ind_z_min+1
+                            else:
+                                ind1=ind_z_min-1
+                                ind2=ind_z_min
 
-            if structures_dict is not None and len(structures_dict) != 0:
-                valid_structure_size=True
-            else:
-                valid_structure_size=False
-
-            """
-            Structure size calculation based on the contours
-            """
-
-            #Crude average size calculation
-            if valid_structure_size:
-                #Calculating the average properties of the structures present in one frame
-                n_str=len(structures_dict)
-                areas=np.zeros(len(structures_dict))
-                intensities=np.zeros(len(structures_dict))
-
-                for i_str in range(n_str):
-                    #Average size calculation based on the number of structures
-                    areas[i_str]=structures_dict[i_str]['Area']
-                    intensities[i_str]=structures_dict[i_str]['Intensity']
-
-                #Calculating the averages based on the input setting
-                if weighting == 'number':
-                    weight=np.zeros(n_str)
-                    weight[:]=1./n_str
-                elif weighting == 'intensity':
-                    weight=intensities/np.sum(intensities)
-                elif weighting == 'area':
-                    weight=areas/np.sum(areas)
-
-                for i_str in range(n_str):
-                    #Quantities from Ellipse fitting
-                    fit_obj_cur=structures_dict[i_str][fit_shape]
-                    frame_properties['data']['Size radial']['avg'][i_frames]+=fit_obj_cur.size[0]*weight[i_str]
-                    frame_properties['data']['Size poloidal']['avg'][i_frames]+=fit_obj_cur.size[1]*weight[i_str]
-                    frame_properties['data']['Position radial']['avg'][i_frames]+=fit_obj_cur.center[0]*weight[i_str]
-                    frame_properties['data']['Position poloidal']['avg'][i_frames]+=fit_obj_cur.center[1]*weight[i_str]
-                    frame_properties['data']['Angle']['avg'][i_frames]+=fit_obj_cur.angle*weight[i_str]
-                    frame_properties['data']['Elongation']['avg'][i_frames]+=fit_obj_cur.elongation*weight[i_str]
-                    frame_properties['data']['Axes length minor']['avg'][i_frames]+=np.min(fit_obj_cur.axes_length)*weight[i_str]
-                    frame_properties['data']['Axes length major']['avg'][i_frames]+=np.max(fit_obj_cur.axes_length)*weight[i_str]
-
-                    #Quantities from polygons
-                    polygon_cur=structures_dict[i_str]['Polygon']
-                    frame_properties['data']['Centroid radial']['avg'][i_frames]+=polygon_cur.centroid[0]*weight[i_str]
-                    frame_properties['data']['Centroid poloidal']['avg'][i_frames]+=polygon_cur.centroid[1]*weight[i_str]
-                    frame_properties['data']['Center of gravity radial']['avg'][i_frames]+=polygon_cur.center_of_gravity[0]*weight[i_str]
-                    frame_properties['data']['Center of gravity poloidal']['avg'][i_frames]+=polygon_cur.center_of_gravity[1]*weight[i_str]
-                    frame_properties['data']['Area']['avg'][i_frames]+=polygon_cur.area*weight[i_str]
-                    frame_properties['data']['Angle of least inertia']['avg'][i_frames]+=polygon_cur.principal_axes_angle*weight[i_str]
-                    frame_properties['data']['Roundness']['avg'][i_frames]+=polygon_cur.roundness*weight[i_str]
-                    frame_properties['data']['Solidity']['avg'][i_frames]+=polygon_cur.solidity*weight[i_str]
-                    frame_properties['data']['Convexity']['avg'][i_frames]+=polygon_cur.convexity*weight[i_str]
-                    frame_properties['data']['Total curvature']['avg'][i_frames]+=polygon_cur.total_curvature*weight[i_str]
-                    frame_properties['data']['Total bending energy']['avg'][i_frames]+=polygon_cur.total_bending_energy*weight[i_str]
-
-                #Calculating the properties of the structure having the maximum area or intensity
-                if maxing == 'area':
-                    ind_max=np.argmax(areas)
-                elif maxing == 'intensity':
-                    ind_max=np.argmax(intensities)
-
-                #Properties of the max structure:
-                fit_obj_cur=structures_dict[ind_max][fit_shape]
-                frame_properties['data']['Size radial']['max'][i_frames]=fit_obj_cur.size[0]
-                frame_properties['data']['Size poloidal']['max'][i_frames]=fit_obj_cur.size[1]
-                frame_properties['data']['Position radial']['max'][i_frames]=fit_obj_cur.center[0]
-                frame_properties['data']['Position poloidal']['max'][i_frames]=fit_obj_cur.center[1]
-                frame_properties['data']['Angle']['max'][i_frames]=fit_obj_cur.angle
-                frame_properties['data']['Elongation']['max'][i_frames]=fit_obj_cur.elongation
-                frame_properties['data']['Axes length minor']['max'][i_frames]=np.min(fit_obj_cur.axes_length)
-                frame_properties['data']['Axes length major']['max'][i_frames]=np.max(fit_obj_cur.axes_length)
-
-                polygon_cur=structures_dict[ind_max]['Polygon']
-                frame_properties['data']['Centroid radial']['max'][i_frames]=polygon_cur.centroid[0]
-                frame_properties['data']['Centroid poloidal']['max'][i_frames]=polygon_cur.centroid[1]
-                frame_properties['data']['Center of gravity radial']['max'][i_frames]=polygon_cur.center_of_gravity[0]
-                frame_properties['data']['Center of gravity poloidal']['max'][i_frames]=polygon_cur.center_of_gravity[1]
-                frame_properties['data']['Area']['max'][i_frames]=polygon_cur.area
-                frame_properties['data']['Angle of least inertia']['max'][i_frames]=polygon_cur.principal_axes_angle
-                frame_properties['data']['Roundness']['max'][i_frames]=polygon_cur.roundness
-                frame_properties['data']['Solidity']['max'][i_frames]=polygon_cur.solidity
-                frame_properties['data']['Convexity']['max'][i_frames]=polygon_cur.convexity
-                frame_properties['data']['Total curvature']['max'][i_frames]=polygon_cur.total_curvature
-                frame_properties['data']['Total bending energy']['max'][i_frames]=polygon_cur.total_bending_energy
-
-                #The center of gravity for the entire frame
-                if structure_pixel_calc:
-                    frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image x')[0]*frame.data)/np.sum(frame.data)
+                            radial_distance=frame_properties['data']['Position radial'][key][i_frames]- \
+                                ((frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI[ind2])/ \
+                                 (z_sep_GPI[ind1]-z_sep_GPI[ind2])*(R_sep_GPI[ind1]-R_sep_GPI[ind2])+R_sep_GPI[ind2])
+                            if radial_distance < 0:
+                                frame_properties['data']['Separatrix dist'][key][i_frames]*=-1
+                    except:
+                        frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
                 else:
-                    frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Device R')[0]*frame.data)/np.sum(frame.data)
-                frame_properties['data']['Frame COG radial']['avg'][i_frames]=frame_properties['data']['Frame COG radial']['max'][i_frames]
+                    #Setting np.nan if no structure is available
+                    for key in frame_properties['data'].keys():
+                        frame_properties['data'][key]['avg'][i_frames]=np.nan
+                        frame_properties['data'][key]['max'][i_frames]=np.nan
+                        frame_properties['data'][key]['stddev'][i_frames]=np.nan
 
-                if structure_pixel_calc:
-                    frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image y')[0]*frame.data)/np.sum(frame.data)
-                else:
-                    frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.sum(frame.coordinate('Device z')[0]*frame.data)/np.sum(frame.data)
-                frame_properties['data']['Frame COG poloidal']['avg'][i_frames]=frame_properties['data']['Frame COG poloidal']['max'][i_frames]
+                    frame_properties['data']['Str number']['max'][i_frames]=0.
+                    frame_properties['data']['Frame COG radial']['max'][i_frames]=np.nan
+                    frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.nan
+                   # frame_properties['Structures'][i_frames]=None
 
-                #The number of structures in a frame
-                frame_properties['data']['Str number']['max'][i_frames]=n_str
-                frame_properties['data']['Str number']['avg'][i_frames]=n_str
+            if structure_pdf_save:
+                pdf_structures.close()
+            #Saving results into a pickle file
 
-                #Calculate the distance from the separatrix
-                try:
-                # if True:
-                    for key in ['max','avg']:
-                        if not skip_mdsplus:
-                            frame_properties['data']['Separatrix dist'][key][i_frames]=np.min(np.sqrt((frame_properties['data']['Position radial'][key][i_frames]-R_sep_GPI_interp)**2 +
-                                                                                                      (frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI_interp)**2))
-                        else:
-                            frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
-                        ind_z_min=np.argmin(np.abs(z_sep_GPI-frame_properties['data']['Position poloidal'][key][i_frames]))
-                        if z_sep_GPI[ind_z_min] >= frame_properties['data']['Position poloidal'][key][i_frames]:
-                            ind1=ind_z_min
-                            ind2=ind_z_min+1
-                        else:
-                            ind1=ind_z_min-1
-                            ind2=ind_z_min
-
-                        radial_distance=frame_properties['data']['Position radial'][key][i_frames]- \
-                            ((frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI[ind2])/ \
-                             (z_sep_GPI[ind1]-z_sep_GPI[ind2])*(R_sep_GPI[ind1]-R_sep_GPI[ind2])+R_sep_GPI[ind2])
-                        if radial_distance < 0:
-                            frame_properties['data']['Separatrix dist'][key][i_frames]*=-1
-                except:
-                    frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
-            else:
-                #Setting np.nan if no structure is available
-                for key in frame_properties['data'].keys():
-                    frame_properties['data'][key]['avg'][i_frames]=np.nan
-                    frame_properties['data'][key]['max'][i_frames]=np.nan
-                    frame_properties['data'][key]['stddev'][i_frames]=np.nan
-
-                frame_properties['data']['Str number']['max'][i_frames]=0.
-                frame_properties['data']['Frame COG radial']['max'][i_frames]=np.nan
-                frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.nan
-               # frame_properties['Structures'][i_frames]=None
-
-        if structure_pdf_save:
-            pdf_structures.close()
-        #Saving results into a pickle file
-
-        if (structure_video_save):
-            cv2.destroyAllWindows()
-            video.release()
-            del video
-
-        pickle.dump(frame_properties,open(pickle_filename, 'wb'))
-        if test:
-            plt.close()
+            pickle.dump(frame_properties,open(pickle_filename, 'wb'))
+            if test:
+                plt.close()
+        else:
+            print('--- Loading data from the pickle file ---')
+            frame_properties=pickle.load(open(pickle_filename, 'rb'))
     else:
         print('--- Loading data from the pickle file ---')
         frame_properties=pickle.load(open(pickle_filename, 'rb'))
 
         #labels= 'label,born,died'
 
+    #Structure tracking
     highest_label=0
     n_frames=len(frame_properties['structures'])
     differential_keys=['Velocity radial COG',
@@ -915,11 +890,117 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             n_str1=len(structures_1)
             n_str2=len(structures_2)
             str_overlap_matrix=np.zeros([n_str1,n_str2])
-            for j_str2 in range(n_str2):
-                for j_str1 in range(n_str1):
-                    #print(structures_2[j_str2]['Half path'],structures_1[j_str1]['Half path'])
-                    if structures_2[j_str2]['Half path'].intersects_path(structures_1[j_str1]['Half path']):
-                        str_overlap_matrix[j_str1,j_str2]=1
+
+            if tracking == 'overlap':
+                for j_str2 in range(n_str2):
+                    for j_str1 in range(n_str1):
+                        #print(structures_2[j_str2]['Half path'],structures_1[j_str1]['Half path'])
+                        if (structures_2[j_str2]['Half path'].intersects_path(structures_1[j_str1]['Half path']) or
+                            structures_2[j_str2]['Half path'].contains_path(structures_1[j_str1]['Half path'])
+                            ):
+                            str_overlap_matrix[j_str1,j_str2]=1
+
+            elif tracking == 'weighted':
+                #TODO:develop this sh!t
+                score_matrix=np.zeros([n_str1,n_str2])
+
+                for j_str2 in range(n_str2):
+                    str2_poly_vertices=[(structures_2[j_str2]['Polygon'].x[i],
+                                         structures_2[j_str2]['Polygon'].y[i])
+                                        for i in range(len(structures_2[j_str2]['Polygon'].x))]
+                    str2_polygon=PolygonShapely(str2_poly_vertices)
+                    str2_polygon.is_valid
+                    str2_polygon=str2_polygon.buffer(0) #Prevents self-intersection
+                    for j_str1 in range(n_str1):
+                        str1_poly_vertices=[(structures_1[j_str1]['Polygon'].x[i],
+                                             structures_1[j_str1]['Polygon'].y[i])
+                                            for i in range(len(structures_1[j_str1]['Polygon'].x))]
+                        str1_polygon=PolygonShapely(str1_poly_vertices)
+                        str1_polygon.is_valid
+                        str1_polygon=str1_polygon.buffer(0) #Prevents self-intersection
+                        try:
+                            if str2_polygon.intersects(str1_polygon):
+                                intersection_area=str1_polygon.intersection(str2_polygon).area
+                                union_area=unary_union([str1_polygon,str2_polygon]).area
+                                score_matrix[j_str1,j_str2] += intersection_area/union_area*matrix_weight['iou']
+
+                                x_min=np.min([np.min(structures_1[j_str1]['Polygon'].x_data_pix),
+                                              np.min(structures_2[j_str2]['Polygon'].x_data_pix)])
+                                x_max=np.max([np.max(structures_1[j_str1]['Polygon'].x_data_pix),
+                                              np.max(structures_2[j_str2]['Polygon'].x_data_pix)])
+                                y_min=np.min([np.min(structures_1[j_str1]['Polygon'].y_data_pix),
+                                              np.min(structures_2[j_str2]['Polygon'].y_data_pix)])
+                                y_max=np.max([np.max(structures_1[j_str1]['Polygon'].y_data_pix),
+                                              np.max(structures_2[j_str2]['Polygon'].y_data_pix)])
+
+                                str1_matrix=np.zeros([x_max-x_min+1,y_max-y_min+1])
+                                str2_matrix=np.zeros([x_max-x_min+1,y_max-y_min+1])
+
+                                for ind_str1_data in range(len(structures_1[j_str1]['Polygon'].data)):
+                                    x_data_pix=structures_1[j_str1]['Polygon'].x_data_pix[ind_str1_data]
+                                    y_data_pix=structures_1[j_str1]['Polygon'].y_data_pix[ind_str1_data]
+                                    str1_matrix[x_data_pix-x_min,y_data_pix-y_min]=structures_1[j_str1]['Polygon'].data[ind_str1_data]
+                                for ind_str2_data in range(len(structures_2[j_str2]['Polygon'].data)):
+                                    x_data_pix=structures_2[j_str2]['Polygon'].x_data_pix[ind_str2_data]
+                                    y_data_pix=structures_2[j_str2]['Polygon'].y_data_pix[ind_str2_data]
+                                    str2_matrix[x_data_pix-x_min,y_data_pix-y_min]=structures_2[j_str2]['Polygon'].data[ind_str2_data]
+                                str1_matrix-=np.mean(str1_matrix)
+                                str2_matrix-=np.mean(str2_matrix)
+                                ccf_matrix=correlate2d(str1_matrix,
+                                                       str2_matrix)
+
+                                cccf_matrix=ccf_matrix/np.sqrt(np.sum(str1_matrix**2)*
+                                                               np.sum(str2_matrix**2))
+                                if np.max(cccf_matrix) > 1:
+                                    raise ValueError('Something is wrong, the cross-orrelation matrix has a value higher than 1.')
+                                score_matrix[j_str1,j_str2] += np.max(cccf_matrix)*matrix_weight['cccf']
+
+                            else:
+                                score_matrix[j_str1,j_str2]=0.
+                        except Exception as e:
+                            print('Exception at line 988: '+str(e))
+                            score_matrix[j_str1,j_str2]=0.
+                if tracking_assignment == 'hungarian':  #Structure tracking based on the Hungarian algorithm
+
+                    row_indices,col_indices=linear_sum_assignment(score_matrix,maximize=True)
+                    str_overlap_matrix[row_indices, col_indices]=1.
+
+                elif tracking_assignment == 'max_score':    #Structure tracking based on the maximum overlap
+                    #TODO: this needs to be tested
+                    # for ind_row in range(len(str_overlap_matrix[0,:])):
+                    #     if np.sum(score_matrix[:,ind_row]) > 0:
+                    #         str_overlap_matrix[np.argmax(score_matrix[:,ind_row]),ind_row]=1
+
+                    for ind_row in range(len(str_overlap_matrix[:,0])):
+                        if np.sum(score_matrix[ind_row,:]) > 0:
+                            str_overlap_matrix[ind_row,
+                                               np.argmax(score_matrix[ind_row,:])]=1
+
+                    if test:
+                        print(score_matrix)
+
+                        print(str_overlap_matrix)
+                        print(frame_properties['Time'][i_frames])
+                        print(" ")
+
+                else:
+                    raise ValueError('')
+
+            else:
+                raise ValueError('Tracking method '+tracking+' is unavailable.')
+
+            """
+            Structure overlapping is not the best way to calculate because touching structure could propagate
+            in a way where two structures would merge into one and the remaining structure would be left out
+            even though there is no merging just two structures propagating.
+
+            One solution could be to include the extent of the overlap:
+                from shapely.geometry import Polygon
+                p1 = Polygon([(0,0), (1,1), (1,0)])
+                p2 = Polygon([(0,1), (1,0), (1,1)])
+                print(p1.intersection(p2))
+            """
+
             """
             example str_overlap_matrix = |0,0,0,1| lives
                                          |1,0,1,1| splits into three
@@ -960,7 +1041,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 elif np.sum(merging_indices) > 1:
                     ind_merge=np.where(merging_indices == 1)
                     #There is merging, but there is no splitting
-
 
                     if np.sum(str_overlap_matrix[ind_merge,:]) == np.sum(merging_indices):
 
@@ -1202,7 +1282,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             except:
                 next_labels=[]
 
-
             n_curr_labels=len(curr_labels)
             for ind_label in range(n_curr_labels-1,-1,-1):
                 if (curr_labels[ind_label] not in prev_labels and
@@ -1212,6 +1291,131 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     """
     PLOTTING THE RESULTS
     """
+    #TODO:something
+    import matplotlib.colors as mcolors
+    colortable=list(mcolors.TABLEAU_COLORS.keys())
+    n_color=len(colortable)
+
+    if structure_video_save:
+        from flap_nstx.gpi import _plot_ellipses_centers
+        import scipy
+
+
+        slicing_frame={'Sample':sample_0+i_frames}
+
+        frame=flap.slice_data(object_name,
+                              exp_id=exp_id,
+                              slicing=slicing_frame,
+                              output_name='GPI_FRAME')
+        x_coord_name='Device R'
+        x_unit_name='[m]'
+        y_coord_name='Device z'
+        y_unit_name='[m]'
+
+        x_coord=frame.coordinate(x_coord_name)[0]
+        y_coord=frame.coordinate(y_coord_name)[0]
+
+
+        for i_frames in range(0,n_frames):
+            slicing_frame={'Sample':sample_0+i_frames}
+
+            frame=flap.slice_data(object_name,
+                                  exp_id=exp_id,
+                                  slicing=slicing_frame,
+                                  output_name='GPI_FRAME')
+
+            frame.data=np.asarray(frame.data, dtype='float64')
+            frame.data=scipy.ndimage.median_filter(frame.data, 5)
+
+            my_dpi=80
+            fig,ax=plt.subplots(figsize=(video_resolution[0]/my_dpi,
+                                         video_resolution[1]/my_dpi),
+                                dpi=my_dpi)
+
+            if levels is None:
+                plt.contourf(x_coord, y_coord, frame.data, levels=51)
+            else:
+                plt.contourf(x_coord, y_coord, frame.data, levels=levels)
+
+            ax.set_aspect(1.0)
+            plt.colorbar()
+
+            structures=frame_properties['structures'][i_frames]
+
+            if len(structures) > 0:
+                #Parametric reproduction of the Ellipse
+                R=np.arange(0,2*np.pi,0.01)
+                for i_str in range(len(structures)):
+                    if (structures[i_str]['Half path'] is not None and
+                        structures[i_str]['Ellipse'] is not None):
+
+                        phi=structures[i_str]['Angle']
+                        a,b=structures[i_str]['Axes length']
+
+                        x_polygon=structures[i_str]['Polygon'].x
+                        y_polygon=structures[i_str]['Polygon'].y
+
+                        x_ellipse = (structures[i_str]['Center'][0] +
+                                     a*np.cos(R)*np.cos(phi) -
+                                     b*np.sin(R)*np.sin(phi))
+                        y_ellipse = (structures[i_str]['Center'][1] +
+                                     a*np.cos(R)*np.sin(phi) +
+                                     b*np.sin(R)*np.cos(phi))
+
+                        _plot_ellipses_centers(ax,
+                                               x_polygon, y_polygon,
+                                               x_ellipse, y_ellipse,
+                                               structures[i_str],
+                                               polygon_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
+                                               ellipse_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
+                                               polygon_linewidth=3,
+                                               ellipse_linewidth=1.5)
+
+                        ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
+                        ax.set_ylabel(x_coord_name + ' '+ y_unit_name)
+                        ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
+                        plt.show()
+                        plt.pause(0.001)
+
+                    plt.xlim([x_coord.min(),x_coord.max()])
+                    plt.ylim([y_coord.min(),y_coord.max()])
+
+
+            fig = plt.gcf()
+            plt.title(str(exp_id)+' @ '+"{:.3f}".format(time[i_frames]*1e3)+'ms')
+            fig.canvas.draw()
+            # Get the RGBA buffer from the figure
+            w,h = fig.canvas.get_width_height()
+
+            try:
+                buf = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                if buf.shape[0] == h*2 * w*2 * 3:
+                    buf.shape = ( h*2, w*2, 3 )
+                else:
+                    buf.shape = ( h, w, 3 )
+                buf = cv2.cvtColor(buf, cv2.COLOR_RGBA2BGR)
+                try:
+                    video
+                except NameError:
+                    print('Canvas size is: '+str(w)+' x '+str(h))
+                    height = buf.shape[0]
+                    width = buf.shape[1]
+                    video_codec_code='mp4v'
+                    filename=wd+'/plots/NSTX_GPI_'+str(exp_id)+'_'+"{:.3f}".format(time[0]*1e3)+'_fit_structures_'+str_finding_method+'.mp4'
+                    video = cv2.VideoWriter(filename,
+                                            cv2.VideoWriter_fourcc(*video_codec_code),
+                                            float(24),
+                                            (width,height),
+                                            isColor=True)
+                    print('Video resolution is: '+str(width)+' x '+str(height))
+                video.write(buf)
+            except:
+                print('Video frame cannot be saved. Passing...')
+        if structure_video_save:
+            cv2.destroyAllWindows()
+            video.release()
+            del video
+
 
     if not filename_was_none and not time_range is None:
         sample_time=frame_properties['Time'][1]-frame_properties['Time'][0]
@@ -1357,7 +1561,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     pdf_pages.savefig()
         else:
 
-            frame_properties['structures'][i_frames]
+#            frame_properties['structures'][i_frames]
             max_str_label=0
             for i_frames in range(len(frame_properties['structures'])):
                 if frame_properties['structures'][i_frames] is not None:
@@ -1397,55 +1601,68 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                 if key_str in analyzed_keys:
                                     if key_str not in struct_by_struct[ind_structure].keys():
                                         struct_by_struct[ind_structure][key_str]=[]
-                                    struct_by_struct[ind_structure][key_str].append(frame_properties['structures'][i_frames][j_str][key_str])
+                                    if frame_properties['structures'][i_frames][j_str][key_str] != 0:
+                                        struct_by_struct[ind_structure][key_str].append(frame_properties['structures'][i_frames][j_str][key_str])
+                                    else:
+                                        struct_by_struct[ind_structure][key_str].append(np.nan)
 
                             struct_by_struct[ind_structure]['Time'].append(frame_properties['Time'][i_frames])
 
             #return struct_by_struct
-
+            #print('str_by_str_len: ',struct_by_struct)
             for key in analyzed_keys:
                 fig, ax = plt.subplots(figsize=figsize)
+                for ind_str in range(len(struct_by_struct)):
+                    if struct_by_struct[ind_str]['Time'] !=[]:
+                        if key not in ['Velocity radial COG', 'Velocity poloidal COG', 'Velocity radial centroid',
+                                       'Velocity poloidal centroid', 'Velocity radial position',
+                                       'Velocity poloidal position', 'Expansion fraction area',
+                                       'Expansion fraction axes', 'Angular velocity angle', 'Angular velocity ALI']:
+                            try:
+                                if plot_tracking:
 
-                if key not in ['Velocity radial COG', 'Velocity poloidal COG', 'Velocity radial centroid',
-                               'Velocity poloidal centroid', 'Velocity radial position',
-                               'Velocity poloidal position', 'Expansion fraction area',
-                               'Expansion fraction axes', 'Angular velocity angle', 'Angular velocity ALI']:
-                    for ind_str in range(len(struct_by_struct)):
-                        try:
-                            if struct_by_struct[ind_str]['Time'] !=[]:
-                                ax.plot(struct_by_struct[ind_str]['Time'],
-                                        struct_by_struct[ind_str][key],
-                                        label=str(ind_str))
+                                    ax.plot(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
+                                            struct_by_struct[ind_str][key],
+                                            label=str(ind_str),
+                                            color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                            )
 
                                 if plot_scatter:
-                                    ax.scatter(struct_by_struct[ind_str]['Time'],
+                                    ax.scatter(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
                                                struct_by_struct[ind_str][key],
                                                label=str(ind_str),
                                                s=5,
-                                               marker='o')
-                        except:
-                            pass
-                    ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
-                else:
-                    for ind_str in range(len(struct_by_struct)):
-                        try:
-                            if struct_by_struct[ind_str]['Time'] !=[]:
-                                ax.plot(struct_by_struct[ind_str]['Time'][1:],
-                                        struct_by_struct[ind_str][key],
-                                        label=str(ind_str))
+                                               marker='o',
+                                               color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                               )
+                            except Exception as e:
+                                print(e)
+                                pass
+                            ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
+                        else:
+                            try:
+
+                                if plot_tracking:
+                                    ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
+                                            struct_by_struct[ind_str][key],
+                                            label=str(ind_str),
+                                            color=colortable[int(np.mod(ind_str+1,n_color))],
+                                            )
 
                                 if plot_scatter:
-                                    ax.scatter(struct_by_struct[ind_str]['Time'][1:],
+                                    ax.scatter(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
                                                struct_by_struct[ind_str][key],
                                                label=str(ind_str),
                                                s=5,
-                                               marker='o')
-                        except:
-                            pass
-                    ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
+                                               marker='o',
+                                               color=colortable[np.mod(int(ind_str)+1,n_color)],
+                                               )
+                            except:
+                                pass
+                            ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
 
-                ax.set_xlabel('Time $[\mu s]$')
-                ax.set_xlim(time_range)
+                ax.set_xlabel('Time [ms]')
+                ax.set_xlim(np.asarray(time_range)*1e3)
                 ax.set_title(str(key)+ ' vs. time')
 
                 if plot_for_publication:
@@ -1460,6 +1677,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
         if pdf:
            pdf_pages.close()
+
         if plot_for_publication:
             import matplotlib.style as pltstyle
             pltstyle.use('default')
