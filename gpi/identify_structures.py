@@ -420,7 +420,9 @@ def identify_structures(#General inputs
             cnts = imutils.grab_contours(cnts)
             max_contour_prelim = max(cnts, key=cv2.contourArea)
             max_contour = np.squeeze(max_contour_prelim)
-            try:
+            # try:
+            #TODO: itt van a kutya elasva
+            if True:
                 if spatial:
                     max_contour=np.asarray([x_coord[max_contour[:,1],
                                                     max_contour[:,0]],
@@ -456,9 +458,9 @@ def identify_structures(#General inputs
                     structures.append(copy.deepcopy(one_structure))
                     structures[-1]['Half path']=Path(max_contour_looped,codes)
                     structures[-1]['Polygon']=full_polygon
-            except Exception as e:
-                print(e)
-                continue
+            # except Exception as e:
+            #     print(e)
+            #     continue
 
 
     #Calculate the ellipse and its properties for the half level contours

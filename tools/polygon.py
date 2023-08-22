@@ -62,12 +62,38 @@ class Polygon:
 
     def remove_self_intersection(self):
         from shapely.geometry import Polygon as PolygonShapely
-        poly_vertices=[(self.x[i],
-                        self.y[i])
-                       for i in range(len(self.x))]
-        polygon=PolygonShapely(poly_vertices)
+        from shapely import concave_hull
+
+        polygon=PolygonShapely(zip(self.x,self.y))
         polygon.is_valid
-        polygon=str2_polygon.buffer(0) #Prevents self-intersection
+        polygon=concave_hull(polygon.buffer(0)) #Prevents self-intersection
+
+        self._shapely_polygon=polygon
+        #try:
+        if True:
+            points = []
+            try:
+                for poly in polygon:
+                    points.extend(poly.exterior.coords[:-1])
+            except:
+                points.extend(polygon.exterior.coords[:-1])
+
+            points=np.asarray(points)
+            self.x = points[:,0]
+            self.y = points[:,1]
+
+            xy_looped=np.zeros([len(self.x)+1,2])
+            xy_looped[0:-1,:]=np.asarray([self.x, self.y]).T
+            xy_looped[-1,:]=[self.x[0], self.y[0]]
+
+            self.x=xy_looped[:,0]
+            self.y=xy_looped[:,1]
+
+        # except Exception as e:
+        #     print('Exception at line 75 in tools/polygon.py:')
+        #     print(str(e))
+
+
 
     @property
     def intensity(self):
@@ -112,6 +138,14 @@ class Polygon:
         xy_looped[-1,:]=[self.x[0], self.y[0]]
 
         return Path(xy_looped,codes)
+
+    @property
+    def shapely_polygon(self):
+        try:
+            return self._shapely_polygon
+        except:
+            self.remove_self_intersection()
+            return self._shapely_polygon
 
     @property
     def area(self):

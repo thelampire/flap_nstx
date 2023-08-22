@@ -190,7 +190,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     """
 
     if tracking == 'weighted':
-        from shapely.geometry import Polygon as PolygonShapely
         from shapely.ops import unary_union
         from scipy.signal import correlate2d
         from scipy.optimize import linear_sum_assignment
@@ -400,25 +399,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                           exp_id=exp_id).coordinate('Sample')[0][0,0,0]
 
         if not (structure_video_save and nocalc):
-            data_dict={'max':np.zeros([len(time)]),
-                       'avg':np.zeros([len(time)]),
-                       'stddev':np.zeros([len(time)]),
-                       'raw':np.zeros([len(time)]),
-
-                       'unit':None,
-                       'label':None,
-                       }
-
-            frame_properties={'shot':exp_id,
-                              'Time':time,
-                              'data':{},
-                              'derived':{},
-                              'structures':[],
-                              }
-
-            """
-            Frame characterizing parameters
-            """
             coordinate_names=[d.coordinates[i].unit.name for i in range(len(d.coordinates))]
             distance_unit='pix'
             time_unit='sample'
@@ -428,188 +408,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 if coordinate_names[ind] == 'Device R':
                     distance_unit=d.coordinates[ind].unit.unit
 
-
-            key='Angle'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$\phi$'
-            frame_properties['data'][key]['unit']='deg'
-
-            key='Angle of least inertia'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$\phi_{ALI}$'
-            frame_properties['data'][key]['unit']='deg'
-
-            key='Area'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Area'
-            frame_properties['data'][key]['unit']='$'+distance_unit+'^2$'
-
-            key='Axes length minor'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='a'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Axes length major'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='a'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Center of gravity radial'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$COG_{rad}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Center of gravity poloidal'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$COG_{pol}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Centroid radial'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Centr. rad.'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Centroid poloidal'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Centr. pol.'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Convexity'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Convexity'
-            frame_properties['data'][key]['unit']=''
-
-            key='Elongation'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Elong.'
-            frame_properties['data'][key]['unit']=''
-
-            key='Frame COG radial'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Frame COG poloidal'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Position radial'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='R'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Position poloidal'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='z'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Roundness'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Round.'
-            frame_properties['data'][key]['unit']=''
-
-            key='Separatrix dist'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$r-r_{sep}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Size radial'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$d_{rad}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Size poloidal'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$d_{pol}$'
-            frame_properties['data'][key]['unit']=distance_unit
-
-            key='Solidity'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='Solidity'
-            frame_properties['data'][key]['unit']=''
-
-            key='Str number'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='N'
-            frame_properties['data'][key]['unit']=''
-
-            key='Total bending energy'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$E_{bend}$'
-            frame_properties['data'][key]['unit']=''
-
-            key='Total curvature'
-            frame_properties['data'][key]=copy.deepcopy(data_dict)
-            frame_properties['data'][key]['label']='$\kappa_{tot}$'
-            frame_properties['data'][key]['unit']=''
-
-            """
-            Differential parameters
-            """
-
-            differential_keys=['Velocity radial COG',
-                               'Velocity poloidal COG',
-                               'Velocity radial centroid',
-                               'Velocity poloidal centroid',
-                               'Velocity radial position',
-                               'Velocity poloidal position',
-
-                               'Expansion fraction area',
-                               'Expansion fraction axes',
-                               'Angular velocity angle',
-                               'Angular velocity ALI',
-                               ]
-
-            key='Angular velocity angle'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']=''
-            frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-            key='Angular velocity ALI'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']=''
-            frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-            key='Expansion fraction area'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$f_E$'
-            frame_properties['derived'][key]['unit']='1/'+time_unit
-
-            key='Expansion fraction axes'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$f_{E,area}$'
-            frame_properties['derived'][key]['unit']='1/'+time_unit
-
-            key='Velocity radial position'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{rad,pos}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-            key='Velocity poloidal position'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{pol,pos}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-            key='Velocity radial COG'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{rad,COG}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-            key='Velocity poloidal COG'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{pol,COG}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-            key='Velocity radial centroid'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{rad,centroid}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-            key='Velocity poloidal centroid'
-            frame_properties['derived'][key]=copy.deepcopy(data_dict)
-            frame_properties['derived'][key]['label']='$v_{pol,centroid}$'
-            frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+            frame_properties=frame_properties_dict(exp_id,time, time_unit,distance_unit)
 
             #Inicializing for frame handling
             frame=None
@@ -860,6 +659,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                        'Angular velocity angle',
                        'Angular velocity ALI',
                        ]
+    differential_keys=list(frame_properties['derived'].keys())
 
     sample_time=frame_properties['Time'][1]-frame_properties['Time'][0]
     for i_frames in range(1,n_frames):
@@ -905,19 +705,21 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 score_matrix=np.zeros([n_str1,n_str2])
 
                 for j_str2 in range(n_str2):
-                    str2_poly_vertices=[(structures_2[j_str2]['Polygon'].x[i],
-                                         structures_2[j_str2]['Polygon'].y[i])
-                                        for i in range(len(structures_2[j_str2]['Polygon'].x))]
-                    str2_polygon=PolygonShapely(str2_poly_vertices)
-                    str2_polygon.is_valid
-                    str2_polygon=str2_polygon.buffer(0) #Prevents self-intersection
+                    # str2_poly_vertices=[(structures_2[j_str2]['Polygon'].x[i],
+                    #                      structures_2[j_str2]['Polygon'].y[i])
+                    #                     for i in range(len(structures_2[j_str2]['Polygon'].x))]
+                    # str2_polygon=PolygonShapely(str2_poly_vertices)
+                    # str2_polygon.is_valid
+                    # str2_polygon=str2_polygon.buffer(0) #Prevents self-intersection
+                    str2_polygon=structures_2[j_str2]['Polygon'].shapely_polygon
                     for j_str1 in range(n_str1):
-                        str1_poly_vertices=[(structures_1[j_str1]['Polygon'].x[i],
-                                             structures_1[j_str1]['Polygon'].y[i])
-                                            for i in range(len(structures_1[j_str1]['Polygon'].x))]
-                        str1_polygon=PolygonShapely(str1_poly_vertices)
-                        str1_polygon.is_valid
-                        str1_polygon=str1_polygon.buffer(0) #Prevents self-intersection
+                        # str1_poly_vertices=[(structures_1[j_str1]['Polygon'].x[i],
+                        #                      structures_1[j_str1]['Polygon'].y[i])
+                        #                     for i in range(len(structures_1[j_str1]['Polygon'].x))]
+                        # str1_polygon=PolygonShapely(str1_poly_vertices)
+                        # str1_polygon.is_valid
+                        # str1_polygon=str1_polygon.buffer(0) #Prevents self-intersection
+                        str1_polygon=structures_1[j_str1]['Polygon'].shapely_polygon
                         try:
                             if str2_polygon.intersects(str1_polygon):
                                 intersection_area=str1_polygon.intersection(str2_polygon).area
@@ -926,10 +728,13 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                                 x_min=np.min([np.min(structures_1[j_str1]['Polygon'].x_data_pix),
                                               np.min(structures_2[j_str2]['Polygon'].x_data_pix)])
+
                                 x_max=np.max([np.max(structures_1[j_str1]['Polygon'].x_data_pix),
                                               np.max(structures_2[j_str2]['Polygon'].x_data_pix)])
+
                                 y_min=np.min([np.min(structures_1[j_str1]['Polygon'].y_data_pix),
                                               np.min(structures_2[j_str2]['Polygon'].y_data_pix)])
+
                                 y_max=np.max([np.max(structures_1[j_str1]['Polygon'].y_data_pix),
                                               np.max(structures_2[j_str2]['Polygon'].y_data_pix)])
 
@@ -1715,3 +1520,196 @@ def calculate_differential_keys(structure_2=None,
     structure_2['Angular velocity ALI']=(structure_2['Polygon'].principal_axes_angle-
                                          structure_1['Polygon'].principal_axes_angle)/sample_time
     return structure_2
+
+def frame_properties_dict(exp_id,time, time_unit, distance_unit):
+    data_dict={'max':np.zeros([len(time)]),
+               'avg':np.zeros([len(time)]),
+               'stddev':np.zeros([len(time)]),
+               'raw':np.zeros([len(time)]),
+
+               'unit':None,
+               'label':None,
+               }
+
+    frame_properties={'shot':exp_id,
+                      'Time':time,
+                      'data':{},
+                      'derived':{},
+                      'structures':[],
+                      }
+
+    """
+    Frame characterizing parameters
+    """
+
+
+    key='Angle'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$\phi$'
+    frame_properties['data'][key]['unit']='deg'
+
+    key='Angle of least inertia'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$\phi_{ALI}$'
+    frame_properties['data'][key]['unit']='deg'
+
+    key='Area'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Area'
+    frame_properties['data'][key]['unit']='$'+distance_unit+'^2$'
+
+    key='Axes length minor'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='a'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Axes length major'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='a'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Center of gravity radial'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$COG_{rad}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Center of gravity poloidal'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$COG_{pol}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Centroid radial'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Centr. rad.'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Centroid poloidal'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Centr. pol.'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Convexity'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Convexity'
+    frame_properties['data'][key]['unit']=''
+
+    key='Elongation'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Elong.'
+    frame_properties['data'][key]['unit']=''
+
+    key='Frame COG radial'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$COG_{frame,rad}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Frame COG poloidal'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$COG_{frame,rad}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Position radial'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='R'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Position poloidal'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='z'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Roundness'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Round.'
+    frame_properties['data'][key]['unit']=''
+
+    key='Separatrix dist'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$r-r_{sep}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Size radial'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$d_{rad}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Size poloidal'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$d_{pol}$'
+    frame_properties['data'][key]['unit']=distance_unit
+
+    key='Solidity'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='Solidity'
+    frame_properties['data'][key]['unit']=''
+
+    key='Str number'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='N'
+    frame_properties['data'][key]['unit']=''
+
+    key='Total bending energy'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$E_{bend}$'
+    frame_properties['data'][key]['unit']=''
+
+    key='Total curvature'
+    frame_properties['data'][key]=copy.deepcopy(data_dict)
+    frame_properties['data'][key]['label']='$\kappa_{tot}$'
+    frame_properties['data'][key]['unit']=''
+
+    """
+    Differential parameters
+    """
+
+    key='Angular velocity angle'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']=''
+    frame_properties['derived'][key]['unit']='rad/'+time_unit
+
+    key='Angular velocity ALI'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']=''
+    frame_properties['derived'][key]['unit']='rad/'+time_unit
+
+    key='Expansion fraction area'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$f_E$'
+    frame_properties['derived'][key]['unit']='1/'+time_unit
+
+    key='Expansion fraction axes'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$f_{E,area}$'
+    frame_properties['derived'][key]['unit']='1/'+time_unit
+
+    key='Velocity radial position'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{rad,pos}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    key='Velocity poloidal position'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{pol,pos}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    key='Velocity radial COG'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{rad,COG}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    key='Velocity poloidal COG'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{pol,COG}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    key='Velocity radial centroid'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{rad,centroid}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    key='Velocity poloidal centroid'
+    frame_properties['derived'][key]=copy.deepcopy(data_dict)
+    frame_properties['derived'][key]['label']='$v_{pol,centroid}$'
+    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+
+    return frame_properties
