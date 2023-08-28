@@ -82,6 +82,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                            #Input for size pre-processing
                            str_finding_method='contour',         # Contour or watershed based structure finding
+                           ignore_side_structures=False,
                            ellipse_method='linalg',
                            fit_shape='ellipse',
                            subtraction_order=None,      #Polynomial subtraction order
@@ -100,9 +101,11 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            weighting='intensity',                #Weighting of the results based on the 'number' of structures, the 'intensity' of the structures or the 'area' of the structures (options are in '')
                            maxing='intensity',                   #Return the properties of structures which have the largest "area" or "intensity"
                            prev_str_weighting='intensity',       #weighting for the differential quantities like angular and linear velocity
-                           str_size_lower_thres=0.00375*4,        #Structures having sizes under this value are filtered out from the results. (Default is 4 pixels for both radial, poloidal)
+                           str_size_lower_thres=0.00375*4,       #Structures having sizes under this value are filtered out from the results. (Default is 4 pixels for both radial, poloidal)
                            elongation_threshold=0.1,             #Structures having major/minor_axis-1 lower than this value are set to angle=np.nan
+                           smooth_contours=5,                    #Smooths contours with the corner cutting technique this many times.
                            remove_orphans=True,                  #Structures which
+                           min_structure_lifetime=5,             #
                            calculate_rough_diff_velocities=False,#Calculate velocities from average or maximum structuers (deprecated)
                            structure_pixel_calc=False,           #Calculate and plot the structure sizes in pixels
                            tracking='weighted',                  #Tracking methods 'overlap' or 'weighted'
@@ -464,12 +467,14 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                 structures_dict = identify_structures(str_finding_method=str_finding_method,
                                                       data_object='GPI_FRAME',
+                                                      ignore_side_structure=ignore_side_structures,
                                                       threshold_level=intensity_thres_level_str_size,
                                                       exp_id=exp_id,
                                                       filter_level=filter_level,
                                                       nlevel=nlevel,
                                                       levels=levels,
                                                       mfilter_range=5,
+                                                      smooth_contours=smooth_contours,
                                                       spatial=not structure_pixel_calc,
                                                       pixel=structure_pixel_calc,
                                                       remove_interlaced_structures=remove_interlaced_structures,
@@ -647,18 +652,18 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     #Structure tracking
     highest_label=0
     n_frames=len(frame_properties['structures'])
-    differential_keys=['Velocity radial COG',
-                       'Velocity poloidal COG',
-                       'Velocity radial centroid',
-                       'Velocity poloidal centroid',
-                       'Velocity radial position',
-                       'Velocity poloidal position',
+    # differential_keys=['Velocity radial COG',
+    #                    'Velocity poloidal COG',
+    #                    'Velocity radial centroid',
+    #                    'Velocity poloidal centroid',
+    #                    'Velocity radial position',
+    #                    'Velocity poloidal position',
 
-                       'Expansion fraction area',
-                       'Expansion fraction axes',
-                       'Angular velocity angle',
-                       'Angular velocity ALI',
-                       ]
+    #                    'Expansion fraction area',
+    #                    'Expansion fraction axes',
+    #                    'Angular velocity angle',
+    #                    'Angular velocity ALI',
+    #                    ]
     differential_keys=list(frame_properties['derived'].keys())
 
     sample_time=frame_properties['Time'][1]-frame_properties['Time'][0]
@@ -677,7 +682,21 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         else:
             valid_structure_2=False
 
-        if valid_structure_1 and valid_structure_2:
+        if valid_structure_1 and not valid_structure_2:
+            for j_str1 in range(len(structures_1)):
+                structures_1[j_str1]['Label']=highest_label+1
+                highest_label += 1
+                structures_1[j_str1]['Born']=False
+                structures_1[j_str1]['Died']=True
+
+        elif not valid_structure_1 and valid_structure_2:
+            for j_str2 in range(len(structures_2)):
+                structures_2[j_str2]['Label']=highest_label+1
+                highest_label += 1
+                structures_2[j_str2]['Born']=True
+                structures_2[j_str2]['Died']=False
+
+        elif valid_structure_1 and valid_structure_2:
             for j_str1 in range(len(structures_1)):
                 if structures_1[j_str1]['Label'] is None:
                     structures_1[j_str1]['Label']=highest_label+1
@@ -705,20 +724,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 score_matrix=np.zeros([n_str1,n_str2])
 
                 for j_str2 in range(n_str2):
-                    # str2_poly_vertices=[(structures_2[j_str2]['Polygon'].x[i],
-                    #                      structures_2[j_str2]['Polygon'].y[i])
-                    #                     for i in range(len(structures_2[j_str2]['Polygon'].x))]
-                    # str2_polygon=PolygonShapely(str2_poly_vertices)
-                    # str2_polygon.is_valid
-                    # str2_polygon=str2_polygon.buffer(0) #Prevents self-intersection
                     str2_polygon=structures_2[j_str2]['Polygon'].shapely_polygon
                     for j_str1 in range(n_str1):
-                        # str1_poly_vertices=[(structures_1[j_str1]['Polygon'].x[i],
-                        #                      structures_1[j_str1]['Polygon'].y[i])
-                        #                     for i in range(len(structures_1[j_str1]['Polygon'].x))]
-                        # str1_polygon=PolygonShapely(str1_poly_vertices)
-                        # str1_polygon.is_valid
-                        # str1_polygon=str1_polygon.buffer(0) #Prevents self-intersection
                         str1_polygon=structures_1[j_str1]['Polygon'].shapely_polygon
                         try:
                             if str2_polygon.intersects(str1_polygon):
@@ -745,10 +752,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                     x_data_pix=structures_1[j_str1]['Polygon'].x_data_pix[ind_str1_data]
                                     y_data_pix=structures_1[j_str1]['Polygon'].y_data_pix[ind_str1_data]
                                     str1_matrix[x_data_pix-x_min,y_data_pix-y_min]=structures_1[j_str1]['Polygon'].data[ind_str1_data]
+
                                 for ind_str2_data in range(len(structures_2[j_str2]['Polygon'].data)):
                                     x_data_pix=structures_2[j_str2]['Polygon'].x_data_pix[ind_str2_data]
                                     y_data_pix=structures_2[j_str2]['Polygon'].y_data_pix[ind_str2_data]
                                     str2_matrix[x_data_pix-x_min,y_data_pix-y_min]=structures_2[j_str2]['Polygon'].data[ind_str2_data]
+
                                 str1_matrix-=np.mean(str1_matrix)
                                 str2_matrix-=np.mean(str2_matrix)
                                 ccf_matrix=correlate2d(str1_matrix,
@@ -765,16 +774,13 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                         except Exception as e:
                             print('Exception at line 988: '+str(e))
                             score_matrix[j_str1,j_str2]=0.
+
                 if tracking_assignment == 'hungarian':  #Structure tracking based on the Hungarian algorithm
 
                     row_indices,col_indices=linear_sum_assignment(score_matrix,maximize=True)
                     str_overlap_matrix[row_indices, col_indices]=1.
 
                 elif tracking_assignment == 'max_score':    #Structure tracking based on the maximum overlap
-                    #TODO: this needs to be tested
-                    # for ind_row in range(len(str_overlap_matrix[0,:])):
-                    #     if np.sum(score_matrix[:,ind_row]) > 0:
-                    #         str_overlap_matrix[np.argmax(score_matrix[:,ind_row]),ind_row]=1
 
                     for ind_row in range(len(str_overlap_matrix[:,0])):
                         if np.sum(score_matrix[ind_row,:]) > 0:
@@ -965,8 +971,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     else:
                         #This was handled in the previous case at the end of merging.
                         pass
+
             frame_properties['structures'][i_frames-1]=structures_1.copy()
             frame_properties['structures'][i_frames]=structures_2.copy()
+
 
             if calculate_rough_diff_velocities:
                 for j_str2 in range(n_str2):
@@ -1070,28 +1078,43 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 frame_properties['derived'][key]['max'][i_frames]=np.nan
 
     if remove_orphans:
-        for i_frames in range(1,n_frames-1):
-            try:
-                prev_structures=frame_properties['structures'][i_frames-1]
-                prev_labels=[prev_structures[i_str_prev]['Label'] for i_str_prev in range(len(prev_structures))]
-            except:
-                prev_labels=[]
-            try:
-                curr_structures=frame_properties['structures'][i_frames]
-                curr_labels=[curr_structures[i_str_curr]['Label'] for i_str_curr in range(len(curr_structures))]
-            except:
-                curr_labels=[]
-            try:
-                next_structures=frame_properties['structures'][i_frames+1]
-                next_labels=[next_structures[i_str_next]['Label'] for i_str_next in range(len(next_structures))]
-            except:
-                next_labels=[]
+        all_labels=[]
+        for i_frames in range(0, n_frames):
 
-            n_curr_labels=len(curr_labels)
-            for ind_label in range(n_curr_labels-1,-1,-1):
-                if (curr_labels[ind_label] not in prev_labels and
-                    curr_labels[ind_label] not in next_labels):
-                    frame_properties['structures'][i_frames].pop(ind_label)
+            for ind_str in range(len(frame_properties['structures'][i_frames-1])):
+                label=frame_properties['structures'][i_frames-1][ind_str]['Label']
+                if label is None:
+                    print(frame_properties['structures'][i_frames-1][ind_str])
+            curr_structures=frame_properties['structures'][i_frames]
+
+            curr_labels=[curr_structures[ind_str]['Label'] for ind_str in range(len(curr_structures))]
+            all_labels=np.append(all_labels,curr_labels)
+
+        labels_to_drop=[]
+        labels_to_keep=[]
+        print(all_labels)
+        for label in range(int(np.max(all_labels)+1)):
+            if np.sum(all_labels == label) < min_structure_lifetime:
+                labels_to_drop.append(label)
+            else:
+                labels_to_keep.append(label)
+
+        for i_frames in range(0, n_frames):
+            curr_structures=frame_properties['structures'][i_frames]
+            for ind_str in range(len(curr_structures)-1,-1,-1):
+                if curr_structures[ind_str]['Label'] in labels_to_drop:
+                    curr_structures.pop(ind_str)
+        labels_to_keep=np.asarray(labels_to_keep)
+#TODO: This is not working yet, produces -1 results, weird lists, etc.
+
+    if True: #RELABEL
+        new_labels=np.arange(len(labels_to_keep)+1)
+        for i_frames in range(n_frames):
+            for ind_struct in range(len(frame_properties['structures'][i_frames])):
+                ind=np.where(labels_to_keep == frame_properties['structures'][i_frames][ind_struct]['Label'])
+                if len(new_labels[ind]) != 0 and int(ind[0]) != -1:
+                    frame_properties['structures'][i_frames][ind_struct]['Label']=int(new_labels[ind])
+
 
     """
     PLOTTING THE RESULTS
@@ -1375,7 +1398,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                         if current_label is not None and current_label > max_str_label:
                             max_str_label=current_label
             struct_by_struct=[]
-            for ind in range(max_str_label):
+            for ind in range(max_str_label+1):
                 struct_by_struct.append({'Time':[],}.copy())
 
             analyzed_keys=['Centroid radial', 'Centroid poloidal',
@@ -1388,10 +1411,14 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            'Size radial', 'Size poloidal',
 
                            'Angle', 'Elongation',
-                           'Velocity radial COG', 'Velocity poloidal COG', 'Velocity radial centroid',
-                           'Velocity poloidal centroid', 'Velocity radial position',
-                           'Velocity poloidal position', 'Expansion fraction area',
-                           'Expansion fraction axes', 'Angular velocity angle', 'Angular velocity ALI'
+                           'Velocity radial COG', 'Velocity poloidal COG',
+                           'Velocity radial centroid', 'Velocity poloidal centroid',
+                           'Velocity radial position', 'Velocity poloidal position',
+                           'Expansion fraction area', 'Expansion fraction axes',
+                           'Angular velocity angle', 'Angular velocity ALI',
+
+                           'Convexity', 'Solidity', 'Roundness', 'Total curvature',
+                           'Total bending energy',
                            ]
 
             for i_frames in range(len(frame_properties['structures'])):
@@ -1400,8 +1427,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                         if (frame_properties['structures'][i_frames][j_str]['Label'] is not None and
                             frame_properties['structures'][i_frames][j_str]['Label'] != []):
 
-                            ind_structure=int(frame_properties['structures'][i_frames][j_str]['Label'])-1
-                            print(ind_structure)
+                            ind_structure=int(frame_properties['structures'][i_frames][j_str]['Label'])
                             for key_str in frame_properties['structures'][i_frames][j_str].keys():
                                 if key_str in analyzed_keys:
                                     if key_str not in struct_by_struct[ind_structure].keys():
@@ -1419,10 +1445,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 fig, ax = plt.subplots(figsize=figsize)
                 for ind_str in range(len(struct_by_struct)):
                     if struct_by_struct[ind_str]['Time'] !=[]:
-                        if key not in ['Velocity radial COG', 'Velocity poloidal COG', 'Velocity radial centroid',
-                                       'Velocity poloidal centroid', 'Velocity radial position',
-                                       'Velocity poloidal position', 'Expansion fraction area',
-                                       'Expansion fraction axes', 'Angular velocity angle', 'Angular velocity ALI']:
+                        if key not in differential_keys:
                             try:
                                 if plot_tracking:
 
@@ -1441,7 +1464,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                color=colortable[np.mod(int(ind_str)+1,n_color)]
                                                )
                             except Exception as e:
-                                print(e)
+                                print(str(e))
                                 pass
                             ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
                         else:
@@ -1521,7 +1544,8 @@ def calculate_differential_keys(structure_2=None,
                                          structure_1['Polygon'].principal_axes_angle)/sample_time
     return structure_2
 
-def frame_properties_dict(exp_id,time, time_unit, distance_unit):
+def frame_properties_dict(exp_id, time, time_unit, distance_unit):
+
     data_dict={'max':np.zeros([len(time)]),
                'avg':np.zeros([len(time)]),
                'stddev':np.zeros([len(time)]),

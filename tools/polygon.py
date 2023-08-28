@@ -22,7 +22,8 @@ class Polygon:
                  data=None,
                  upsample=False,
                  test=False,
-                 path_order=3):
+                 path_order=3,
+                 ):
 
         if ((x is not None and y is not None) and  (len(x) == len(y))):
             self.x=np.asarray(x)
@@ -66,11 +67,13 @@ class Polygon:
 
         polygon=PolygonShapely(zip(self.x,self.y))
         polygon.is_valid
-        polygon=concave_hull(polygon.buffer(0)) #Prevents self-intersection
+        if False:   #This
+            polygon=concave_hull(polygon.buffer(0)) #Prevents self-intersection
+        else:
+            polygon=polygon.buffer(0)
 
         self._shapely_polygon=polygon
-        #try:
-        if True:
+        try:
             points = []
             try:
                 for poly in polygon:
@@ -79,6 +82,7 @@ class Polygon:
                 points.extend(polygon.exterior.coords[:-1])
 
             points=np.asarray(points)
+
             self.x = points[:,0]
             self.y = points[:,1]
 
@@ -89,11 +93,24 @@ class Polygon:
             self.x=xy_looped[:,0]
             self.y=xy_looped[:,1]
 
-        # except Exception as e:
-        #     print('Exception at line 75 in tools/polygon.py:')
-        #     print(str(e))
+        except Exception as e:
+            raise e
 
+    def smooth(self, refinements=5): #chaikins_corner_cutting
 
+        coords = np.array([self.x,self.y]).T
+
+        for _ in range(refinements):
+            L = coords.repeat(2, axis=0)
+            R = np.empty_like(L)
+            R[0] = L[0]
+            R[2::2] = L[1:-1:2]
+            R[1:-1:2] = L[2::2]
+            R[-1] = L[-1]
+            coords = L * 0.75 + R * 0.25
+
+        self.x=coords[:,0].copy()
+        self.y=coords[:,1].copy()
 
     @property
     def intensity(self):
@@ -214,6 +231,10 @@ class Polygon:
 
         return Polygon(x=x_hull,
                        y=y_hull)
+    @property
+    def concave_hull(self):
+        raise NotImplementedError('Do your thing...')
+
     @property
     def perimeter(self):
         '''

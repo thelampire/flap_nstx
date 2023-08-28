@@ -48,10 +48,12 @@ def identify_structures(#General inputs
 
                         ignore_side_structure=False,
                         ignore_large_structure=False,
-
+                        smooth_contours=0,                      #smooth the perimeter with corner cutting this many times
                         ellipse_method='linalg',                #linalg or skimage
                         fit_shape='ellipse',                    #ellipse or gaussian
                         str_size_lower_thres=4*0.00375,         #lower threshold for structures
+                        str_size_upper_thres=64*0.00375,        #Upper theshold for structures
+
                         elongation_threshold=0.1,               #Threshold for angle definition, the angle of circular structures cannot be determined.
 
                         str_finding_method='contour',          #Contour or watershed for now
@@ -100,12 +102,13 @@ def identify_structures(#General inputs
     READING THE DATA
     ----------------
     """
+
     if type(data_object) is str:
         data_object=flap.get_data_object_ref(data_object, exp_id=exp_id)
         if len(data_object.data.shape) != 2:
             raise IOError('The inpud data_object is not 2D. The method only processes 2D data.')
 
-    if data_object is None:
+    elif data_object is None:
         if (exp_id is None) or ((time is None) and (sample is None)):
             raise IOError('exp_id and time needs to be set if data_object is not set.')
         try:
@@ -122,37 +125,48 @@ def identify_structures(#General inputs
         if sample is not None:
             data_object=data_object.slice_data(slicing={'Sample':sample})
 
-    try:
-        data_object.data
-    except:
-        raise IOError('The input data object should be a flap.DataObject')
+    if type(data_object) is type(flap.DataObject()):
+        try:
+            data_object.data
+        except:
+            raise IOError('The input data object should be a flap.DataObject')
 
-    if len(data_object.data.shape) != 2:
-        raise TypeError('The frame dataobject needs to be a 2D object without a time coordinate.')
+        if len(data_object.data.shape) != 2:
+            raise TypeError('The frame dataobject needs to be a 2D object without a time coordinate.')
 
-    if pixel:
-        x_coord_name='Image x'
-        x_unit_name='[pix]'
+        if pixel:
+            x_coord_name='Image x'
+            x_unit_name='[pix]'
 
-        y_coord_name='Image y'
-        y_unit_name='[pix]'
+            y_coord_name='Image y'
+            y_unit_name='[pix]'
 
-    elif spatial:
-        x_coord_name='Device R'
-        x_unit_name='[m]'
-        y_coord_name='Device z'
-        y_unit_name='[m]'
+        elif spatial:
+            x_coord_name='Device R'
+            x_unit_name='[m]'
+            y_coord_name='Device z'
+            y_unit_name='[m]'
+        else:
+            raise TypeError('Cannot do pixel and spatial calculation at the same time.')
+
+        x_coord=data_object.coordinate(x_coord_name)[0]
+        y_coord=data_object.coordinate(y_coord_name)[0]
+
+        x_coord_pix=data_object.coordinate('Image x')[0]
+        y_coord_pix=data_object.coordinate('Image y')[0]
+
+        if test:
+            print(x_coord.shape,y_coord.shape)
+        data = scipy.ndimage.median_filter(data_object.data, mfilter_range)
+
+    elif type(data_object) is np.ndarray:
+        data=data_object
+        x_coord=np.arange(data_object.shape[0])
+        y_coord=np.arange(data_object.shape[1])
+        x_coord_pix=x_coord
+        y_coord_pix=y_coord
     else:
-        raise TypeError('Cannot do pixel and spatial calculation at the same time.')
-
-    x_coord=data_object.coordinate(x_coord_name)[0]
-    y_coord=data_object.coordinate(y_coord_name)[0]
-
-    x_coord_pix=data_object.coordinate('Image x')[0]
-    y_coord_pix=data_object.coordinate('Image y')[0]
-
-    if test:
-        print(x_coord.shape,y_coord.shape)
+        raise ValueError('Input is not str, None, flap.DataObject or np.ndarray')
     structures=[]
 
     one_structure={'Polygon':None,  #Calculated during segmentation
@@ -177,7 +191,7 @@ def identify_structures(#General inputs
     READING THE DATA
     ----------------
     """
-    data = scipy.ndimage.median_filter(data_object.data, mfilter_range)
+
 
     if test:
         plt.cla()
@@ -376,6 +390,8 @@ def identify_structures(#General inputs
                                  y_data=np.asarray(y_data),
                                  data=np.asarray(int_data),
                                  test=test)
+            if smooth_contours > 0:
+                half_polygon.smooth(refinements=smooth_contours)
 
             structures.append(copy.deepcopy(one_structure))
             structures[-1]['Half path']=prelim_structures[i_str]['Paths'][ind_at_half]
@@ -384,21 +400,21 @@ def identify_structures(#General inputs
     if str_finding_method == 'watershed':
 
         thresh = threshold_otsu(data_thresholded)
-
-        binary = data_thresholded > thresh
-
-        if test:
-             plt.contourf(binary)
-        binary = np.asarray(binary, dtype='uint8')
+        binary = np.asarray(data_thresholded > thresh, dtype='uint8')
 
         #distance_transformed = ndimage.distance_transform_edt(data_thresholded) #THIS IS UNNECESSARY AS THE STRUCTURES DO NOT HAVE DISTINCT BORDERS
-
         localMax = peak_local_max(copy.deepcopy(data_thresholded),
-                                  indices=False,
                                   min_distance=5,
+                                  #indices=False,
                                   labels=binary)
 
-        markers = scipy.ndimage.label(localMax,
+        peaks_mask = np.zeros_like(data_thresholded,
+                                    dtype=bool)
+
+        peaks_mask[tuple(localMax.T)] = True
+
+        markers = scipy.ndimage.label(#localMax,
+                                      peaks_mask,
                                       structure=np.ones((3, 3)))[0]
 
         labels = watershed(-data_thresholded, markers, mask=binary)
@@ -420,32 +436,40 @@ def identify_structures(#General inputs
             cnts = imutils.grab_contours(cnts)
             max_contour_prelim = max(cnts, key=cv2.contourArea)
             max_contour = np.squeeze(max_contour_prelim)
-            # try:
-            #TODO: itt van a kutya elasva
-            if True:
-                if spatial:
-                    max_contour=np.asarray([x_coord[max_contour[:,1],
-                                                    max_contour[:,0]],
-                                            y_coord[max_contour[:,1],
-                                                    max_contour[:,0]]])
+
+            try:
+
+                if len(max_contour.shape) == 2:
+                    if spatial:
+                        max_contour=np.asarray([x_coord[max_contour[:,1],
+                                                        max_contour[:,0]],
+                                                y_coord[max_contour[:,1],
+                                                        max_contour[:,0]]])
+
+                    else:
+                        max_contour=max_contour.T
                 else:
-                    max_contour=max_contour.T
+                    continue
+            except Exception as e:
+                print('Exception at flap_nstx.gpi.identify_structures line 438:')
+                print(e)
 
-                from matplotlib.path import Path
+            from matplotlib.path import Path
 
-                if max_contour.shape[0] != 1:
-                    indices=np.where(labels == label)
-                    codes=[Path.MOVETO]
-                    for i_code in range(1,len(max_contour.transpose()[:,0])):
-                        codes.append(Path.CURVE4)
-                    codes.append(Path.CLOSEPOLY)
+            if max_contour.shape[0] != 1:
+                indices=np.where(labels == label)
+                codes=[Path.MOVETO]
+                for i_code in range(1,len(max_contour.transpose()[:,0])):
+                    codes.append(Path.CURVE4)
+                codes.append(Path.CLOSEPOLY)
 
-                    max_contour_looped=np.zeros([max_contour.shape[1]+1,
-                                                 max_contour.shape[0]])
-                    max_contour_looped[0:-1,:]=max_contour.transpose()
-                    max_contour_looped[-1,:]=max_contour[:,0]
-                    vertices=copy.deepcopy(max_contour_looped)
+                max_contour_looped=np.zeros([max_contour.shape[1]+1,
+                                             max_contour.shape[0]])
+                max_contour_looped[0:-1,:]=max_contour.transpose()
+                max_contour_looped[-1,:]=max_contour[:,0]
+                vertices=copy.deepcopy(max_contour_looped)
 
+                try:
                     full_polygon=Polygon(x=vertices[:,0],
                                          y=vertices[:,1],
                                          x_data=x_coord[indices],
@@ -454,13 +478,17 @@ def identify_structures(#General inputs
                                          y_data_pix=y_coord_pix[indices],
                                          data=data[indices],
                                          test=test)
+                    if smooth_contours > 0:
+                        full_polygon.smooth(refinements=smooth_contours)
 
                     structures.append(copy.deepcopy(one_structure))
                     structures[-1]['Half path']=Path(max_contour_looped,codes)
                     structures[-1]['Polygon']=full_polygon
-            # except Exception as e:
-            #     print(e)
-            #     continue
+
+                except Exception as e:
+                     print('Exception in flap_nstx.gpi.identify_structures at line 459:')
+                     print(e)
+                     continue
 
 
     #Calculate the ellipse and its properties for the half level contours
@@ -484,6 +512,13 @@ def identify_structures(#General inputs
         structures[i_str]['Center of gravity']=polygon.center_of_gravity
         structures[i_str]['Center of gravity radial']=polygon.center_of_gravity[0]
         structures[i_str]['Center of gravity poloidal']=polygon.center_of_gravity[1]
+
+        structures[i_str]['Convexity']=polygon.convexity
+        structures[i_str]['Solidity']=polygon.solidity
+        structures[i_str]['Roundness']=polygon.roundness
+        structures[i_str]['Total bending energy']=polygon.total_bending_energy
+        structures[i_str]['Total curvature']=polygon.convexity
+
 
         if fit_shape=='ellipse':
             ellipse=FitEllipse(x=polygon.x,
@@ -522,6 +557,8 @@ def identify_structures(#General inputs
         if structures[i_str]['Axes length'][1]/structures[i_str]['Axes length'][0] < elongation_threshold:
             structures[i_str]['Angle']=np.nan
 
+
+
         size=fit_struct.size
         if np.iscomplex(size[0]) or np.iscomplex(size[1]):
             print('Size is complex')
@@ -533,35 +570,36 @@ def identify_structures(#General inputs
                 print('Size is larger than the frame size.')
                 fit_struct.set_invalid()
 
-        center=fit_struct.center
-        if ignore_side_structure:
-            if (np.sum(structures[i_str]['X coord'] == x_coord.min()) != 0 or
-                np.sum(structures[i_str]['X coord'] == x_coord.max()) != 0 or
-                np.sum(structures[i_str]['Y coord'] == y_coord.min()) != 0 or
-                np.sum(structures[i_str]['Y coord'] == y_coord.max()) != 0 or
-
-                center[0] < x_coord.min() or
-                center[0] > x_coord.max() or
-                center[1] < y_coord.min() or
-                center[1] > y_coord.max()
-                ):
-                print('Structure is at the border of the frame.')
-
-                fit_struct.set_invalid()
     if test: print('N before size thres:',len(structures))
     n_str=len(structures)
-    for i_str in range(n_str):
-        rev_ind=n_str-1-i_str
-        if (str_size_lower_thres is not None and
-            structures[rev_ind]['Size'] is not None):
 
-            if (structures[rev_ind]['Size'][0] < str_size_lower_thres or
-                structures[rev_ind]['Size'][1] < str_size_lower_thres):
+    for i_str in range(n_str-1,-1,-1):
+        if (str_size_lower_thres is not None and
+            structures[i_str]['Size'] is not None):
+
+            if (structures[i_str]['Size'][0] < str_size_lower_thres or
+                structures[i_str]['Size'][1] < str_size_lower_thres or
+                structures[i_str]['Size'][0] > str_size_upper_thres or
+                structures[i_str]['Size'][1] > str_size_upper_thres or
+                (ignore_side_structure and
+                 (np.sum(structures[i_str]['X coord'] == x_coord.min()) != 0 or
+                  np.sum(structures[i_str]['X coord'] == x_coord.max()) != 0 or
+                  np.sum(structures[i_str]['Y coord'] == y_coord.min()) != 0 or
+                  np.sum(structures[i_str]['Y coord'] == y_coord.max()) != 0 or
+                  fit_struct.center[0] < x_coord.min() or
+                  fit_struct.center[0] > x_coord.max() or
+                  fit_struct.center[1] < y_coord.min() or
+                  fit_struct.center[1] > y_coord.max()
+                 )
+                )
+               ):
                 if test:
-                    print('sx',structures[rev_ind]['Size'][0])
-                    print('sy',structures[rev_ind]['Size'][1])
+                    print('sx',structures[i_str]['Size'][0])
+                    print('sy',structures[i_str]['Size'][1])
                     print('thres',str_size_lower_thres)
-                structures.pop(rev_ind)
+                print('Structure is popped.')
+                structures.pop(i_str)
+
 
     if test: print('N after size thres:',len(structures))
 
