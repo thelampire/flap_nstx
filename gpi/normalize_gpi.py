@@ -110,6 +110,7 @@ def normalize_gpi(input_object,
 
     if return_object == 'coefficient':
         return coefficient
+
     else:
         data_obj_orig=flap.get_data_object_ref(input_object)
         data_obj_normalized=data_obj_orig.slice_data(slicing=slicing_time)

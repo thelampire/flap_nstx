@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep 13 16:15:30 2023
+
+@author: mlampert
+"""
+class Hell(Exception):pass
+
+import os
+import copy
+
+
+import flap
+import flap_nstx
+
+thisdir = os.path.dirname(os.path.realpath(__file__))
+fn = os.path.join(thisdir,"../flap_nstx.cfg")
+flap.config.read(file_name=fn)
+flap_nstx.register()
+
+from flap_nstx.gpi import calculate_nstx_gpi_angular_velocity, show_nstx_gpi_video_frames
+from flap_nstx.gpi import analyze_gpi_structures
+from flap_nstx.test import test_angular_displacement_estimation
+
+
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.ticker import MaxNLocator
+
+import numpy as np
+from skimage.filters import window, difference_of_gaussians
+
+wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+fig_dir='/publication_figures/rsi_2022'
+
+
+plt.rc('font', family='serif', serif='Helvetica')
+labelsize=9.
+linewidth=0.5
+major_ticksize=2.
+plt.rc('text', usetex=False)
+plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams['ps.fonttype'] = 42
+plt.rcParams['lines.linewidth'] = linewidth
+plt.rcParams['axes.linewidth'] = linewidth
+plt.rcParams['axes.labelsize'] = labelsize
+plt.rcParams['axes.titlesize'] = labelsize
+
+plt.rcParams['xtick.labelsize'] = labelsize
+plt.rcParams['xtick.major.size'] = major_ticksize
+plt.rcParams['xtick.major.width'] = linewidth
+plt.rcParams['xtick.minor.width'] = linewidth/2
+plt.rcParams['xtick.minor.size'] = major_ticksize/2
+
+plt.rcParams['ytick.labelsize'] = labelsize
+plt.rcParams['ytick.major.width'] = linewidth
+plt.rcParams['ytick.major.size'] = major_ticksize
+plt.rcParams['ytick.minor.width'] = linewidth/2
+plt.rcParams['ytick.minor.size'] = major_ticksize/2
+plt.rcParams['legend.fontsize'] = labelsize
+
+
+def plot_results_for_nf_2024(plot_figure=2,
+                             save_data_into_txt=False,
+                             plot_all=False,
+                             nocalc=False):
+
+    if plot_all:
+        plot_figure=-1
+        for i in range(15):
+            plot_results_for_nf_2024(plot_figure=i,
+                                     save_data_into_txt=save_data_into_txt)
+
+
+    #Settings for fig 2,3,4,13,14
+
+    exp_id=141319
+    time=0.552
+    sample_to_plot=None
+
+    """
+    GPI plot
+    """
+    if plot_figure == 1:
+        raise ValueError('GPI plot, no need to create figure.')
+
+    """
+    Watershed segmentation plot horizontal
+    """
+    if plot_figure == 2:
+        analyze_gpi_structures(exp_id=141319,
+                               time_range=[0.552,0.5522],
+                               ignore_side_structures=True,
+                               pdf=True,
+                               plot_watershed_steps=4, #4th frame
+                               plot_for_publication=True,
+                               nocalc=False,
+                               plot=False)
+
+    """
+    Flowchart plot
+    """
+    if plot_figure == 3:
+        raise ValueError('Flowchart plot, no need to create figure.')
+
+    """Blob evolution frames"""
+    if plot_figure == 4:
+        pass
+
+    """Blob evolution results"""
+    if plot_figure == 5:
+        pass
+
+    """Blob histrogram distribution results"""
+    if plot_figure == 6:
+        pass
+
+    """Blob blob correlation matrix"""
+    if plot_figure == 7:
+        raise ValueError('Not yet available, not part of the conference manuscript.')
+
+    """Blob blob trends"""
+    if plot_figure == 8:
+        pass
+
+    """Blob plasma dependence matrix"""
+    if plot_figure == 9:
+        raise ValueError('Not yet available, not part of the conference manuscript.')
+
+    """Blob plasma dependence"""
+    if plot_figure == 10:
+        raise ValueError('Not yet available, not part of the conference manuscript.')
+
+    """Blob plasma predictive power score"""
+    if plot_figure == 11:
+        raise ValueError('Not yet available, not part of the conference manuscript.')

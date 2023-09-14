@@ -46,41 +46,41 @@ def calculate_all_nstx_gpi_avg_frame_by_frame_velocity(elm_time_window=0.6e-3):
         if status != 'NO':
             #try:
             if True:
-                # calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot, 
-                #                                           time_range=[elm_time-elm_time_window,elm_time+elm_time_window], 
+                # calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot,
+                #                                           time_range=[elm_time-elm_time_window,elm_time+elm_time_window],
                 #                                           plot=False,
                 #                                           subtraction_order_for_velocity=1,
                 #                                           skip_structure_calculation=False,
                 #                                           correlation_threshold=0.,
-                #                                           pdf=True, 
-                #                                           nlevel=51, 
-                #                                           nocalc=False, 
-                #                                           filter_level=5, 
+                #                                           pdf=True,
+                #                                           nlevel=51,
+                #                                           nocalc=False,
+                #                                           filter_level=5,
                 #                                           normalize_for_size=True,
                 #                                           normalize_for_velocity=True,
                 #                                           flap_ccf=True,
                 #                                           threshold_coeff=1.,
-                #                                           normalize='roundtrip', 
-                #                                           velocity_base='cog', 
+                #                                           normalize='roundtrip',
+                #                                           velocity_base='cog',
                 #                                           str_finding_method='contour',
-                #                                           return_results=False, 
+                #                                           return_results=False,
                 #                                           plot_gas=True)
-                
-                calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot, 
-                                                           normalize='roundtrip', 
-                                                           time_range=[elm_time-elm_time_window,elm_time+elm_time_window], 
-                                                           normalize_for_velocity=True, 
-                                                           skip_structure_calculation=False, 
-                                                           normalize_for_size=True, 
-                                                           plot=False, 
-                                                           nocalc=True, 
-                                                           subtraction_order_for_velocity=1, 
-                                                           test=False, 
-                                                           str_finding_method='watershed', 
-                                                           pdf=True, 
-                                                           test_structures=False, 
-                                                           structure_video_save=False, 
-                                                           plot_gas=False)                
+
+                calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot,
+                                                           normalize='roundtrip',
+                                                           time_range=[elm_time-elm_time_window,elm_time+elm_time_window],
+                                                           normalize_for_velocity=True,
+                                                           skip_structure_calculation=False,
+                                                           normalize_for_size=True,
+                                                           plot=False,
+                                                           nocalc=True,
+                                                           subtraction_order_for_velocity=1,
+                                                           test=False,
+                                                           str_finding_method='watershed',
+                                                           pdf=True,
+                                                           test_structures=False,
+                                                           structure_video_save=False,
+                                                           plot_gas=False)
             # except:
             #     print('Calculating '+str(shot)+ ' at '+str(elm_time)+' failed.')
             #     failed_elms.append({'Shot':shot,'Time':elm_time})
@@ -89,7 +89,7 @@ def calculate_all_nstx_gpi_avg_frame_by_frame_velocity(elm_time_window=0.6e-3):
         rem_time=one_time*(len(elm_index)-index_elm)
         print('Remaining time from the calculation:'+str(rem_time/3600.)+'hours.')
         print(failed_elms,number_of_failed_elms)
-            
+
 def calculate_all_nstx_gpi_smooth_velocity():
     database_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv'
     db=pandas.read_csv(database_file, index_col=0)
@@ -97,13 +97,13 @@ def calculate_all_nstx_gpi_smooth_velocity():
     elm=0.
     failed_elms=[]
     number_of_failed_elms=0
-    
+
     for index_elm in range(len(elm_index)):
         #preprocess velocity results, tackle with np.nan and outliers
         shot=int(db.loc[elm_index[index_elm]]['Shot'])
         #define ELM time for all the cases
         elm_time=db.loc[elm_index[index_elm]]['ELM time']/1000.
-        
+
         flap.delete_data_object('*')
 
         print('Calculating '+str(shot)+ ' at '+str(elm_time))
@@ -111,14 +111,14 @@ def calculate_all_nstx_gpi_smooth_velocity():
         start_time=time.time()
         try:
             elm_time_range=[elm_time-2e-3,elm_time+2e-3]
-            calculate_nstx_gpi_tde_velocity(exp_id=shot, 
+            calculate_nstx_gpi_tde_velocity(exp_id=shot,
                                                time_range=elm_time_range,
                                                radial=True,
                                                time_res=100e-6,
                                                plot=False,
                                                save_data=True)
-    
-            calculate_nstx_gpi_tde_velocity(exp_id=shot, 
+
+            calculate_nstx_gpi_tde_velocity(exp_id=shot,
                                                time_range=elm_time_range,
                                                poloidal=True,
                                                time_res=100e-6,
@@ -141,13 +141,13 @@ def calculate_all_nstx_gpi_sz_velocity():
     elm=0.
     failed_elms=[]
     number_of_failed_elms=0
-    
+
     for index_elm in range(len(elm_index)):
         #preprocess velocity results, tackle with np.nan and outliers
         shot=int(db.loc[elm_index[index_elm]]['Shot'])
         #define ELM time for all the cases
         elm_time=db.loc[elm_index[index_elm]]['ELM time']/1000.
-        
+
         flap.delete_data_object('*')
 
         print('Calculating '+str(shot)+ ' at '+str(elm_time*1e3)+'ms')
@@ -158,15 +158,15 @@ def calculate_all_nstx_gpi_sz_velocity():
             # elm_time_range=[elm_time-200e-6,elm_time] #Finished calculation
             # elm_time_range=[elm_time-500e-6,elm_time+200e-6] #Finished calculation
             elm_time_range=[elm_time-5e-3,elm_time]
-            
-            nstx_gpi_velocity_analysis_spatio_temporal_displacement(exp_id=shot, 
-                                                                    time_range=elm_time_range, 
+
+            nstx_gpi_velocity_analysis_spatio_temporal_displacement(exp_id=shot,
+                                                                    time_range=elm_time_range,
                                                                     x_search=5,
                                                                     y_search=5,
-                                                                    x_range=[5,49], 
-                                                                    y_range=[35,45], 
-                                                                    plot=False, 
-                                                                    pdf=False, 
+                                                                    x_range=[5,49],
+                                                                    y_range=[35,45],
+                                                                    plot=False,
+                                                                    pdf=False,
                                                                     nocalc=False)
 
         # except:
@@ -174,13 +174,13 @@ def calculate_all_nstx_gpi_sz_velocity():
         #     failed_elms.append({'Shot':shot,'Time':elm_time})
         #     number_of_failed_elms += 1
         #     print(failed_elms,number_of_failed_elms)
-        
+
         finish_time=time.time()
         rem_time=(finish_time-start_time)*(len(elm_index)-index_elm+1)
         print('Remaining time from the calculation: '+
               str(int(rem_time/3600./24.))+'d '+
               str(int(np.mod(rem_time,86400)/3600.))+'h.')
-        
+
 def calculate_all_nstx_gpi_angular_velocity(elm_time_window=1e-3, backwards=False):
     database_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv'
     db=pandas.read_csv(database_file, index_col=0)
@@ -204,18 +204,18 @@ def calculate_all_nstx_gpi_angular_velocity(elm_time_window=1e-3, backwards=Fals
             #try:
             if True:
                 calculate_nstx_gpi_angular_velocity(exp_id=shot,
-                                                    normalize='roundtrip', 
+                                                    normalize='roundtrip',
                                                     normalize_for_velocity=True,
                                                     time_range=[elm_time-elm_time_window,
                                                                 elm_time+elm_time_window],
-                                                    
+
                                                     subtraction_order_for_velocity=2,
                                                     gaussian_blur=True,
                                                     calculate_half_fft=True,
-                                                    
-                                                    nocalc=True, 
-                                                    correlation_threshold=0., 
-                                                    plot=False, 
+
+                                                    nocalc=True,
+                                                    correlation_threshold=0.,
+                                                    plot=False,
                                                     pdf=False)
 #            except:
 #                print('Calculating '+str(shot)+ ' at '+str(elm_time)+' failed.')
@@ -224,9 +224,9 @@ def calculate_all_nstx_gpi_angular_velocity(elm_time_window=1e-3, backwards=Fals
         one_time=time.time()-start_time
         rem_time=one_time*(len(elm_index)-index_elm)
         print('Remaining time from the calculation:'+str(int(rem_time/3600.))+'h '+str(int(np.mod(rem_time,3600.)/60.))+'min.')
-        
+
         print(failed_elms,number_of_failed_elms)
-        
+
 def calculate_all_elm_fitting_videos(elm_time_window=0.2e-3, watershed=True, contour=False, random=False, nrand=5):
     database_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv'
     db=pandas.read_csv(database_file, index_col=0)
@@ -234,7 +234,7 @@ def calculate_all_elm_fitting_videos(elm_time_window=0.2e-3, watershed=True, con
         elm_index=np.asarray(np.random.rand(nrand)*len((list(db.index))), dtype=int)
         contour=True
         watershed=True
-    else:    
+    else:
         elm_index=(list(db.index))
     elm=0.
     failed_elms=[]
@@ -255,35 +255,35 @@ def calculate_all_elm_fitting_videos(elm_time_window=0.2e-3, watershed=True, con
             if True:
 
                 if watershed:
-                    calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot, 
-                                                                time_range=[elm_time-elm_time_window,elm_time+elm_time_window], 
-                                                                normalize_for_velocity=True, 
-                                                                skip_structure_calculation=False, 
-                                                                normalize_for_size=True, 
-                                                                plot=False, 
-                                                                nocalc=False, 
-                                                                subtraction_order_for_velocity=4, 
-                                                                test=False, 
-                                                                str_finding_method='watershed', 
-                                                                pdf=True, 
-                                                                test_structures=True, 
+                    calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot,
+                                                                time_range=[elm_time-elm_time_window,elm_time+elm_time_window],
+                                                                normalize_for_velocity=True,
+                                                                skip_structure_calculation=False,
+                                                                normalize_for_size=True,
+                                                                plot=False,
+                                                                nocalc=False,
+                                                                subtraction_order_for_velocity=4,
+                                                                test=False,
+                                                                str_finding_method='watershed',
+                                                                pdf=True,
+                                                                test_structures=True,
                                                                 structure_video_save=True)
                 if contour:
-                    calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot, 
-                                                               time_range=[elm_time-elm_time_window,elm_time+elm_time_window], 
-                                                               normalize_for_velocity=True, 
-                                                               skip_structure_calculation=False, 
-                                                               normalize_for_size=True, 
-                                                               plot=False, 
-                                                               nocalc=False, 
-                                                               subtraction_order_for_velocity=4, 
-                                                               test=False, 
-                                                               str_finding_method='contour', 
+                    calculate_nstx_gpi_frame_by_frame_velocity(exp_id=shot,
+                                                               time_range=[elm_time-elm_time_window,elm_time+elm_time_window],
+                                                               normalize_for_velocity=True,
+                                                               skip_structure_calculation=False,
+                                                               normalize_for_size=True,
+                                                               plot=False,
+                                                               nocalc=False,
+                                                               subtraction_order_for_velocity=4,
+                                                               test=False,
+                                                               str_finding_method='contour',
                                                                nlevel=51,
                                                                filter_level=5,
                                                                threshold_coeff=1.,
-                                                               pdf=True, 
-                                                               test_structures=True, 
+                                                               pdf=True,
+                                                               test_structures=True,
                                                                structure_video_save=True)
             # except:
             #     print('Calculating '+str(shot)+ ' at '+str(elm_time)+' failed.')
@@ -293,6 +293,3 @@ def calculate_all_elm_fitting_videos(elm_time_window=0.2e-3, watershed=True, con
         rem_time=one_time*(len(elm_index)-index_elm)
         print('Remaining time from the calculation:'+str(rem_time/3600.)+'hours.')
         print(failed_elms,number_of_failed_elms)
-        
-def compare_watershed_vs_contour_random(n=5):
-    np.asarray(np.random.rand(5)*159, dtype=int)

@@ -73,7 +73,8 @@ def identify_structures(#General inputs
                         threshold_method='otsu',
 
                         #Plotting and testing
-                        plot_full=False,
+                        plot_full=False,                        #Plot the steps of the watershed segmentation along with the fitted structures
+                        plot_full_for_publication=False,        #Plot it for a publication with correct sizes and all.
                         plot_result=False,                      #Test the result only (plot the contour and the found structures)
                         test=False,                             #Test the contours and the structures before any kind of processing
                         save_data_for_publication=False,
@@ -628,42 +629,93 @@ def identify_structures(#General inputs
         plt.colorbar()
 
     elif plot_full and str_finding_method == 'watershed':
+        if not plot_full_for_publication:
+            plt.cla()
+            fig,axes=plt.subplots(2,2,
+                                  figsize=(10,10))
 
-        plt.cla()
-        fig,axes=plt.subplots(2,2,
-                              figsize=(10,10))
+            ax=axes[0,0]
+            ax.contourf(x_coord,
+                        y_coord,
+                        data,
+                        levels=nlevel)
+            ax.set_title('data')
 
-        ax=axes[0,0]
-        ax.contourf(x_coord,
-                    y_coord,
-                    data,
-                    levels=nlevel)
-        ax.set_title('data')
+            ax=axes[0,1]
+            ax.contourf(x_coord,
+                        y_coord,
+                        data_thresholded)
+            ax.set_title('thresholded')
 
-        ax=axes[0,1]
-        ax.contourf(x_coord,
-                    y_coord,
-                    data_thresholded)
-        ax.set_title('thresholded')
+            ax=axes[1,0]
+            ax.contourf(x_coord,
+                        y_coord,
+                        binary)
+            ax.set_title('binary')
 
-        ax=axes[1,0]
-        ax.contourf(x_coord,
-                    y_coord,
-                    binary)
-        ax.set_title('binary')
+            ax=axes[1,1]
+            ax.contourf(x_coord,
+                        y_coord,
+                        labels)
+            ax.set_title('labels')
 
-        ax=axes[1,1]
-        ax.contourf(x_coord,
-                    y_coord,
-                    labels)
-        ax.set_title('labels')
+            for ax in np.ravel(axes):
+                ax.set_aspect(1.0)
+                ax.set_xlabel('Image x')
+                ax.set_ylabel('Image y')
+                ax.set_xlim([x_coord.min(),x_coord.max()])
+                ax.set_ylim([y_coord.min(),y_coord.max()])
+        else:
+            plt.cla()
+            fig,axes=plt.subplots(1,4,
+                                  figsize=(17/2.54,8.5/2.54))
 
-        for ax in axes:
+            ax=axes[0]
+            ax.contourf(x_coord,
+                        y_coord,
+                        data,
+                        levels=nlevel)
+            ax.set_title('Pre-processed data')
             ax.set_aspect(1.0)
-            ax.set_xlabel('Image x')
-            ax.set_ylabel('Image y')
+            ax.set_xlabel('x [pix]')
+            ax.set_ylabel('y [pix]')
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
+
+            ax=axes[1]
+            ax.contourf(x_coord,
+                        y_coord,
+                        data_thresholded)
+            ax.set_title('Thresholded data')
+            ax.set_aspect(1.0)
+            ax.set_xlabel('x [pix]')
+            ax.set_ylabel('y [pix]')
+            ax.set_xlim([x_coord.min(),x_coord.max()])
+            ax.set_ylim([y_coord.min(),y_coord.max()])
+
+            ax=axes[2]
+            ax.contourf(x_coord,
+                        y_coord,
+                        binary)
+            ax.set_title('Binary data')
+            ax.set_aspect(1.0)
+            ax.set_xlabel('x [pix]')
+            ax.set_ylabel('y [pix]')
+            ax.set_xlim([x_coord.min(),x_coord.max()])
+            ax.set_ylim([y_coord.min(),y_coord.max()])
+
+            ax=axes[3]
+            ax.contourf(x_coord,
+                        y_coord,
+                        labels)
+            ax.set_title('Segmented data')
+            ax.set_aspect(1.0)
+            ax.set_xlabel('x [pix]')
+            ax.set_ylabel('y [pix]')
+            ax.set_xlim([x_coord.min(),x_coord.max()])
+            ax.set_ylim([y_coord.min(),y_coord.max()])
+
+            plt.tight_layout(pad=0.1)
 
     elif plot_full and str_finding_method == 'contour':
         raise ValueError('plot_full cannot be set when contour segmentation is performed.')
@@ -695,7 +747,7 @@ def identify_structures(#General inputs
                     if plot_result:
                         _plot_ellipses_centers(ax, x_polygon, y_polygon, x_ellipse, y_ellipse, structures[i_str])
                     if plot_full:
-                        for ax_cur in axes:
+                        for ax_cur in np.ravel(axes):
                             _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse, structures[i_str])
 
 

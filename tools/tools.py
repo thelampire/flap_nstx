@@ -819,3 +819,65 @@ def calculate_corr_acceptance_levels(n_data=160,
         corr_accept=pickle.load(open(corr_accept_filename,'rb'))
 
     return corr_accept
+
+def plot_pearson_matrix(matrix,
+                        xlabels=None,
+                        ylabels=None,
+                        title='',
+                        colormap='seismic',
+                        figsize=(8.5/2.54,8.5/2.54*1.2),
+                        charsize=9,
+                        zrange=[-1,1]
+                        ):
+
+    plt.rcParams['lines.linewidth'] = 4
+    plt.rcParams['axes.linewidth'] = 4
+    plt.rcParams['axes.labelsize'] = charsize
+    plt.rcParams['axes.titlesize'] = charsize
+
+    plt.rcParams['xtick.labelsize'] = charsize
+    plt.rcParams['xtick.major.size'] = 10
+    plt.rcParams['xtick.major.width'] = 4
+    plt.rcParams['xtick.minor.width'] = 2
+    plt.rcParams['xtick.minor.size'] = 4
+
+    plt.rcParams['ytick.labelsize'] = charsize
+    plt.rcParams['ytick.major.width'] = 4
+    plt.rcParams['ytick.major.size'] = 6
+    plt.rcParams['ytick.minor.width'] = 2
+    plt.rcParams['ytick.minor.size'] = 4
+
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    fig,ax=plt.subplots(figsize=figsize)
+
+    im=ax.matshow(matrix,
+                #fignum=fig,
+                cmap=colormap,
+                vmin=zrange[0],
+                vmax=zrange[1],
+                )
+
+    # for (i, j), z in np.ndenumerate(correlation_matrix):
+    #     ax.text(j, i, '{:0.1f}'.format(z), ha='center', va='center', color='white')
+
+    plt.xticks(ticks=np.arange(matrix.shape[1]),
+               labels=xlabels, #full_blob_data.keys(),
+               rotation='vertical',
+                                            )
+    plt.yticks(np.arange(matrix.shape[0]),
+               labels=ylabels) #full_plasma_data.keys())
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes('right', size='5%', pad=0.05)
+    fig.colorbar(im, cax=cax, orientation='vertical')
+    ax.set_title(title)
+    #plt.tight_layout(pad=0.1)
+    ax.set_xticks(np.arange(0, len(xlabels), 1))
+    ax.set_yticks(np.arange(0, len(ylabels), 1))
+    ax.set_xticks(np.arange(-.5, len(xlabels), 1), minor=True)
+    ax.set_yticks(np.arange(-.5, len(ylabels), 1), minor=True)
+
+# Gridlines based on minor ticks
+    ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
+    plt.tight_layout(pad=0.1)
+    plt.show()
