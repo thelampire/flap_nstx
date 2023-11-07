@@ -409,11 +409,13 @@ def show_nstx_gpi_video_frames(exp_id=None,
         d.add_coordinate(coordinates='Flux r',exp_id=exp_id)
         x_axis='Flux r'
         y_axis='Device z'
-        plot_units={'Flux r':'','Device z':'m'}
+        plot_units={'Flux r':'',
+                    'Device z':'m'}
     elif device_coordinates:
         x_axis='Device R'
         y_axis='Device z'
-        plot_units={'Device R':'m','Device z':'m'}
+        plot_units={'Device R':'m',
+                    'Device z':'m'}
     else:
         x_axis='Image x'
         y_axis='Image y'

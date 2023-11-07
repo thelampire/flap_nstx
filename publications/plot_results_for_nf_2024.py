@@ -22,7 +22,7 @@ flap_nstx.register()
 from flap_nstx.gpi import calculate_nstx_gpi_angular_velocity, show_nstx_gpi_video_frames
 from flap_nstx.gpi import analyze_gpi_structures
 from flap_nstx.test import test_angular_displacement_estimation
-
+from flap_nstx.analysis import calculate_blob_parameter_histograms,plot_blob_blob_parameter_trends
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -61,7 +61,7 @@ plt.rcParams['ytick.minor.size'] = major_ticksize/2
 plt.rcParams['legend.fontsize'] = labelsize
 
 
-def plot_results_for_nf_2024(plot_figure=2,
+def plot_results_for_iaea_2023(plot_figure=2,
                              save_data_into_txt=False,
                              plot_all=False,
                              nocalc=False):
@@ -69,15 +69,8 @@ def plot_results_for_nf_2024(plot_figure=2,
     if plot_all:
         plot_figure=-1
         for i in range(15):
-            plot_results_for_nf_2024(plot_figure=i,
+            plot_results_for_iaea_2023(plot_figure=i,
                                      save_data_into_txt=save_data_into_txt)
-
-
-    #Settings for fig 2,3,4,13,14
-
-    exp_id=141319
-    time=0.552
-    sample_to_plot=None
 
     """
     GPI plot
@@ -96,7 +89,8 @@ def plot_results_for_nf_2024(plot_figure=2,
                                plot_watershed_steps=4, #4th frame
                                plot_for_publication=True,
                                nocalc=False,
-                               plot=False)
+                               plot=False,
+                               )
 
     """
     Flowchart plot
@@ -106,32 +100,40 @@ def plot_results_for_nf_2024(plot_figure=2,
 
     """Blob evolution frames"""
     if plot_figure == 4:
-        pass
+        analyze_gpi_structures(exp_id=141319,
+                               time_range=[0.552,0.5522],
+                               ignore_side_structures=True,
+                               pdf=True,
+                               plot_example_structure_frames=1,
+                               nocalc=False,
+                               plot=False,
+                               plot_for_publication=True,
+                               min_structure_lifetime=1,
+                               )
 
     """Blob evolution results"""
     if plot_figure == 5:
-        pass
+        analyze_gpi_structures(exp_id=141319,
+                               time_range=[0.551,0.5522],
+                               ignore_side_structures=True,
+                               pdf=True, plot=True,
+                               plot_str_by_str=True,
+                               plot_for_publication=False,
+                               min_structure_lifetime=4,
+                               nocalc=True,
+                               plot_scatter=True,
+                               plot_tracking=True,
+                               plot_example_frames_results=True,
+                               )
 
     """Blob histrogram distribution results"""
     if plot_figure == 6:
-        pass
-
-    """Blob blob correlation matrix"""
-    if plot_figure == 7:
-        raise ValueError('Not yet available, not part of the conference manuscript.')
+        calculate_blob_parameter_histograms(nocalc=True,
+                                            pdf=True,
+                                            plot_for_publication=True,
+                                            calc_mean_distribution=False)
 
     """Blob blob trends"""
-    if plot_figure == 8:
-        pass
-
-    """Blob plasma dependence matrix"""
-    if plot_figure == 9:
-        raise ValueError('Not yet available, not part of the conference manuscript.')
-
-    """Blob plasma dependence"""
-    if plot_figure == 10:
-        raise ValueError('Not yet available, not part of the conference manuscript.')
-
-    """Blob plasma predictive power score"""
-    if plot_figure == 11:
-        raise ValueError('Not yet available, not part of the conference manuscript.')
+    if plot_figure == 7:
+        plot_blob_blob_parameter_trends(plot_for_publication=True,
+                                        calc_mean_distribution=False)

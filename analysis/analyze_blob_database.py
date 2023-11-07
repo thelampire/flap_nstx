@@ -48,32 +48,6 @@ import pandas
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
-publication=False
-
-if publication:
-
-    plt.rcParams['lines.linewidth'] = 4
-    plt.rcParams['axes.linewidth'] = 4
-    plt.rcParams['axes.labelsize'] = 28
-    plt.rcParams['axes.titlesize'] = 28
-
-    plt.rcParams['xtick.labelsize'] = 30
-    plt.rcParams['xtick.major.size'] = 10
-    plt.rcParams['xtick.major.width'] = 4
-    plt.rcParams['xtick.major.size'] = 6
-    plt.rcParams['xtick.minor.width'] = 2
-    plt.rcParams['xtick.minor.size'] = 4
-
-    plt.rcParams['ytick.labelsize'] = 30
-    plt.rcParams['ytick.major.width'] = 4
-    plt.rcParams['ytick.major.size'] = 6
-    plt.rcParams['ytick.minor.width'] = 2
-    plt.rcParams['ytick.minor.size'] = 4
-    # plt.rcParams['legend_ne.fontsize'] = 28
-
-else:
-    pltstyle.use('default')
-
 
 def calculate_all_blob_results(test=False,
                                plot=False,
@@ -111,9 +85,11 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         save_data_into_txt=False,
                                         calc_mean_distribution=False,
                                         nocalc=True):
+    import matplotlib
     if pdf:
-        import matplotlib
         matplotlib.use('agg')
+    else:
+        matplotlib.use('qt5agg')
 
     if pdf_filename is None:
         if calc_mean_distribution:
@@ -141,6 +117,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
         full_data[key+' diff']=[]
 
     if not os.path.exists(pickle_filename) or not nocalc:
+        n_str=0
         for ind in range(ncalc):
             blob_time=blob_database['time'][ind]
 
@@ -151,23 +128,43 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                            )
             flap.delete_data_object('*')
             str_by_str=transform_frames_to_structures(blob_results)
-            for structure in str_by_str:
+
+            for ind_str, structure in enumerate(str_by_str):
+                n_str+=1
                 for key in analyzed_keys:
-                    full_data[key]=np.append(full_data[key],
-                                             np.mean(structure[key]))
+                    if calc_mean_distribution:
+                        full_data[key]=np.append(full_data[key],
+                                                 np.mean(structure[key]))
+                    else:
+                        if key in          ['Velocity radial COG', 'Velocity poloidal COG',
+                                           'Velocity radial centroid', 'Velocity poloidal centroid',
+                                           'Velocity radial position', 'Velocity poloidal position',
+                                           'Expansion fraction area', 'Expansion fraction axes',
+                                           'Angular velocity angle', 'Angular velocity ALI']:
+                            full_data[key]=np.append(full_data[key],
+                                                     structure[key])
+                        else:
+                            full_data[key]=np.append(full_data[key],
+                                                     structure[key][1:])
                 for key in additional_diff_keys:
-                    full_data[key+' diff']=np.append(full_data[key+' diff'],
-                                                     np.mean((np.asarray(structure[key])[1:] -
-                                                              np.asarray(structure[key])[0:-1])))
+                    if calc_mean_distribution:
+                        full_data[key+' diff']=np.append(full_data[key+' diff'],
+                                                         np.mean((np.asarray(structure[key])[1:] -
+                                                                  np.asarray(structure[key])[0:-1])))
+                    else:
+                        full_data[key+' diff']=np.append(full_data[key+' diff'],
+                                                         (np.asarray(structure[key])[1:] -
+                                                          np.asarray(structure[key])[0:-1]))
 
         pickle.dump(full_data,open(pickle_filename,'wb'))
+        print('n_str:',n_str)
     else:
         full_data=pickle.load(open(pickle_filename,'rb'))
 
-    if pdf:
-        pdf_page=PdfPages(pdf_filename)
+
     for key in additional_diff_keys:
         analyzed_keys.append(key+' diff')
+
     ranges={'Position radial':[1.4,1.6],
             'Position poloidal': [0.15, 0.35],
             'Area':[0,0.006],
@@ -181,41 +178,83 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             'Total bending energy':[0e8,1.5e8],
             'Convexity diff':[-0.01,0.01],
             'Solidity diff':[-0.25,0.25],
-            'Total curvature diff':[-0.01,0.01],
+            'Total curvature diff':[-0.05,0.05],
             'Total bending energy diff':[-0.3e8,0.3e8],
-            'Area diff':[-0.0005,0.0005],
+            'Area diff':[-0.0015,0.0015],
             'Elongation diff':[-0.075,0.075],
+            'Angular velocity angle':[-250e3,250e3]
             }
+    import scipy
+
     if plot:
-        for key in analyzed_keys:
-            full_data[key]=full_data[key][~np.isnan(full_data[key])]
-            try:
-                fig,ax=plt.subplots(figsize=(8.5/2.54,8.5/2.54))
-                ax.hist(full_data[key],
-                        bins=51)
-                ax.set_xlabel(key+' bins')
-                ax.set_ylabel('Relative frequency')
-                ax.set_title('Histogram of '+key)
+        if plot_for_publication:
+            pdf_page=PdfPages(wd+'/plots/8hist_blob_db.pdf')
+            fig,axes=plt.subplots(2,4,figsize=(17/2.54,8.5/2.54))
+            for ind, key in enumerate(['Area','Area diff',
+                                       'Angle','Angular velocity angle',
+                                       'Roundness', 'Roundness diff',
+                                       'Total curvature','Total curvature diff',
+                                       ]):
+                labels=['a','b','c','d','e','f','g','h']
+                full_data[key]=full_data[key][~np.isnan(full_data[key])]
+                ax=axes[np.mod(ind,2),ind//2]
+                # try:
+                print(key,'skewness',scipy.stats.skew(full_data[key]))
+                print(key,'kurtosis',scipy.stats.kurtosis(full_data[key]))
                 if key in ranges.keys():
-                    ax.set_xlim(ranges[key])
-            except:
-                print('Failed to plot '+ key)
-            if pdf:
-                pdf_page.savefig()
-        if pdf:
+                    ax.hist(full_data[key],
+                            bins=51,
+                            weights=np.ones_like(full_data[key])/len(full_data[key]),
+                            range=ranges[key])
+                else:
+                    ax.hist(full_data[key],
+                            bins=51,
+                            weights=np.ones_like(full_data[key])/len(full_data[key]),)
+                ax.set_xlabel(key)
+                ax.set_ylabel('Relative frequency')
+                ax.set_title('Histogram of \n '+key)
+                ax.text(-0.4, 1.1, '('+labels[ind]+')', transform=ax.transAxes, size=9)
+                if np.mod(ind,2)==1:
+                    ax.axvline(x=0,color='red')
+                # if key in ranges.keys():
+                #     ax.set_xlim(ranges[key])
+            plt.tight_layout(pad=0.1)
+            pdf_page.savefig()
             pdf_page.close()
+        else:
+            if pdf:
+                pdf_page=PdfPages(pdf_filename)
+            for key in analyzed_keys:
+                full_data[key]=full_data[key][~np.isnan(full_data[key])]
+                try:
+                    fig,ax=plt.subplots(figsize=(8.5/2.54,8.5/2.54))
+                    ax.hist(full_data[key],
+                            bins=51)
+                    ax.set_xlabel(key+' bins')
+                    ax.set_ylabel('Relative frequency')
+                    ax.set_title('Histogram of '+key)
+                    if key in ranges.keys():
+                        ax.set_xlim(ranges[key])
+                except:
+                    print('Failed to plot '+ key)
+                if pdf:
+                    pdf_page.savefig()
+            if pdf:
+                pdf_page.close()
+
     return full_data
 
-def calculate_blob_parameter_correlation_matrix(threshold_corr=False,
-                                                pdf=True,
-                                                pdf_filename=None):
+def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
+                                                     pdf=True,
+                                                     pdf_filename=None,
+                                                     calc_mean_distribution=True):
     if pdf_filename is None:
         pdf_filename=wd+'/plots/correlation_matrix_gpi_gpi.pdf'
 
-    if pdf:
-        pdf_page=PdfPages(pdf_filename)
-
-    pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+    if calc_mean_distribution:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+    else:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
     full_data=pickle.load(open(pickle_filename,'rb'))
 
     analyzed_keys=read_analyzed_keys()
@@ -233,49 +272,180 @@ def calculate_blob_parameter_correlation_matrix(threshold_corr=False,
     for ind1,key1 in enumerate(analyzed_keys):
         ind_nan1=~np.isnan(full_data[key1])
         for ind2,key2 in enumerate(analyzed_keys):
-            ind_nan2=~np.isnan(full_data[key2])
-            ind_nan=np.logical_and(ind_nan1,ind_nan2)
-            # print(np.sum(ind_nan1),key1)
-            data1=full_data[key1][ind_nan] - np.mean(full_data[key1][ind_nan])
-            data2=full_data[key2][ind_nan] - np.mean(full_data[key2][ind_nan])
-            correlation_matrix[ind2,ind1]=np.sum(data1*data2)/(np.sqrt(np.sum(data1**2)*np.sum(data2**2)))
+            try:
+                ind_nan2=~np.isnan(full_data[key2])
+                ind_nan=np.logical_and(ind_nan1,ind_nan2)
+                # print(np.sum(ind_nan1),key1)
+                data1=full_data[key1][ind_nan] - np.mean(full_data[key1][ind_nan])
+                data2=full_data[key2][ind_nan] - np.mean(full_data[key2][ind_nan])
+                correlation_matrix[ind2,ind1]=np.sum(data1*data2)/(np.sqrt(np.sum(data1**2)*np.sum(data2**2)))
+            except Exception as e:
+                print(e)
     # if threshold_corr:
     #     for i_ts in range(ts_label_num):
     #         for j_gpi in range(gpi_label_num):
     #             if abs(correlation_matrix[i_ts,j_gpi]) < corr_thres_level_matrix[i_ts,j_gpi]:
     #                 correlation_matrix[i_ts,j_gpi]=0.
+    if pdf:
+        pdf_page=PdfPages(pdf_filename)
 
-    fig,ax=plt.subplots(
-                        #figsize=(8.5/2.54,8.5/2.54*1.2)
+    plot_pearson_matrix(correlation_matrix,
+                        xlabels=gpi_labels,
+                        ylabels=gpi_labels,
+                        title='Blob vs blob parameter correlation map',
+                        colormap='seismic',
+                        figsize=(17/2.54,17/2.54), #(8.5/2.54,8.5/2.54*1.2)
+                        charsize=6,
                         )
-    im=ax.matshow(correlation_matrix,
-                #fignum=fig,
-                cmap='seismic',vmin=-1,vmax=1)
-
-    # for (i, j), z in np.ndenumerate(correlation_matrix):
-    #     ax.text(j, i, '{:0.1f}'.format(z), ha='center', va='center', color='white')
-
-    plt.xticks(ticks=np.arange(correlation_matrix.shape[1]), labels=gpi_labels, rotation='vertical',
-                                            )
-    plt.yticks(np.arange(correlation_matrix.shape[0]), labels=gpi_labels)
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes('right', size='5%', pad=0.05)
-    fig.colorbar(im, cax=cax, orientation='vertical')
-    ax.set_title('Thomson profile parameter vs. GPI thresholded correlation')
-    #plt.tight_layout(pad=0.1)
-    ax.set_xticks(np.arange(0, gpi_label_num, 1))
-    ax.set_yticks(np.arange(0, gpi_label_num, 1))
-    ax.set_xticks(np.arange(-.5, gpi_label_num, 1), minor=True)
-    ax.set_yticks(np.arange(-.5, gpi_label_num, 1), minor=True)
-    #plt.tight_layout(pad=0.1)
-# Gridlines based on minor ticks
-    ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
-    plt.tight_layout(pad=0.1)
-    plt.show()
 
     if pdf:
         pdf_page.savefig()
         pdf_page.close()
+
+def plot_blob_blob_parameter_trends(pdf=True,
+                                    pdf_filename=None,
+                                    plot_if_correlation_is_higher_than=None,
+                                    plot_if_pps_is_higher_than=None,
+                                    nocalc=True,
+                                    calc_mean_distribution=True,
+                                    plot_for_publication=False,
+                                    ):
+    import pandas
+    import ppscore as pps
+
+    from scipy import stats
+    if not plot_for_publication:
+        if pdf_filename is None and plot_if_correlation_is_higher_than is not None:
+            pdf_filename=wd+'/plots/gpi_gpi_trends_corr_'+str(plot_if_correlation_is_higher_than)+'.pdf'
+        elif plot_if_correlation_is_higher_than is None:
+            pdf_filename=wd+'/plots/gpi_gpi_trends.pdf'
+    else:
+        pdf_filename=wd+'/plots/gpi_gpi_trend_8plot.pdf'
+
+    if calc_mean_distribution:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+    else:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
+    full_data=pickle.load(open(pickle_filename,'rb'))
+
+    analyzed_keys=read_analyzed_keys()
+    additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
+                          'Total bending energy','Area','Elongation']
+
+    for key in additional_diff_keys:
+        analyzed_keys.append(key+' diff')
+
+    pdf_page=PdfPages(pdf_filename)
+    pickle_filename=wd+'/processed_data/blob_database_full_data_mean_pps.pickle'
+    if not nocalc or not os.path.exists(pickle_filename):
+        df = pandas.DataFrame()
+
+        for key in full_data.keys():
+            df[key]=full_data[key]
+
+        df.dropna(thresh=1)
+
+        df[(np.abs(stats.zscore(df)) < 3).all(axis=1)]
+
+        matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
+        pickle.dump(matrix_df,open(pickle_filename,'wb'))
+    else:
+        matrix_df=pickle.load(open(pickle_filename,'rb'))
+
+    ppscore_matrix=np.asarray(matrix_df).T
+    xlabels=list(matrix_df.keys())
+    if not plot_for_publication:
+        for ind1,key1 in enumerate(analyzed_keys):
+            ind_nan1=~np.isnan(full_data[key1])
+
+            for ind2,key2 in enumerate(analyzed_keys):
+                if key1 != key2 and ind2>ind1:
+                    ind_nan2=~np.isnan(full_data[key2])
+                    ind_nan=np.logical_and(ind_nan1,ind_nan2)
+                    # print(np.sum(ind_nan1),key1)
+                    data1_4c=full_data[key1][ind_nan] - np.mean(full_data[key1][ind_nan])
+                    data2_4c=full_data[key2][ind_nan] - np.mean(full_data[key2][ind_nan])
+                    fig,ax=plt.subplots(figsize=(8.5/2.54,8.5/2.54))
+                    correlation=np.sum(data1_4c*data2_4c)/(np.sqrt(np.sum(data1_4c**2)*np.sum(data2_4c**2)))
+
+                    if (plot_if_correlation_is_higher_than is not None and
+                        np.abs(correlation) > plot_if_correlation_is_higher_than):
+                        plot=True
+                    elif plot_if_correlation_is_higher_than is None and plot_if_pps_is_higher_than is None:
+                        plot=True
+                    else:
+                        plot=False
+                    pps=ppscore_matrix[xlabels.index(key1),
+                                       xlabels.index(key2)]
+
+                    if (plot_if_pps_is_higher_than is not None and
+                        pps > plot_if_pps_is_higher_than):
+                            plot=True
+
+                    if plot:
+                        ax.scatter(full_data[key1][ind_nan],
+                                   full_data[key2][ind_nan],
+                                   s=0.5)
+                        ax.set_xlabel(key1)
+                        ax.set_ylabel(key2)
+                        ax.set_title(key1+' vs '+key2)
+                        pdf_page.savefig()
+
+        if pdf:
+            pdf_page.close()
+    else:
+        interesting_key_pairs=[('Area','Convexity'),
+                               ('Size radial','Convexity'),
+                               ('Elongation','Roundness'),
+                               ('Position radial','Velocity radial position'),
+                               ('Axes length minor','Velocity radial position'),
+                               ('Axes length major','Velocity radial position'),
+                               ('Expansion fraction area','Roundness diff'),
+                               ('Position radial','Axes length major'),
+                               ]
+        ranges=[[[0,0.004],[0.92,1.0]],
+                [[0.01,0.07],[0.92,1.0]],
+                [[-0.75,0.5],[0.2,1.0]],
+                [[1.42,1.6],[-2e3,2e3]],
+                [[0,0.075],[-2e3,2e3]],
+                [[0.0,0.03],[-2e3,2e3]],
+                [[0.85,1.2],[-0.1,0.1]],
+                [[1.42,1.6],[0,0.03]],
+                ]
+        fig,axes=plt.subplots(2,4,
+                            figsize=(17/2.54,8.5/2.54))
+        for ind,(key1,key2) in enumerate(interesting_key_pairs):
+            ind_nan1=~np.isnan(full_data[key1])
+            ind_nan2=~np.isnan(full_data[key2])
+            ind_nan=np.logical_and(ind_nan1,ind_nan2)
+            # print(np.sum(ind_nan1),key1)
+            data1_4c=np.real(full_data[key1][ind_nan]) - np.real(np.mean(full_data[key1][ind_nan]))
+            data2_4c=np.real(full_data[key2][ind_nan]) - np.real(np.mean(full_data[key2][ind_nan]))
+
+            correlation=np.sum(data1_4c*data2_4c)/(np.sqrt(np.sum(data1_4c**2)*np.sum(data2_4c**2)))
+            ax=axes[ind//4,np.mod(ind,4)]
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+
+            im=ax.hist2d(np.real(full_data[key1][ind_nan]),
+                         np.real(full_data[key2][ind_nan]),
+                         bins=[31,31],
+                         #weights=np.ones_like(np.real(full_data[key1][ind_nan]))/len(np.real(full_data[key1][ind_nan])),
+                         range=ranges[ind]
+                         #s=0.5
+                         )
+            print(key1,key2,correlation)
+            fig.colorbar(im[3], cax=cax, orientation='vertical')
+            # ax.text(0.1,0.9,str(correlation))
+            ax.set_xlabel(key1)
+            ax.set_ylabel(key2)
+            ax.set_title('')
+            # ax.set_xlim(ranges[ind][0:2])
+            # ax.set_ylim(ranges[ind][2:])
+        plt.tight_layout(pad=0.1)
+        pdf_page.savefig()
+        pdf_page.close()
+
 
 def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                                                        pdf=True,
@@ -400,6 +570,63 @@ def plot_blob_plasma_parameter_predictive_power_score(threshold_corr=False,
                         xlabels=ylabels,
                         ylabels=xlabels,
                         title='Plasma vs blob parameter correlation map',
+                        colormap='Blues',
+                        figsize=(17/2.54,17/2.54), #(8.5/2.54,8.5/2.54*1.2)
+                        charsize=6,
+                        zrange=[0,1.0]
+                        )
+    if pdf:
+        pdf_pages.savefig()
+    pdf_pages.close()
+
+def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
+                                                    pdf=True,
+                                                    nocalc=True,
+                                                    calc_mean_distribution=True
+                                                    ):
+
+    import pandas
+    import ppscore as pps
+    from scipy import stats
+
+
+    if pdf:
+        pdf_pages=PdfPages(wd+'/plots/predictive_power_score_blob_vs_blob.pdf')
+
+
+    if calc_mean_distribution:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+    else:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
+    full_blob_data=pickle.load(open(pickle_filename,'rb'))
+
+    pickle_filename_pps=wd+'/processed_data/blob_blob_predictive_power_score.pickle'
+    if not nocalc or not os.path.exists(pickle_filename_pps):
+        df = pandas.DataFrame()
+        try:
+            for key in full_blob_data.keys():
+                df[key]=full_blob_data[key]
+        except Exception as e:
+            print(e)
+
+        df.dropna(thresh=1)
+
+        df[(np.abs(stats.zscore(df)) < 3).all(axis=1)]
+
+        matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
+        pickle.dump(matrix_df,open(pickle_filename_pps,'wb'))
+    else:
+        matrix_df=pickle.load(open(pickle_filename_pps,'rb'))
+
+    ppscore_matrix_prelim=np.asarray(matrix_df).T
+    labels=list(matrix_df.keys())
+    xlabels=list(full_blob_data.keys())
+    ppscore_matrix_blob_to_plasma=np.zeros([len(xlabels),len(xlabels)])
+
+    plot_pearson_matrix(ppscore_matrix_blob_to_plasma,
+                        xlabels=xlabels,
+                        ylabels=xlabels,
+                        title='Blob vs plasma parameter correlation map',
                         colormap='Blues',
                         figsize=(17/2.54,17/2.54), #(8.5/2.54,8.5/2.54*1.2)
                         charsize=6,

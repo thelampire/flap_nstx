@@ -39,29 +39,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import pickle
 #Plot settings for publications
-publication=False
-
-if publication:
-
-    plt.rcParams['lines.linewidth'] = 4
-    plt.rcParams['axes.linewidth'] = 4
-    plt.rcParams['axes.labelsize'] = 28
-    plt.rcParams['axes.titlesize'] = 28
-    plt.rcParams['xtick.labelsize'] = 30
-    plt.rcParams['xtick.major.size'] = 10
-    plt.rcParams['xtick.major.width'] = 4
-    plt.rcParams['xtick.major.size'] = 6
-    plt.rcParams['xtick.minor.width'] = 2
-    plt.rcParams['xtick.minor.size'] = 4
-    plt.rcParams['ytick.labelsize'] = 30
-    plt.rcParams['ytick.major.width'] = 4
-    plt.rcParams['ytick.major.size'] = 6
-    plt.rcParams['ytick.minor.width'] = 2
-    plt.rcParams['ytick.minor.size'] = 4
-    plt.rcParams['legend.fontsize'] = 28
-
-else:
-    pltstyle.use('default')
 
 
 def analyze_gpi_structures(exp_id=None,                          #Shot number
@@ -113,24 +90,30 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            structure_pixel_calc=False,           #Calculate and plot the structure sizes in pixels
 
                            score_threshold=0.7,                  #Threshold for tracking of the structures based on the weighted tracking.
-                           matrix_weight={'iou':1,'cccf':0},
+                           matrix_weight={'iou':1,'cccf':0},     #Weights for the tracking matrix. iou: intersection over union, cccf cross correlation coefficient funcion
+
                            #Plot options:
                            plot=True,                            #Plot the results
                            pdf=False,                            #Print the results into a PDF
                            plot_error=False,                     #Plot the errorbars of the velocity calculation based on the line fitting and its RMS error
                            error_window=4.,                      #Plot the average signal with the error bars calculated from the normalized variance.
-
                            overplot_average=True,
-                           plot_scatter=False,
-                           plot_tracking=True,
+                           plot_tracking=True,                   #Plot the tracked structures with a line
+                           plot_scatter=False,                   #Add scatter points  to the lineplots
                            structure_video_save=False,           #Save the video of the overplot ellipses
                            video_resolution=(1024,1024),
                            structure_pdf_save=False,             #Save the struture finding algorithm's plot output into a PDF (can create very large PDF's, the number of pages equals the number of frames)
+
+                           plot_separatrix=True,
+                           plot_flux_surfaces=True,
+
                            plot_time_range=None,                 #Plot the results in a different time range than the data is read from
                            plot_for_publication=False,           #Modify the plot sizes to single column sizes and golden ratio axis ratios
                            plot_vertical_line_at=None,
                            plot_str_by_str=False,
-                           plot_watershed_steps=False,
+                           plot_watershed_steps=False,           #Plot the steps of the watershed segmentation at the sample number this is set to.
+                           plot_example_structure_frames=False,  #Plot 10 example frames from the sample number this is set to.
+                           plot_example_frames_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
 
                             #File input/output options
                            filename=None,                        #Filename for restoring data
@@ -246,6 +229,30 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         matplotlib.use('agg')
 
     if not nocalc or structure_video_save:
+        if plot_flux_surfaces or plot_separatrix:
+            try:
+                if plot_separatrix:
+                    d_sep_x=flap.get_data('NSTX_MDSPlus',
+                                          name='\EFIT02::\RBDRY',
+                                          exp_id=exp_id,
+                                          object_name='SEP X OBJ'
+                                          )
+
+                    d_sep_y=flap.get_data('NSTX_MDSPlus',
+                                          name='\EFIT02::\ZBDRY',
+                                          exp_id=exp_id,
+                                          object_name='SEP Y OBJ'
+                                          )
+                if plot_flux_surfaces:
+                    d_flux=flap.get_data('NSTX_MDSPlus',
+                                         name='\EFIT02::\PSIRZ',
+                                         exp_id=exp_id,
+                                         object_name='PSI RZ OBJ'
+                                         )
+            except Exception as e:
+                print('Exception occurred in analyze_gpi_structures.py at line 254.')
+                print(e)
+
         if structure_pdf_save:
             filename=flap_nstx.tools.filename(exp_id=exp_id,
                                               working_directory=wd+'/plots',
@@ -465,7 +472,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 if structure_video_save or structure_pdf_save:
                     plt.cla()
                     test_structures=True
-                if plot_watershed_steps and i_frames == plot_watershed_steps['frame']:
+                if plot_watershed_steps and i_frames == plot_watershed_steps:
                     plot_full=True
                     pdf_plot_watershed=PdfPages(wd+'/plots/watershed_steps.pdf')
                 else:
@@ -493,7 +500,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       video_resolution=video_resolution,
                                                       structure_video_save=structure_video_save,
                                                       save_data_for_publication=save_data_for_publication)
-                if plot_watershed_steps and i_frames == plot_watershed_steps['frame']:
+                if plot_watershed_steps and i_frames == plot_watershed_steps:
                     pdf_plot_watershed.savefig()
                     pdf_plot_watershed.close()
 
@@ -676,6 +683,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       purpose='tracking',
                                                       comment=comment,
                                                       extension='pickle')
+    differential_keys=list(frame_properties['derived'].keys())
+
     if os.path.exists(pickle_filename_tracking) and nocalc:
         try:
             pickle.load(open(pickle_filename_tracking, 'rb'))
@@ -693,8 +702,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         #Structure tracking
         highest_label=0
         n_frames=len(frame_properties['structures'])
-
-        differential_keys=list(frame_properties['derived'].keys())
 
         sample_time=frame_properties['Time'][1]-frame_properties['Time'][0]
         for i_frames in range(1,n_frames):
@@ -1136,16 +1143,15 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                             curr_structures.pop(ind_str)
 
             labels_to_keep=np.asarray(labels_to_keep)
-    #TODO: This is not working yet, produces -1 results, weird lists, etc.
 
-        if True: #RELABEL
-            new_labels=np.arange(len(labels_to_keep)+1)
-            for i_frames in range(n_frames):
-                if frame_properties['structures'][i_frames] is not None:
-                    for ind_struct in range(len(frame_properties['structures'][i_frames])):
-                        ind=np.where(labels_to_keep == frame_properties['structures'][i_frames][ind_struct]['Label'])
-                        if len(new_labels[ind]) != 0 and int(ind[0]) != -1:
-                            frame_properties['structures'][i_frames][ind_struct]['Label']=int(new_labels[ind])
+
+        new_labels=np.arange(len(labels_to_keep)+1)
+        for i_frames in range(n_frames):
+            if frame_properties['structures'][i_frames] is not None:
+                for ind_struct in range(len(frame_properties['structures'][i_frames])):
+                    ind=np.where(labels_to_keep == frame_properties['structures'][i_frames][ind_struct]['Label'])
+                    if len(new_labels[ind]) != 0 and int(ind[0]) != -1:
+                        frame_properties['structures'][i_frames][ind_struct]['Label']=int(new_labels[ind])
 
         pickle.dump(frame_properties,open(pickle_filename_tracking,'wb'))
     else:
@@ -1276,16 +1282,114 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 video.write(buf)
             except:
                 print('Video frame cannot be saved. Passing...')
-        if structure_video_save:
-            cv2.destroyAllWindows()
-            video.release()
-            del video
 
+        cv2.destroyAllWindows()
+        video.release()
+        del video
+
+    if plot_example_structure_frames:
+        pdf_filenames_frames=flap_nstx.tools.filename(exp_id=exp_id,
+                                                      time_range=time_range,
+                                                      purpose="example_frames",
+                                                      extension='.pdf',
+                                                      comment='s0'+str(sample_0))
+        pdf_pages=PdfPages(wd+'/plots/'+pdf_filenames_frames)
+        from flap_nstx.gpi import _plot_ellipses_centers
+        import scipy
+
+        slicing_frame={'Sample':sample_0+i_frames}
+
+        frame=flap.slice_data(object_name,
+                              exp_id=exp_id,
+                              slicing=slicing_frame,
+                              output_name='GPI_FRAME')
+        x_coord_name='Device R'
+        x_unit_name='[m]'
+        y_coord_name='Device z'
+        y_unit_name='[m]'
+
+        x_coord=frame.coordinate(x_coord_name)[0]
+        y_coord=frame.coordinate(y_coord_name)[0]
+
+
+        fig,axes=plt.subplots(2,5,
+                            figsize=(17/2.54,8.5/2.54),
+                            )
+
+        for i_frames in range(0,10):
+            ax=axes[i_frames//5,
+                    np.mod(i_frames,5)]
+
+            slicing_frame={'Sample':sample_0+i_frames+plot_example_structure_frames}
+
+            frame=flap.slice_data(object_name,
+                                  exp_id=exp_id,
+                                  slicing=slicing_frame,
+                                  output_name='GPI_FRAME')
+
+            frame.data=np.asarray(frame.data, dtype='float64')
+            frame.data=scipy.ndimage.median_filter(frame.data, 5)
+
+
+            if levels is None:
+                ax.contourf(x_coord, y_coord, frame.data, levels=51)
+            else:
+                ax.contourf(x_coord, y_coord, frame.data, levels=levels)
+
+            ax.set_aspect(1.0)
+            structures=frame_properties['structures'][i_frames+plot_example_structure_frames]
+
+            if structures is not None and len(structures) > 0:
+                #Parametric reproduction of the Ellipse
+                R=np.arange(0,2*np.pi,0.01)
+                for i_str in range(len(structures)):
+                    if (structures[i_str]['Half path'] is not None and
+                        structures[i_str]['Ellipse'] is not None):
+
+                        phi=structures[i_str]['Angle']
+                        a,b=structures[i_str]['Axes length']
+
+                        x_polygon=structures[i_str]['Polygon'].x
+                        y_polygon=structures[i_str]['Polygon'].y
+
+                        x_ellipse = (structures[i_str]['Center'][0] +
+                                     a*np.cos(R)*np.cos(phi) -
+                                     b*np.sin(R)*np.sin(phi))
+                        y_ellipse = (structures[i_str]['Center'][1] +
+                                     a*np.cos(R)*np.sin(phi) +
+                                     b*np.sin(R)*np.cos(phi))
+                        _plot_ellipses_centers(ax,
+                                               x_polygon, y_polygon,
+                                               x_ellipse, y_ellipse,
+                                               structures[i_str],
+                                               polygon_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
+                                               ellipse_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
+                                               polygon_linewidth=1,
+                                               ellipse_linewidth=1,
+                                               plot_structure_mid=False,
+                                               )
+            ax.set_xlabel('R' + ' '+ x_unit_name)
+            ax.set_ylabel('z' + ' '+ y_unit_name)
+            if np.mod(i_frames,5) != 0:
+                ax.get_yaxis().set_visible(False)
+            if i_frames < 5:
+                ax.get_xaxis().set_visible(False)
+            ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
+
+            plt.show()
+
+            ax.set_xlim([x_coord.min(),x_coord.max()])
+            ax.set_ylim([y_coord.min(),y_coord.max()])
+            ax.set_title("{:.3f}".format(time[i_frames+plot_example_structure_frames]*1e3)+'ms')
+        #plt.tight_layout(pad=0.1)
+        pdf_pages.savefig()
+        pdf_pages.close()
 
     if not filename_was_none and not time_range is None:
         sample_time=frame_properties['Time'][1]-frame_properties['Time'][0]
         if time_range[0] < frame_properties['Time'][0]-sample_time or time_range[1] > frame_properties['Time'][-1]+sample_time:
             raise ValueError('Please run the calculation again with the timerange. The pickle file doesn\'t have the desired range')
+
     if time_range is None:
         time_range=[frame_properties['Time'][0],frame_properties['Time'][-1]]
 
@@ -1439,7 +1543,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                         if key not in differential_keys:
                             try:
                                 if plot_tracking:
-
                                     ax.plot(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
                                             struct_by_struct[ind_str][key],
                                             label=str(ind_str),
@@ -1456,11 +1559,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                )
                             except Exception as e:
                                 print(str(e))
-                                pass
                             ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
                         else:
                             try:
-
                                 if plot_tracking:
                                     ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
                                             struct_by_struct[ind_str][key],
@@ -1476,8 +1577,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                marker='o',
                                                color=colortable[np.mod(int(ind_str)+1,n_color)],
                                                )
-                            except:
-                                pass
+                            except Exception as e:
+                                print(str(e))
                             ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
 
                 ax.set_xlabel('Time [ms]')
@@ -1500,6 +1601,79 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         if plot_for_publication:
             import matplotlib.style as pltstyle
             pltstyle.use('default')
+
+    if plot_example_frames_results:
+        pdf_pages=PdfPages(wd+'/plots/plot_example_frame_results.pdf')
+        struct_by_struct=transform_frames_to_structures(frame_properties)
+
+        analyzed_keys=read_analyzed_keys()
+        #return struct_by_struct
+        #print('str_by_str_len: ',struct_by_struct)
+
+        #Area, Angle, Elongation, Roundness
+        fig, axes = plt.subplots(4,1,figsize=(17/2.54,12/2.54))
+        for ind,key in enumerate(['Area','Angle','Roundness','Total curvature']):
+            ax=axes[ind]
+            for ind_str in range(len(struct_by_struct)):
+                if struct_by_struct[ind_str]['Time'] !=[]:
+                    if key not in differential_keys:
+                        try:
+                            ax.plot(np.asarray(struct_by_struct[ind_str]['Time']),
+                                    struct_by_struct[ind_str][key],
+                                    label=str(ind_str),
+                                    color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                    )
+
+                            ax.scatter(np.asarray(struct_by_struct[ind_str]['Time']),
+                                       struct_by_struct[ind_str][key],
+                                       label=str(ind_str),
+                                       s=5,
+                                       marker='o',
+                                       color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                       )
+                        except Exception as e:
+                            print(str(e))
+                        ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
+                    else:
+                        try:
+
+                            ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:]),
+                                    struct_by_struct[ind_str][key],
+                                    label=str(ind_str),
+                                    color=colortable[int(np.mod(ind_str+1,n_color))],
+                                    )
+
+
+                            ax.scatter(np.asarray(struct_by_struct[ind_str]['Time'][1:]),
+                                       struct_by_struct[ind_str][key],
+                                       label=str(ind_str),
+                                       s=5,
+                                       marker='o',
+                                       color=colortable[np.mod(int(ind_str)+1,n_color)],
+                                       )
+                        except Exception as e:
+                            print(str(e))
+                        ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
+            if ind < 3:
+                ax.get_xaxis().set_visible(False)
+            ax.set_xlabel('Time [s]')
+            ax.set_xlim(np.asarray(time_range))
+            ax.set_title(str(key)+ ' vs. time')
+
+            # if plot_for_publication:
+            #     x1,x2=ax.get_xlim()
+            #     y1,y2=ax.get_ylim()
+            #     ax.set_aspect((x2-x1)/(y2-y1)/1.618)
+            fig.tight_layout(pad=0.1)
+
+    if pdf:
+       pdf_pages.savefig()
+       pdf_pages.close()
+
+    if plot_for_publication:
+        import matplotlib.style as pltstyle
+        pltstyle.use('default')
+
 
     if return_results:
         return frame_properties

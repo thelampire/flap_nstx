@@ -16,4 +16,4 @@ from .analyze_thomson_filament_correlation_ultimate import read_gpi_results, rea
 
 from .analyze_shear_induced_rotation import calculate_shear_induced_angular_velocity, calculate_shear_layer_vpol, analyze_shear_distribution
 
-from .analyze_blob_database import read_blob_database
+from .analyze_blob_database import read_blob_database,calculate_blob_parameter_histograms,plot_blob_blob_parameter_trends

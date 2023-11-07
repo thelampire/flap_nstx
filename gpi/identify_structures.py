@@ -46,8 +46,8 @@ def identify_structures(#General inputs
                         pixel=False,                            #Calculate the results in pixel coordinates
                         mfilter_range=5,                        #Range of the median filter
 
-                        ignore_side_structure=False,
-                        ignore_large_structure=False,
+                        ignore_side_structure=False,            #Ignore the structures on the side of the frame
+                        ignore_large_structure=False,           #Ignore structures larger than the frame size.
                         smooth_contours=0,                      #smooth the perimeter with corner cutting this many times
                         ellipse_method='linalg',                #linalg or skimage
                         fit_shape='ellipse',                    #ellipse or gaussian
@@ -56,10 +56,10 @@ def identify_structures(#General inputs
 
                         elongation_threshold=0.1,               #Threshold for angle definition, the angle of circular structures cannot be determined.
 
-                        str_finding_method='contour',          #Contour or watershed for now
+                        str_finding_method='contour',           #Contour or watershed for now
 
                         #Contour segmentation inputs
-                        nlevel=51,                           #The number of contours to be used for the calculation (default:ysize/mfilter_range=80//5)
+                        nlevel=51,                              #The number of contours to be used for the calculation (default:ysize/mfilter_range=80//5)
                         levels=None,                            #Contour levels from an input and not from automatic calculation
                         threshold_level=None,                   #Threshold level over which it is considered to be a structure
                                                                 #if set, the value is subtracted from the data and contours are found after that.
@@ -76,8 +76,12 @@ def identify_structures(#General inputs
                         plot_full=False,                        #Plot the steps of the watershed segmentation along with the fitted structures
                         plot_full_for_publication=False,        #Plot it for a publication with correct sizes and all.
                         plot_result=False,                      #Test the result only (plot the contour and the found structures)
+                        plot_flux_surfaces=True,                #Plot the magnetic surfaces on the video/frames.
+                        surface_data_obj=None,                  #FLAP data object for magnetic surfaces in the same coordinates as the plotting is
+                        plot_separatrix=True,                   #Plot the separatrix onto the video/frames.
+                        separatrix_data=None,                   #Data from the separatrix in the form of [N,2] [:.0] is horizontal, [:,1] is vertical.
                         test=False,                             #Test the contours and the structures before any kind of processing
-                        save_data_for_publication=False,
+                        save_data_for_publication=False,        #Save the data for publication
                         ):
 
     """
@@ -620,6 +624,7 @@ def identify_structures(#General inputs
                                 dpi=my_dpi)
         else:
             fig,ax=plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+
         if levels is not None:
             plt.contourf(x_coord, y_coord, data, levels=nlevel)
         else:
@@ -669,53 +674,60 @@ def identify_structures(#General inputs
             plt.cla()
             fig,axes=plt.subplots(1,4,
                                   figsize=(17/2.54,8.5/2.54))
-
+            xpos, ypos= (-0.2,1.1)
             ax=axes[0]
             ax.contourf(x_coord,
                         y_coord,
                         data,
                         levels=nlevel)
-            ax.set_title('Pre-processed data')
+            ax.set_title('Pre-processed frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
             ax.set_ylabel('y [pix]')
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
+            ax.text(xpos, ypos, '(a)', transform=ax.transAxes, size=9)
 
             ax=axes[1]
             ax.contourf(x_coord,
                         y_coord,
                         data_thresholded)
-            ax.set_title('Thresholded data')
+            ax.set_title('Thresholded\n frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
-            ax.set_ylabel('y [pix]')
+            #ax.set_ylabel('y [pix]')
+            ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
+            ax.text(xpos, ypos, '(b)', transform=ax.transAxes, size=9)
 
             ax=axes[2]
             ax.contourf(x_coord,
                         y_coord,
                         binary)
-            ax.set_title('Binary data')
+            ax.set_title('Binary frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
-            ax.set_ylabel('y [pix]')
+            #ax.set_ylabel('y [pix]')
+            ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
+            ax.text(xpos, ypos, '(c)', transform=ax.transAxes, size=9)
 
             ax=axes[3]
             ax.contourf(x_coord,
                         y_coord,
                         labels)
-            ax.set_title('Segmented data')
+            ax.set_title('Segmented\n frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
-            ax.set_ylabel('y [pix]')
+            #ax.set_ylabel('y [pix]')
+            ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
+            ax.text(xpos, ypos, '(d)', transform=ax.transAxes, size=9)
 
-            plt.tight_layout(pad=0.1)
+            # plt.tight_layout(pad=0.1)
 
     elif plot_full and str_finding_method == 'contour':
         raise ValueError('plot_full cannot be set when contour segmentation is performed.')
@@ -803,6 +815,7 @@ def _plot_ellipses_centers(ax_cur,
                            ellipse_color=None,
                            polygon_linewidth=1,
                            ellipse_linewidth=1,
+                           plot_structure_mid=False
                            ):
 
     #Plot the half path polygon
@@ -833,11 +846,11 @@ def _plot_ellipses_centers(ax_cur,
                 [structure['Center'][1]-structure['Axes length'][0]*np.sin(structure['Angle']),
                  structure['Center'][1]+structure['Axes length'][0]*np.sin(structure['Angle'])],
                 color='magenta')
+    if plot_structure_mid:
+        ax_cur.scatter(structure['Centroid'][0],
+                       structure['Centroid'][1],
+                       color='yellow')
 
-    ax_cur.scatter(structure['Centroid'][0],
-                   structure['Centroid'][1],
-                   color='yellow')
-
-    ax_cur.scatter(structure['Center of gravity'][0],
-                   structure['Center of gravity'][1],
-                   color='red')
+        ax_cur.scatter(structure['Center of gravity'][0],
+                       structure['Center of gravity'][1],
+                       color='red')
