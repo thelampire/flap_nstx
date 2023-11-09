@@ -20,7 +20,11 @@ flap.config.read(file_name=fn)
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 
 #Scientific library imports
-import matplotlib.pyplot as plt
+try:
+    plt
+except:
+    import matplotlib.pyplot as plt
+
 import numpy as np
 from numpy.linalg import eig, inv
 
@@ -881,3 +885,29 @@ def plot_pearson_matrix(matrix,
     ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
     plt.tight_layout(pad=0.1)
     plt.show()
+
+def set_matplotlib_for_publication(labelsize=9.,
+                                   linewidth=0.5,
+                                   major_ticksize=2.,
+                                   ):
+    plt.rc('font', family='serif', serif='Helvetica')
+    plt.rc('text', usetex=False)                                            #usetex doesnt work with the current installation but works with $$ somehow.
+    plt.rcParams['pdf.fonttype'] = 42
+    plt.rcParams['ps.fonttype'] = 42
+    plt.rcParams['lines.linewidth'] = linewidth
+    plt.rcParams['axes.linewidth'] = linewidth
+    plt.rcParams['axes.labelsize'] = labelsize
+    plt.rcParams['axes.titlesize'] = labelsize
+
+    plt.rcParams['xtick.labelsize'] = labelsize
+    plt.rcParams['xtick.major.size'] = major_ticksize
+    plt.rcParams['xtick.major.width'] = linewidth
+    plt.rcParams['xtick.minor.width'] = linewidth/2
+    plt.rcParams['xtick.minor.size'] = major_ticksize/2
+
+    plt.rcParams['ytick.labelsize'] = labelsize
+    plt.rcParams['ytick.major.width'] = linewidth
+    plt.rcParams['ytick.major.size'] = major_ticksize
+    plt.rcParams['ytick.minor.width'] = linewidth/2
+    plt.rcParams['ytick.minor.size'] = major_ticksize/2
+    plt.rcParams['legend.fontsize'] = labelsize

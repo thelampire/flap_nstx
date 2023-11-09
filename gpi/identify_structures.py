@@ -76,10 +76,12 @@ def identify_structures(#General inputs
                         plot_full=False,                        #Plot the steps of the watershed segmentation along with the fitted structures
                         plot_full_for_publication=False,        #Plot it for a publication with correct sizes and all.
                         plot_result=False,                      #Test the result only (plot the contour and the found structures)
+
                         plot_flux_surfaces=True,                #Plot the magnetic surfaces on the video/frames.
                         surface_data_obj=None,                  #FLAP data object for magnetic surfaces in the same coordinates as the plotting is
                         plot_separatrix=True,                   #Plot the separatrix onto the video/frames.
                         separatrix_data=None,                   #Data from the separatrix in the form of [N,2] [:.0] is horizontal, [:,1] is vertical.
+
                         test=False,                             #Test the contours and the structures before any kind of processing
                         save_data_for_publication=False,        #Save the data for publication
                         ):
@@ -626,7 +628,23 @@ def identify_structures(#General inputs
             fig,ax=plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
 
         if levels is not None:
-            plt.contourf(x_coord, y_coord, data, levels=nlevel)
+            plt.contourf(x_coord,
+                         y_coord,
+                         data,
+                         levels=nlevel)
+
+            if plot_flux_surfaces and surface_data_obj is not None:
+                print(surface_data_obj.coordinate(y_coord_name)[0])
+                plt.contour(surface_data_obj.coordinate(x_coord_name)[0],
+                            surface_data_obj.coordinate(y_coord_name)[0],
+                            surface_data_obj.data.transpose(),
+                            levels=51)
+
+            if plot_separatrix and separatrix_data is not None:
+                plt.plot(separatrix_data[:,0],
+                         separatrix_data[:,1],
+                         color='red')
+
         else:
             plt.contourf(x_coord, y_coord, data, levels=levels)
 
@@ -757,7 +775,13 @@ def identify_structures(#General inputs
 
                 if plot_result or plot_full: #This plots the structures and the fit ellipses one by one
                     if plot_result:
-                        _plot_ellipses_centers(ax, x_polygon, y_polygon, x_ellipse, y_ellipse, structures[i_str])
+                        _plot_ellipses_centers(ax,
+                                               x_polygon,
+                                               y_polygon,
+                                               x_ellipse,
+                                               y_ellipse,
+                                               structures[i_str],
+                                               ellipse_linewidth=0.5)
                     if plot_full:
                         for ax_cur in np.ravel(axes):
                             _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse, structures[i_str])

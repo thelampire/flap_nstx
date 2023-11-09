@@ -452,7 +452,10 @@ def show_nstx_gpi_video_frames(exp_id=None,
             else:
                 time=time_range[0]+(time_range[1]-time_range[0])/(n_frame-1)*(index_grid_x*ny+index_grid_y)
                 slicing={'Time':time}
-            d=flap.slice_data(object_name, slicing=slicing, output_name='GPI_SLICED')
+            d=flap.slice_data(object_name,
+                              slicing=slicing,
+                              output_name='GPI_SLICED')
+
             slicing={'Time':d.coordinate('Time')[0][0,0]}
 
             if plot_flux and device_coordinates:

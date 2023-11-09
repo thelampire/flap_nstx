@@ -21,7 +21,7 @@ import flap_nstx
 flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.gpi import normalize_gpi, identify_structures
-from flap_nstx.tools import detrend_multidim
+from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
 
 import flap_mdsplus
 
@@ -32,7 +32,6 @@ fn = os.path.join(thisdir,"../flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 #Scientific modules
-import matplotlib.style as pltstyle
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -102,6 +101,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            plot_scatter=False,                   #Add scatter points  to the lineplots
                            structure_video_save=False,           #Save the video of the overplot ellipses
                            video_resolution=(1024,1024),
+                           video_framerate=24,
+                           nocolorbar=False,
                            structure_pdf_save=False,             #Save the struture finding algorithm's plot output into a PDF (can create very large PDF's, the number of pages equals the number of frames)
 
                            plot_separatrix=True,
@@ -228,7 +229,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         import matplotlib
         matplotlib.use('agg')
 
-    if not nocalc or structure_video_save:
+    if not nocalc or structure_video_save or plot_example_structure_frames:
         if plot_flux_surfaces or plot_separatrix:
             try:
                 if plot_separatrix:
@@ -243,12 +244,18 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                           exp_id=exp_id,
                                           object_name='SEP Y OBJ'
                                           )
+                else:
+                    d_sep_x=None
+                    d_sep_y=None
+
                 if plot_flux_surfaces:
                     d_flux=flap.get_data('NSTX_MDSPlus',
                                          name='\EFIT02::\PSIRZ',
                                          exp_id=exp_id,
                                          object_name='PSI RZ OBJ'
                                          )
+                else:
+                    d_flux=None
             except Exception as e:
                 print('Exception occurred in analyze_gpi_structures.py at line 254.')
                 print(e)
@@ -409,7 +416,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         sample_0=flap.get_data_object_ref('GPI_SLICED_FULL',
                                           exp_id=exp_id).coordinate('Sample')[0][0,0,0]
 
-        if not (structure_video_save and nocalc):
+        if not ((structure_video_save or plot_example_structure_frames)
+                and nocalc):
             coordinate_names=[d.coordinates[i].unit.name for i in range(len(d.coordinates))]
             distance_unit='pix'
             time_unit='sample'
@@ -477,6 +485,22 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     pdf_plot_watershed=PdfPages(wd+'/plots/watershed_steps.pdf')
                 else:
                     plot_full=False
+                slicing={'Time':frame.coordinate('Time')[0][0,0]}
+                if d_sep_x is not None and d_sep_y is not None:
+                    d_sep_x_sliced=d_sep_x.slice_data(slicing=slicing)
+                    d_sep_y_sliced=d_sep_y.slice_data(slicing=slicing)
+
+                    separatrix_data=np.zeros([d_sep_x_sliced.shape[0],2])
+                    separatrix_data[:,0]=d_sep_x_sliced.data
+                    separatrix_data[:,1]=d_sep_y_sliced.data
+                else:
+                    separatrix_data=None
+
+                if d_flux is not None:
+                    surface_data_obj=d_flux.slice_data(slicing=slicing)
+                else:
+                    surface_data_obj=None
+
                 structures_dict = identify_structures(str_finding_method=str_finding_method,
                                                       data_object='GPI_FRAME',
                                                       ignore_side_structure=ignore_side_structures,
@@ -499,7 +523,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       plot_full_for_publication=plot_for_publication,
                                                       video_resolution=video_resolution,
                                                       structure_video_save=structure_video_save,
+                                                      plot_flux_surfaces=plot_flux_surfaces,
+                                                      surface_data_obj=surface_data_obj,
+                                                      plot_separatrix=plot_separatrix,
+                                                      separatrix_data=separatrix_data,
                                                       save_data_for_publication=save_data_for_publication)
+
                 if plot_watershed_steps and i_frames == plot_watershed_steps:
                     pdf_plot_watershed.savefig()
                     pdf_plot_watershed.close()
@@ -1171,8 +1200,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         from flap_nstx.gpi import _plot_ellipses_centers
         import scipy
 
+        set_matplotlib_for_publication(labelsize=32,
+                                       linewidth=2,
+                                       major_ticksize=15.,
+                                       )
 
-        slicing_frame={'Sample':sample_0+i_frames}
+        slicing_frame={'Sample':sample_0}
 
         frame=flap.slice_data(object_name,
                               exp_id=exp_id,
@@ -1198,18 +1231,48 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             frame.data=np.asarray(frame.data, dtype='float64')
             frame.data=scipy.ndimage.median_filter(frame.data, 5)
 
+            slicing={'Time':frame.coordinate('Time')[0][0,0]}
+            d_sep_x_sliced=d_sep_x.slice_data(slicing=slicing)
+            d_sep_y_sliced=d_sep_y.slice_data(slicing=slicing)
+
+            separatrix_data=np.zeros([d_sep_x_sliced.shape[0],2])
+            separatrix_data[:,0]=d_sep_x_sliced.data
+            separatrix_data[:,1]=d_sep_y_sliced.data
+            if d_flux is not None:
+                surface_data_obj=d_flux.slice_data(slicing=slicing)
+
             my_dpi=80
             fig,ax=plt.subplots(figsize=(video_resolution[0]/my_dpi,
                                          video_resolution[1]/my_dpi),
                                 dpi=my_dpi)
 
             if levels is None:
-                plt.contourf(x_coord, y_coord, frame.data, levels=51)
+                plt.contourf(x_coord,
+                             y_coord,
+                             frame.data,
+                             levels=51)
             else:
-                plt.contourf(x_coord, y_coord, frame.data, levels=levels)
+                plt.contourf(x_coord,
+                             y_coord,
+                             frame.data,
+                             levels=levels)
+            if not nocolorbar:
+                plt.colorbar()
+            if plot_flux_surfaces and surface_data_obj is not None:
+                plt.contour(surface_data_obj.coordinate(x_coord_name)[0],
+                            surface_data_obj.coordinate(y_coord_name)[0],
+                            surface_data_obj.data.transpose(),
+                            linewidth=0.5,
+                            cmap='gist_ncar',
+                            levels=51)
+            if plot_separatrix and separatrix_data is not None:
+                plt.plot(separatrix_data[:,0],
+                         separatrix_data[:,1],
+                         linewidth=2,
+                         color='red')
 
             ax.set_aspect(1.0)
-            plt.colorbar()
+
 
             structures=frame_properties['structures'][i_frames]
 
@@ -1242,14 +1305,14 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                polygon_linewidth=3,
                                                ellipse_linewidth=1.5)
 
-                        ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
-                        ax.set_ylabel(x_coord_name + ' '+ y_unit_name)
-                        ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
-                        plt.show()
-                        plt.pause(0.001)
+            ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
+            ax.set_ylabel(x_coord_name + ' '+ y_unit_name)
+            ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
+            plt.show()
+            plt.pause(0.001)
 
-                    plt.xlim([x_coord.min(),x_coord.max()])
-                    plt.ylim([y_coord.min(),y_coord.max()])
+            plt.xlim([x_coord.min(),x_coord.max()])
+            plt.ylim([y_coord.min(),y_coord.max()])
 
 
             fig = plt.gcf()
@@ -1272,10 +1335,13 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     height = buf.shape[0]
                     width = buf.shape[1]
                     video_codec_code='mp4v'
-                    filename=wd+'/plots/NSTX_GPI_'+str(exp_id)+'_'+"{:.3f}".format(time[0]*1e3)+'_fit_structures_'+str_finding_method+'.mp4'
+                    filename=wd+'/plots/NSTX_GPI_'+str(exp_id)+'_'+\
+                        "{:.3f}".format(time[0]*1e3)+'_'+\
+                        "{:.3f}".format(time[-1]*1e3)+\
+                        '_fit_structures_'+str_finding_method+'.mp4'
                     video = cv2.VideoWriter(filename,
                                             cv2.VideoWriter_fourcc(*video_codec_code),
-                                            float(24),
+                                            float(video_framerate),
                                             (width,height),
                                             isColor=True)
                     print('Video resolution is: '+str(width)+' x '+str(height))
@@ -1293,11 +1359,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       purpose="example_frames",
                                                       extension='.pdf',
                                                       comment='s0'+str(sample_0))
+
         pdf_pages=PdfPages(wd+'/plots/'+pdf_filenames_frames)
         from flap_nstx.gpi import _plot_ellipses_centers
         import scipy
 
-        slicing_frame={'Sample':sample_0+i_frames}
+        slicing_frame={'Sample':sample_0}
 
         frame=flap.slice_data(object_name,
                               exp_id=exp_id,
@@ -1311,12 +1378,12 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         x_coord=frame.coordinate(x_coord_name)[0]
         y_coord=frame.coordinate(y_coord_name)[0]
 
+        nframe=15
+        fig,axes=plt.subplots(int(nframe/5),5,
+                              figsize=(17/2.54,4.25*nframe/5/2.54),
+                              )
 
-        fig,axes=plt.subplots(2,5,
-                            figsize=(17/2.54,8.5/2.54),
-                            )
-
-        for i_frames in range(0,10):
+        for i_frames in range(0,nframe):
             ax=axes[i_frames//5,
                     np.mod(i_frames,5)]
 
@@ -1365,14 +1432,14 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                polygon_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
                                                ellipse_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
                                                polygon_linewidth=1,
-                                               ellipse_linewidth=1,
+                                               ellipse_linewidth=0.5,
                                                plot_structure_mid=False,
                                                )
             ax.set_xlabel('R' + ' '+ x_unit_name)
             ax.set_ylabel('z' + ' '+ y_unit_name)
             if np.mod(i_frames,5) != 0:
                 ax.get_yaxis().set_visible(False)
-            if i_frames < 5:
+            if i_frames < nframe-5:
                 ax.get_xaxis().set_visible(False)
             ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
 
@@ -1666,9 +1733,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             #     ax.set_aspect((x2-x1)/(y2-y1)/1.618)
             fig.tight_layout(pad=0.1)
 
-    if pdf:
-       pdf_pages.savefig()
-       pdf_pages.close()
+        if pdf:
+           pdf_pages.savefig()
+           pdf_pages.close()
 
     if plot_for_publication:
         import matplotlib.style as pltstyle
