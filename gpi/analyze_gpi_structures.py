@@ -22,6 +22,7 @@ flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.gpi import normalize_gpi, identify_structures
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
+from flap_nstx.tools import fringe_jump_correction
 
 import flap_mdsplus
 
@@ -115,12 +116,14 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            plot_watershed_steps=False,           #Plot the steps of the watershed segmentation at the sample number this is set to.
                            plot_example_structure_frames=False,  #Plot 10 example frames from the sample number this is set to.
                            plot_example_frames_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
+                           plot_nframe=None,
+                           plot_ncol=None,
 
                             #File input/output options
                            filename=None,                        #Filename for restoring data
                            save_results=True,                    #Save the results into a .pickle file to filename+.pickle
                            nocalc=True,                          #Restore the results from the .pickle file from filename+.pickle
-
+                           recalc_tracking=False,
                             #Output options:
                            return_results=False,                 #Return the results if set.
                            return_pixel_displacement=False,
@@ -460,7 +463,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 z_sep_GPI=z_sep[(sep_GPI_ind)]
                 R_sep_GPI=R_sep[sep_GPI_ind]
                 GPI_z_vert=coeff_z[0]*np.arange(80)/80*64+coeff_z[1]*np.arange(80)+coeff_z[2]
-                R_sep_GPI_interp=np.interp(GPI_z_vert,np.flip(z_sep_GPI),np.flip(R_sep_GPI))
+                R_sep_GPI_interp=np.interp(GPI_z_vert,
+                                           np.flip(z_sep_GPI),
+                                           np.flip(R_sep_GPI))
                 z_sep_GPI_interp=GPI_z_vert
 
             for i_frames in range(n_frames):
@@ -726,7 +731,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         print('The pickle file does not exist. Recalculating the results.')
         nocalc=False
 
-    if not nocalc:
+    if (not nocalc) or recalc_tracking:
 
         #Structure tracking
         highest_label=0
@@ -786,7 +791,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                 str_overlap_matrix[j_str1,j_str2]=1
 
                 elif tracking == 'weighted':
-                    #TODO:develop this sh!t
+
                     score_matrix=np.zeros([n_str1,n_str2])
 
                     for j_str2 in range(n_str2):
@@ -1019,7 +1024,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                                     print('ind_split', ind_split)
                                     print("2", structures_2[ind_str2]['Label'])
-    #                                raise ValueError('The code needs to be reworked because str2 should not have a label and it is a serious exception.')
 
                                 if ind_str2 == ind_high:
                                     structures_2[ind_str2]['Label']=structures_1[j_str1]['Label']
@@ -1378,14 +1382,18 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         x_coord=frame.coordinate(x_coord_name)[0]
         y_coord=frame.coordinate(y_coord_name)[0]
 
-        nframe=15
-        fig,axes=plt.subplots(int(nframe/5),5,
-                              figsize=(17/2.54,4.25*nframe/5/2.54),
+        if plot_nframe is None and plot_ncol is None:
+
+            plot_nframe=15
+            plot_ncol=5
+
+        fig,axes=plt.subplots(int(plot_nframe/plot_ncol),plot_ncol,
+                              figsize=(17/2.54,4.25*plot_nframe/plot_ncol/2.54),
                               )
 
-        for i_frames in range(0,nframe):
-            ax=axes[i_frames//5,
-                    np.mod(i_frames,5)]
+        for i_frames in range(0,plot_nframe):
+            ax=axes[i_frames//plot_ncol,
+                    np.mod(i_frames,plot_ncol)]
 
             slicing_frame={'Sample':sample_0+i_frames+plot_example_structure_frames}
 
@@ -1435,12 +1443,20 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                ellipse_linewidth=0.5,
                                                plot_structure_mid=False,
                                                )
+                    elif structures[i_str]['Half path'] is not None:
+                            ax.plot(x_polygon,
+                                    y_polygon,
+                                    color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
+                                    linewidth=1
+                                    )
             ax.set_xlabel('R' + ' '+ x_unit_name)
             ax.set_ylabel('z' + ' '+ y_unit_name)
-            if np.mod(i_frames,5) != 0:
+            if np.mod(i_frames,plot_ncol) != 0:
                 ax.get_yaxis().set_visible(False)
-            if i_frames < nframe-5:
+
+            if i_frames < plot_nframe-plot_ncol:
                 ax.get_xaxis().set_visible(False)
+
             ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
 
             plt.show()
@@ -1448,7 +1464,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
             ax.set_title("{:.3f}".format(time[i_frames+plot_example_structure_frames]*1e3)+'ms')
-        #plt.tight_layout(pad=0.1)
+        plt.tight_layout(pad=0.1)
         pdf_pages.savefig()
         pdf_pages.close()
 
@@ -1603,6 +1619,11 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             analyzed_keys=read_analyzed_keys()
             #return struct_by_struct
             #print('str_by_str_len: ',struct_by_struct)
+            if plot_scatter:
+                linestyle='-o'
+            else:
+                linestyle='-'
+
             for key in analyzed_keys:
                 fig, ax = plt.subplots(figsize=figsize)
                 for ind_str in range(len(struct_by_struct)):
@@ -1610,20 +1631,18 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                         if key not in differential_keys:
                             try:
                                 if plot_tracking:
+
+                                    if key in ['Angle of least inertia','Angle']:
+                                        struct_by_struct[ind_str][key] = fringe_jump_correction(struct_by_struct[ind_str][key],
+                                                                                                fringe_size=np.pi)
+
                                     ax.plot(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
                                             struct_by_struct[ind_str][key],
+                                            linestyle,
                                             label=str(ind_str),
+                                            markersize=5,
                                             color=colortable[np.mod(int(ind_str)+1,n_color)]
                                             )
-
-                                if plot_scatter:
-                                    ax.scatter(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
-                                               struct_by_struct[ind_str][key],
-                                               label=str(ind_str),
-                                               s=5,
-                                               marker='o',
-                                               color=colortable[np.mod(int(ind_str)+1,n_color)]
-                                               )
                             except Exception as e:
                                 print(str(e))
                             ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
@@ -1633,17 +1652,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                     ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
                                             struct_by_struct[ind_str][key],
                                             label=str(ind_str),
+                                            markersize=5,
                                             color=colortable[int(np.mod(ind_str+1,n_color))],
                                             )
 
-                                if plot_scatter:
-                                    ax.scatter(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
-                                               struct_by_struct[ind_str][key],
-                                               label=str(ind_str),
-                                               s=5,
-                                               marker='o',
-                                               color=colortable[np.mod(int(ind_str)+1,n_color)],
-                                               )
                             except Exception as e:
                                 print(str(e))
                             ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
@@ -1685,19 +1697,41 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 if struct_by_struct[ind_str]['Time'] !=[]:
                     if key not in differential_keys:
                         try:
-                            ax.plot(np.asarray(struct_by_struct[ind_str]['Time']),
-                                    struct_by_struct[ind_str][key],
-                                    label=str(ind_str),
-                                    color=colortable[np.mod(int(ind_str)+1,n_color)]
-                                    )
+                            if key == 'Angle':
+                                ax.plot(np.asarray(struct_by_struct[ind_str]['Time']),
+                                        fringe_jump_correction(struct_by_struct[ind_str][key],
+                                                               fringe_size=np.pi),
+                                        '-o',
+                                        markersize=3,
+                                        label=str(ind_str),
+                                        color=colortable[np.mod(int(ind_str)+1,n_color)]
 
-                            ax.scatter(np.asarray(struct_by_struct[ind_str]['Time']),
-                                       struct_by_struct[ind_str][key],
-                                       label=str(ind_str),
-                                       s=5,
-                                       marker='o',
-                                       color=colortable[np.mod(int(ind_str)+1,n_color)]
-                                       )
+                                        )
+
+                                # ax.scatter(np.asarray(struct_by_struct[ind_str]['Time']),
+                                #            fringe_jump_correction(struct_by_struct[ind_str][key],
+                                #                                   fringe_size=np.pi),
+                                #            label=str(ind_str),
+                                #            s=5,
+                                #            marker='o',
+                                #            color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                #            )
+                            else:
+                                ax.plot(np.asarray(struct_by_struct[ind_str]['Time']),
+                                        struct_by_struct[ind_str][key],
+                                        '-o',
+                                        markersize=3,
+                                        label=str(ind_str),
+                                        color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                        )
+
+                                # ax.scatter(np.asarray(struct_by_struct[ind_str]['Time']),
+                                #            struct_by_struct[ind_str][key],
+                                #            label=str(ind_str),
+                                #            s=5,
+                                #            marker='o',
+                                #            color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                #            )
                         except Exception as e:
                             print(str(e))
                         ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
@@ -1732,7 +1766,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             #     y1,y2=ax.get_ylim()
             #     ax.set_aspect((x2-x1)/(y2-y1)/1.618)
             fig.tight_layout(pad=0.1)
-
         if pdf:
            pdf_pages.savefig()
            pdf_pages.close()
@@ -1801,12 +1834,12 @@ def frame_properties_dict(exp_id, time, time_unit, distance_unit):
     key='Angle'
     frame_properties['data'][key]=copy.deepcopy(data_dict)
     frame_properties['data'][key]['label']='$\phi$'
-    frame_properties['data'][key]['unit']='deg'
+    frame_properties['data'][key]['unit']='rad'
 
     key='Angle of least inertia'
     frame_properties['data'][key]=copy.deepcopy(data_dict)
     frame_properties['data'][key]['label']='$\phi_{ALI}$'
-    frame_properties['data'][key]['unit']='deg'
+    frame_properties['data'][key]['unit']='rad'
 
     key='Area'
     frame_properties['data'][key]=copy.deepcopy(data_dict)

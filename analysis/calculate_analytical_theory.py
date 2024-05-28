@@ -22,8 +22,9 @@ from scipy.optimize import curve_fit, root
 import flap
 import flap_nstx
 
-from flap_nstx.analysis import calculate_nstx_gpi_frame_by_frame_velocity, calculate_nstx_gpi_tde_velocity
-from flap_nstx import flap_nstx_thomson_data, get_nstx_thomson_gradient, get_fit_nstx_thomson_profiles
+from flap_nstx.analysis import calculate_tde_velocity
+from flap_nstx.thomson import get_nstx_thomson_gradient, get_fit_nstx_thomson_profiles
+from flap_nstx.gpi import calculate_nstx_gpi_frame_by_frame_velocity
 from flap_nstx.publications import read_ahmed_fit_parameters, read_ahmed_edge_current, read_ahmed_matlab_file
 from flap_nstx.analysis import thick_wire_estimation_numerical
 
@@ -618,7 +619,17 @@ def calculate_radial_acceleration_diagram(elm_window=500e-6,
                 """
                 if calculate_ion_drift_velocity:
 
-                    d=flap_nstx_thomson_data(exp_id=shot, pressure=True, add_flux_coordinates=True, output_name='pressure')
+                    d=flap.get_data('NSTX_THOMSON',
+                                    exp_id=shot,
+                                    name='',
+                                    object_name='THOMSON_DATA',
+                                    options={'pressure':True,
+                                             'temperature':False,
+                                             'density':False,
+                                             'spline_data':False,
+                                             'add_flux_coordinates':True,
+                                             'force_mdsplus':False})
+
                     time_index=np.argmin(np.abs(d.coordinate('Time')[0][0,:]-elm_time))
                     dpsi_per_dr=((d.coordinate('Device R')[0][0:-1,0]-d.coordinate('Device R')[0][1:,0])/(d.coordinate('Flux r')[0][0:-1,time_index]-d.coordinate('Flux r')[0][1:,time_index]))[-10:]
 

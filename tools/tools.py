@@ -831,25 +831,28 @@ def plot_pearson_matrix(matrix,
                         colormap='seismic',
                         figsize=(8.5/2.54,8.5/2.54*1.2),
                         charsize=9,
-                        zrange=[-1,1]
+                        zrange=[-1,1],
+                        plot_large=True,
+                        plot_values=True,
+                        plot_colorbar=True,
                         ):
+    if plot_large:
+        plt.rcParams['lines.linewidth'] = 4
+        plt.rcParams['axes.linewidth'] = 4
+        plt.rcParams['axes.labelsize'] = charsize
+        plt.rcParams['axes.titlesize'] = charsize
 
-    plt.rcParams['lines.linewidth'] = 4
-    plt.rcParams['axes.linewidth'] = 4
-    plt.rcParams['axes.labelsize'] = charsize
-    plt.rcParams['axes.titlesize'] = charsize
+        plt.rcParams['xtick.labelsize'] = charsize
+        plt.rcParams['xtick.major.size'] = 10
+        plt.rcParams['xtick.major.width'] = 4
+        plt.rcParams['xtick.minor.width'] = 2
+        plt.rcParams['xtick.minor.size'] = 4
 
-    plt.rcParams['xtick.labelsize'] = charsize
-    plt.rcParams['xtick.major.size'] = 10
-    plt.rcParams['xtick.major.width'] = 4
-    plt.rcParams['xtick.minor.width'] = 2
-    plt.rcParams['xtick.minor.size'] = 4
-
-    plt.rcParams['ytick.labelsize'] = charsize
-    plt.rcParams['ytick.major.width'] = 4
-    plt.rcParams['ytick.major.size'] = 6
-    plt.rcParams['ytick.minor.width'] = 2
-    plt.rcParams['ytick.minor.size'] = 4
+        plt.rcParams['ytick.labelsize'] = charsize
+        plt.rcParams['ytick.major.width'] = 4
+        plt.rcParams['ytick.major.size'] = 6
+        plt.rcParams['ytick.minor.width'] = 2
+        plt.rcParams['ytick.minor.size'] = 4
 
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -871,9 +874,10 @@ def plot_pearson_matrix(matrix,
                                             )
     plt.yticks(np.arange(matrix.shape[0]),
                labels=ylabels) #full_plasma_data.keys())
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes('right', size='5%', pad=0.05)
-    fig.colorbar(im, cax=cax, orientation='vertical')
+    if plot_colorbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='5%', pad=0.05)
+        fig.colorbar(im, cax=cax, orientation='vertical')
     ax.set_title(title)
     #plt.tight_layout(pad=0.1)
     ax.set_xticks(np.arange(0, len(xlabels), 1))
@@ -883,6 +887,14 @@ def plot_pearson_matrix(matrix,
 
 # Gridlines based on minor ticks
     ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
+    if plot_values:
+        for (i, j), z in np.ndenumerate(matrix):
+            ax.text(j, i, '{:0.1f}'.format(z),
+                    ha='center',
+                    va='center',
+                    color='white',
+                    size=charsize/1.5)
+
     plt.tight_layout(pad=0.1)
     plt.show()
 
@@ -911,3 +923,30 @@ def set_matplotlib_for_publication(labelsize=9.,
     plt.rcParams['ytick.minor.width'] = linewidth/2
     plt.rcParams['ytick.minor.size'] = major_ticksize/2
     plt.rcParams['legend.fontsize'] = labelsize
+
+def fringe_jump_correction(data,                                                #Data input
+                           fringe_size=2*np.pi,                                 #Size of the jumps need to be corrected
+                           tolerance=0.5,                                       #Tolerance for fringes, e.g., 0.2 means 2*np.pi * (1 - 0.2) still needs to be corrected.
+                           angular_velocity=False,                              #Switch whether angular velocity would need to be corrected
+                           sampling_time=2.5e-6):                                 #Sampling time for anxulag relocity correction delta_omega=fringe/sampling_time
+
+    if data is None:
+        raise ValueError('data input must be provided')
+
+    divider=1
+    if angular_velocity:
+        divider=sampling_time
+    while True:
+        fringe_exists=0
+        for ind in range(len(data)-1):
+            if data[ind+1]-data[ind] > fringe_size*(1-tolerance)/divider:
+                data[ind+1] -= fringe_size/divider
+                fringe_exists+=1
+            elif data[ind+1]-data[ind] < -(fringe_size*(1-tolerance))/divider:
+                data[ind+1] += fringe_size/divider
+                fringe_exists+=1
+            else:
+                pass
+        if fringe_exists == 0:
+            break
+    return data
