@@ -1,68 +1,57 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Oct  4 17:45:24 2021
+Created on Wed Jul 24 15:02:43 2024
 
 @author: mlampert
 """
+#!/usr/bin/env python3
+
 
 import os
-import copy
 import time as time_mod
 import pickle
 
-#FLAP imports and settings
-import flap
-import flap_nstx
-import flap_mdsplus
-
-flap_nstx.register()
-flap_mdsplus.register('NSTX_MDSPlus')
-
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
-flap.config.read(file_name=fn)
-wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
-
 #Scientific imports
 import numpy as np
+
 from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
-from scipy.integrate import quad
 
+import MDSplus as mds
 import matplotlib.pyplot as plt
-#Other necessary imports
 
-def get_fit_nstx_thomson_profiles(exp_id=None,                                      #Shot number
-                                  pressure=False,                                   #Return the pressure profile paramenters
-                                  temperature=False,                                #Return the temperature profile parameters
-                                  density=False,                                    #Return the density profile parameters
+def get_fit_nstx_thomson_profiles_simple(exp_id=None,                                      #Shot number
+                                         pressure=False,                                   #Return the pressure profile paramenters
+                                         temperature=False,                                #Return the temperature profile parameters
+                                         density=False,                                    #Return the density profile parameters
+                                         
+                                         spline_data=False,                                #Calculate the results from the spline data (no error is going to be taken into account)
 
-                                  spline_data=False,                                #Calculate the results from the spline data (no error is going to be taken into account)
-
-                                  modified_tanh=False,
-                                  average_profiles=None,
-
-                                  device_coordinates=False,                          #Calculate the results as a function of device coordinates
-                                  radial_range=None,                                #Radial range of the pedestal (only works when the device coorinates is set)
-
-                                  flux_coordinates=False,                           #Calculate the results in flux coordinates
-                                  flux_range=None,                                  #The normalaized flux coordinates range for returning the results
-
-                                  outboard_only=True,                           #Use only the outboard profile
-                                  force_overlap=False,                          #Shifts the inboard and outboard profiles of the TS to match
-
-                                  max_iter=1200,                                #Maximum iteration for the shifting
-                                  max_err=1e-5,                                 #difference between iteration steps to be reached
-
-                                  output_name=None,
-                                  plot_time_vec=None,
-                                  pdf_object=None,
-
-                                  test=False,
-                                  test_time_vec=False,
-                                  nocalc=False,
-                                  ):
+                                         modified_tanh=False,
+                                         average_profiles=None,
+                                          
+                                         device_coordinates=False,                         #Calculate the results as a function of device coordinates
+                                         radial_range=None,                                #Radial range of the pedestal (only works when the device coorinates is set)
+                                          
+                                         flux_coordinates=False,                           #Calculate the results in flux coordinates
+                                         flux_range=None,                                  #The normalaized flux coordinates range for returning the results
+                                          
+                                         outboard_only=True,                               #Use only the outboard profile
+                                         force_overlap=False,                              #Shifts the inboard and outboard profiles of the TS to match
+                                          
+                                         max_iter=1200,                                    #Maximum iteration for the shifting
+                                         max_err=1e-5,                                     #difference between iteration steps to be reached
+                                          
+                                         output_name=None,
+                                         plot_time_vec=None,
+                                         pdf_object=None,
+                                          
+                                         test=False,
+                                         test_time_vec=False,
+                                         nocalc=False,
+                                         wd='~/python_working_directory',      #working directory where the data will be saved
+                                         ):
     """
 
     Returns a dataobject which has the largest corresponding gradient based on the tanh fit.
@@ -96,20 +85,23 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
     if nocalc and os.path.exists(pickle_filename):
         thomson_profiles=pickle.load(open(pickle_filename,'rb'))
     else:
-        flap_options={'pressure':pressure,
-                      'temperature':temperature,
-                      'density':density,
-                      'spline_data':False,
-                      'add_flux_coordinates':True,
-                      'force_mdsplus':False}
 
-        d=flap.get_data('NSTX_THOMSON',
-                        exp_id=exp_id,
-                        name='',
-                        object_name='THOMSON_DATA',
-                        options=flap_options)
-
-        time_vec=d.coordinate('Time')[0][0,:]
+        conn=mds.Connection('skylark.pppl.gov')
+        conn.openTree('ACTIVESPEC', exp_id)
+        time_vec=conn.get('\\TS_BEST:TS_TIMES').data()
+        rad_coord=conn.get('\\TS_BEST:FIT_RADII').data()
+        if pressure:
+            data=conn.get('\\TS_BEST:FIT_PE').data()
+            error=conn.get('\\TS_BEST:FIT_PE_ERR').data()
+        elif temperature:
+            data=conn.get('\\TS_BEST:FIT_TE').data()
+            error=conn.get('\\TS_BEST:FIT_TE_ERR').data()
+        elif density:
+            data=conn.get('\\TS_BEST:FIT_NE').data()
+            error=conn.get('\\TS_BEST:FIT_NE_ERR').data()
+        else:
+            raise ValueError('pressure, temperature or density needs to be set.')
+            
         if test_time_vec:
             print('Fit 1st in ',time_mod.time_vec()-start_time_vec)
             start_time_vec=time_mod.time_vec()
@@ -122,14 +114,68 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
         if device_coordinates or not flux_coordinates:
             r_coord_name='Device R'
             if radial_range is None:
-                radial_range=[np.min(d.coordinate(r_coord_name)[0]),
-                              np.max(d.coordinate(r_coord_name)[0])]
+                radial_range=[np.min(rad_coord),
+                              np.max(rad_coord)]
+            flux_coord=None
+                
+        if r_coord_name == 'Flux r':
+            try:
+                conn.openTree('EFIT02',exp_id)    
+                
+                data_psirz=conn.get('\PSIRZ').data()
+                time_psirz=conn.get('dim_of(\PSIRZ,0)').data()
+                rad_coord_psirz=conn.get('dim_of(\PSIRZ,1)').data()
 
+                data_ssimag=conn.get('\SSIMAG').data()
 
+                data_ssibry=conn.get('\SSIBRY').data()
+
+                
+                # R_data=flap.get_data('NSTX_MDSPlus',
+                #                      name='\EFIT02::\R',
+                #                      exp_id=exp_id,
+                #                      object_name='R_FOR_COORD')
+                # PSI_norm_data=flap.get_data('NSTX_MDSPlus',
+                #                          name='\EFIT02::\PSIN',
+                #                          exp_id=exp_id,
+                #                          object_name='PSIN')
+                
+            except:
+                raise ValueError("The PSIRZ MDSPlus node cannot be reached.")
+            
+            psi_n=(data_psirz-data_ssimag[:,None,None])/(data_ssibry-data_ssimag)[:,None,None]
+            psi_n[np.isnan(psi_n)]=0.
+                       
+            psi_n=psi_n[:,32,:] #psi_n is transposed originally
+            psi_t_coord=time_psirz
+            psi_r_coord=rad_coord_psirz
+            
+            #Do the interpolation
+            #psi_values_spat_interpol=np.zeros([thomson_r_coord.shape[0],
+            #                                   psi_t_coord.shape[0]])
+            psi_values_ts=np.zeros([data.shape[0],
+                                    time_vec.shape[0]])
+            
+            for index_t in range(len(time_vec)):
+                ind_t_efit=np.argmin(np.abs(psi_t_coord-time_vec[index_t]))
+                psi_values_ts[:,index_t]=np.interp(rad_coord,
+                                                   psi_r_coord[ind_t_efit,:],
+                                                   psi_n[ind_t_efit,:])
+            
+            if test:
+                for index_t in range(len(time_vec)):
+                    plt.cla()
+                    plt.plot(rad_coord,psi_values_ts[:,index_t])
+                    # plt.plot(thomson_r_coord,psi_values_at_ts[:,index_t])
+                    plt.pause(0.5)
+                
+            psi_values_ts[np.isnan(psi_values_ts)]=0.
+            flux_coord=psi_values_ts
+        
         thomson_profiles={'time_vec':time_vec,
-                         'Data':d.data,
-                         'Device R':d.coordinate('Device R')[0],
-                         'Flux r':d.coordinate('Flux r')[0],
+                         'Data':data,
+                         'Device R':rad_coord,
+                         'Flux r':flux_coord,
                          'Fit parameters':np.zeros([time_vec.shape[0],5]),
                          'Fit parameter errors':np.zeros([time_vec.shape[0],5]),
                          'a':np.zeros(time_vec.shape),
@@ -181,33 +227,27 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
         if test_time_vec:
             print('Fit 2nd in ',time_mod.time_vec()-start_time_vec)
             start_time_vec=time_mod.time_vec()
-        rmaxis=flap.get_data('NSTX_MDSPlus',
-                             name='\EFIT02::\RMAXIS',
-                             exp_id=exp_id,
-                             object_name='RMAXIS')
-        d2=flap.get_data('NSTX_THOMSON',
-                        exp_id=exp_id,
-                        name='',
-                        object_name='THOMSON_DATA',
-                        options={'pressure':False,
-                                 'temperature':True,
-                                 'density':False,
-                                 'spline_data':False,
-                                 'add_flux_coordinates':True,
-                                 'force_mdsplus':False})
+        
+        conn.openTree('ACTIVESPEC',exp_id)    
+        data_temp=conn.get('\\TS_BEST:FIT_TE').data()
+            
+        conn.openTree('EFIT02',exp_id)
+        data_rmaxis=conn.get('\RMAXIS').data()
+        time_rmaxis=conn.get('dim_of(\RMAXIS)')
+    
         if test_time_vec:
             print('Fit 3rd in ',time_mod.time_vec()-start_time_vec)
             start_time_vec=time_mod.time_vec()
 
         for i_time_vec in range(len(time_vec)):
             if r_coord_name =='Flux r':
-                x_data=d.coordinate('Flux r')[0][:,i_time_vec]
-                y_data=d.data[:,i_time_vec]
-                y_data_error=d.error[:,i_time_vec]
+                x_data=flux_coord[:,i_time_vec]
+                y_data=data[:,i_time_vec]
+                y_data_error=error[:,i_time_vec]
 
-                ind_time_vec_efit=np.argmin(np.abs(rmaxis.coordinate('Time')[0]-time_vec[i_time_vec]))
-                r_maxis_cur=rmaxis.data[ind_time_vec_efit]
-                ind_maxis=np.argmin(np.abs(d.coordinate('Device R')[0][:,i_time_vec]-r_maxis_cur))
+                ind_time_vec_efit=np.argmin(np.abs(time_rmaxis-time_vec[i_time_vec]))
+                r_maxis_cur=data_rmaxis[ind_time_vec_efit]
+                ind_maxis=np.argmin(np.abs(rad_coord-r_maxis_cur))
 
                 if outboard_only or device_coordinates:
                     if not outboard_only and device_coordinates and i_time_vec == 0:
@@ -215,7 +255,7 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                         print('Using only outboard TS points.')
                     x_data=x_data[ind_maxis:]
                     y_data=y_data[ind_maxis:]
-                    y_data_error=d.error[ind_maxis:,i_time_vec]
+                    y_data_error=error[ind_maxis:,i_time_vec]
                 else:
                     x_data_in=x_data[:ind_maxis]
                     x_data_out=x_data[ind_maxis:]
@@ -223,8 +263,8 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                     y_data_out=y_data[ind_maxis:]
 
                     if not temperature:                                                 #Only temperature is a flux function on NSTX
-                        temp_data_in=d2.data[:,i_time_vec][:ind_maxis]
-                        temp_data_out=d2.data[:,i_time_vec][ind_maxis:]
+                        temp_data_in=data_temp[:,i_time_vec][:ind_maxis]
+                        temp_data_out=data_temp[:,i_time_vec][ind_maxis:]
                     else:
                         temp_data_in=y_data[:ind_maxis]
                         temp_data_out=y_data[ind_maxis:]
@@ -254,19 +294,19 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             else:
                 #By default it's outboard only, the full profile is not tanh
                 if average_profiles is not None and i_time_vec+1 > average_profiles:
-                    ind_max=np.argmax(d.data[:,i_time_vec])
-                    x_data=d.coordinate('Device R')[0][ind_max:,i_time_vec]
-                    y_data=(np.sum(d.data[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1] *
-                                   d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1]) /
-                            average_profiles/np.sum(d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)
+                    ind_max=np.argmax(data[:,i_time_vec])
+                    x_data=rad_coord[ind_max:]
+                    y_data=(np.sum(data[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1] *
+                                   error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1]) /
+                            average_profiles/np.sum(error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)
                             )
-                    y_data_error=np.mean(d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)/np.sqrt(average_profiles)
+                    y_data_error=np.mean(error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)/np.sqrt(average_profiles)
                 else:
 
-                    ind_max=np.argmax(d.data[:,i_time_vec])
-                    x_data=d.coordinate('Device R')[0][ind_max:,i_time_vec]
-                    y_data=d.data[ind_max:,i_time_vec]
-                    y_data_error=d.error[ind_max:,i_time_vec]
+                    ind_max=np.argmax(data[:,i_time_vec])
+                    x_data=rad_coord[ind_max:]
+                    y_data=data[ind_max:,i_time_vec]
+                    y_data_error=error[ind_max:,i_time_vec]
 
             if np.sum(np.isinf(x_data)) != 0:
                 continue
@@ -297,7 +337,8 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                                                                         #tanh function called mtanh. It messes up the fitting quite a bit and it's not useful at all.
 
                         ]
-            except:
+            except Exception as e:
+                print(e)
                 print('Missing TS data for shot '+str(exp_id)+', time_vec: '+ str(time_vec[i_time_vec]))
 
             try:
@@ -375,8 +416,8 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             try:
             #if True:
                 thomson_profiles['Position r'][i_time_vec]=np.interp(popt[2],
-                                                                d.coordinate('Flux r')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec],
-                                                                d.coordinate('Device R')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec])
+                                                                     flux_coord[np.argmin(flux_coord[:,i_time_vec]):,i_time_vec],
+                                                                     rad_coord[np.argmin(flux_coord[:,i_time_vec]):,i_time_vec])
             except:
                 print('Interpolation failed.')
                 thomson_profiles['Position r'][i_time_vec]=np.nan
@@ -405,7 +446,10 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
         thomson_profiles['Global gradient']=(thomson_profiles['SOL offset']-thomson_profiles['Height'])/(4*thomson_profiles['Width'])
         if test_time_vec:
             print('Fit 4th in ',time_mod.time_vec()-start_time_vec)
-
-        pickle.dump(thomson_profiles,open(pickle_filename,'wb'))
+            
+        try:
+            pickle.dump(thomson_profiles,open(pickle_filename,'wb'))
+        except Exception as e:
+            print(e)
 
     return thomson_profiles

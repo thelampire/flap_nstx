@@ -482,6 +482,7 @@ def filename(exp_id=None,
     if exp_id is None:
         raise ValueError('The exp_id needs to be set for the filename.')
     filename='NSTX_GPI_'+str(exp_id)
+
     if time_range is None:
         filename+='_whole'
     elif len(time_range) == 2 and type(time_range) == list:
@@ -489,25 +490,30 @@ def filename(exp_id=None,
         filename+='_'+f"{time_range[0]:.6f}"+'_'+f"{time_range[1]:.6f}"
     else:
         raise ValueError('Time range should be a two element list.')
+
     if working_directory is not None:
         if working_directory[-1] != '/':
             working_directory+='/'
         filename=working_directory+filename
+
     if purpose is not None:
         if type(purpose) is str:
             filename+='_'+purpose.replace(' ','_')
         else:
             raise TypeError('Purpose should be a string.')
+
     if frange is not None:
         if len(frange) == 2 and type(frange) == list:
             filename+='_freq_'+str(frange[0])+'_'+str(frange[1])
         else:
             raise ValueError('Frequency range should be a two element list if not None.')
+
     if comment is not None:
         if type(comment) is str:
             filename+='_'+comment.replace(' ','_')
         else:
             raise TypeError('Purpose should be a string.')
+
     if extension is not None:
         if type(extension) is str:
             filename+='.'+extension
@@ -515,6 +521,8 @@ def filename(exp_id=None,
             raise TypeError('Extension should be a string.')
 
     return filename
+
+
 
 def polyfit_2D(x=None,
                y=None,
@@ -572,6 +580,8 @@ def polyfit_2D(x=None,
             return np.dot(np.dot(np.linalg.inv(np.dot(polynom.T,polynom)),polynom.T),values) #This performs the linear regression
         else:
             return np.dot(polynom,np.dot(np.dot(np.linalg.inv(np.dot(polynom.T,polynom)),polynom.T),values))
+
+
 
 def subtract_photon_peak_2D(autocorr=None,     #INPUT autocorrelation metrix
                             order=2,           #Order of the fitting
@@ -898,10 +908,11 @@ def plot_pearson_matrix(matrix,
     plt.tight_layout(pad=0.1)
     plt.show()
 
-def set_matplotlib_for_publication(labelsize=9.,
+def set_matplotlib_for_publication(labelsize=8.,
                                    linewidth=0.5,
                                    major_ticksize=2.,
                                    ):
+
     plt.rc('font', family='serif', serif='Helvetica')
     plt.rc('text', usetex=False)                                            #usetex doesnt work with the current installation but works with $$ somehow.
     plt.rcParams['pdf.fonttype'] = 42
@@ -925,25 +936,21 @@ def set_matplotlib_for_publication(labelsize=9.,
     plt.rcParams['legend.fontsize'] = labelsize
 
 def fringe_jump_correction(data,                                                #Data input
-                           fringe_size=2*np.pi,                                 #Size of the jumps need to be corrected
+                           fringe_size=np.pi,                                 #Size of the jumps need to be corrected
                            tolerance=0.5,                                       #Tolerance for fringes, e.g., 0.2 means 2*np.pi * (1 - 0.2) still needs to be corrected.
-                           angular_velocity=False,                              #Switch whether angular velocity would need to be corrected
-                           sampling_time=2.5e-6):                                 #Sampling time for anxulag relocity correction delta_omega=fringe/sampling_time
+                           ):
 
     if data is None:
         raise ValueError('data input must be provided')
 
-    divider=1
-    if angular_velocity:
-        divider=sampling_time
     while True:
         fringe_exists=0
         for ind in range(len(data)-1):
-            if data[ind+1]-data[ind] > fringe_size*(1-tolerance)/divider:
-                data[ind+1] -= fringe_size/divider
+            if data[ind+1]-data[ind] > fringe_size*(1-tolerance):
+                data[ind+1] -= fringe_size
                 fringe_exists+=1
-            elif data[ind+1]-data[ind] < -(fringe_size*(1-tolerance))/divider:
-                data[ind+1] += fringe_size/divider
+            elif data[ind+1]-data[ind] < -(fringe_size*(1-tolerance)):
+                data[ind+1] += fringe_size
                 fringe_exists+=1
             else:
                 pass

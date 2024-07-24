@@ -49,22 +49,26 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
 
-def calculate_all_blob_results(test=False,
+def calculate_all_blob_results(time_range_around_peak=5e-3,
+
+                               min_structure_lifetime=20,
+                               str_finding_method='watershed',
+
                                plot=False,
                                pdf=False,
                                nocalc=False,
-                               time_range_around_peak=5e-3,
                                recalc_tracking=False,
-                               min_structure_lifetime=20,
+                               test=False,
                                ):
 
     blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
 
     ncalc=len(blob_database['shot'])
-    start_time=time_mod.time()
-    for ind in range(ncalc):
-        blob_time=blob_database['time'][ind]
 
+    for ind in range(ncalc):
+        start_time=time_mod.time()
+        blob_time=blob_database['time'][ind]
+        #if blob_database['shot'][ind] == 142270 or blob_database['shot'][ind] == 142279:
         read_blob_results(blob_database['shot'][ind],
                           [blob_time-time_range_around_peak,
                            blob_time+time_range_around_peak],
@@ -72,12 +76,12 @@ def calculate_all_blob_results(test=False,
                           nocalc=nocalc,
                           recalc_tracking=recalc_tracking,
                           min_structure_lifetime=min_structure_lifetime,
+                          str_finding_method=str_finding_method,
                           )
 
-
         elapsed_time=time_mod.time()-start_time
-        remaining_time=elapsed_time/(ind+1)*ncalc
-        print('Remaining time from the calculation:'+str(remaining_time/3600.)+'hours.')
+        remaining_time=elapsed_time*(ncalc-ind-1)
+        print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
         flap.delete_data_object('*')
 
 
@@ -91,6 +95,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         nocalc=True,
                                         recalc_tracking=False,
                                         min_structure_lifetime=20,
+                                        str_finding_method='watershed'
                                         ):
     import matplotlib
     if pdf:
@@ -100,14 +105,14 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
     if pdf_filename is None:
         if calc_mean_distribution:
-            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_mean.pdf'
+            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_mean_'+str_finding_method+'.pdf'
         else:
-            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_nomean.pdf'
+            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_nomean_'+str_finding_method+'.pdf'
 
     if calc_mean_distribution:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+        pickle_filename=wd+'/processed_data/blob_database_full_data_mean_'+str_finding_method+'.pickle'
     else:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
+        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean_'+str_finding_method+'.pickle'
 
     blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
     analyzed_keys=read_analyzed_keys()
@@ -127,14 +132,16 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
         n_str=0
         for ind in range(ncalc):
             blob_time=blob_database['time'][ind]
-
+            start_time=time_mod.time()
             blob_results=read_blob_results(blob_database['shot'][ind],
                                            [blob_time-time_range_around_peak,
                                             blob_time+time_range_around_peak],
                                            nocalc=True,
                                            recalc_tracking=recalc_tracking,
-                                           min_structure_lifetime=min_structure_lifetime
+                                           min_structure_lifetime=min_structure_lifetime,
+                                           str_finding_method=str_finding_method,
                                            )
+
             flap.delete_data_object('*')
             str_by_str=transform_frames_to_structures(blob_results)
 
@@ -142,6 +149,8 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                 n_str+=1
                 for key in analyzed_keys:
                     if calc_mean_distribution:
+                        if key == 'Angle':
+                            structure[key]=np.arcsin(np.sin(structure[key]))
                         full_data[key]=np.append(full_data[key],
                                                  np.mean(structure[key]))
                     else:
@@ -160,6 +169,8 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                             try:
                                 full_data[key]=np.append(full_data[key],
                                                          structure[key][1:])
+                                # if key == 'Angle of least inertia':
+                                #     print(full_data[key])
                             except:
                                 print(key)
                 for key in additional_diff_keys:
@@ -174,9 +185,12 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                                               np.asarray(structure[key])[0:-1]))
                     except:
                         print(key)
+            remaining_time=(time_mod.time()-start_time)*(ncalc-ind-1)
 
-        pickle.dump(full_data,open(pickle_filename,'wb'))
+            print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
         print('n_str:',n_str)
+        pickle.dump(full_data,open(pickle_filename,'wb'))
+
     else:
         full_data=pickle.load(open(pickle_filename,'rb'))
 
@@ -207,7 +221,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
     if plot:
         if plot_for_publication:
-            pdf_page=PdfPages(wd+'/plots/8hist_blob_db_LT'+str(min_structure_lifetime)+'.pdf')
+            pdf_page=PdfPages(wd+'/plots/8hist_blob_db_LT'+str(min_structure_lifetime)+'_'+str_finding_method+'.pdf')
             fig,axes=plt.subplots(4,2,figsize=(8.5/2.54,17/2.54))
             for ind, key in enumerate(['Area','Area diff',
                                        'Angle','Angular velocity angle',
@@ -220,15 +234,19 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                 # try:
                 print(key,'skewness',scipy.stats.skew(full_data[key]))
                 print(key,'kurtosis',scipy.stats.kurtosis(full_data[key]))
+                if key == 'Angle':
+                    full_data[key]=np.mod(np.real(full_data[key]),
+                                          np.pi)
                 if key in ranges.keys():
-                    ax.hist(full_data[key],
+                    ax.hist(np.real(full_data[key]),
                             bins=51,
                             weights=np.ones_like(full_data[key])/len(full_data[key]),
                             range=ranges[key])
                 else:
-                    ax.hist(full_data[key],
+                    ax.hist(np.real(full_data[key]),
                             bins=51,
                             weights=np.ones_like(full_data[key])/len(full_data[key]),)
+                plt.locator_params(axis='y', nbins=5)
                 ax.set_xlabel(key)
                 ax.set_ylabel('Relative frequency')
                 ax.set_title('Histogram of \n '+key)
@@ -263,29 +281,36 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
     return full_data
 
+
+
 def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
                                                      pdf=True,
                                                      pdf_filename=None,
                                                      calc_mean_distribution=True,
                                                      plot_interesting_only=False,
+                                                     recalc_tracking=False,
+                                                     str_finding_method='watershed',
+                                                     nocalc=True,
                                                      ):
     if pdf_filename is None:
-        pdf_filename=wd+'/plots/correlation_matrix_gpi_gpi.pdf'
-
-    if calc_mean_distribution:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
-    else:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
-
-    full_data=pickle.load(open(pickle_filename,'rb'))
+        if calc_mean_distribution:
+            pdf_filename=wd+'/plots/correlation_matrix_gpi_gpi_mean_'+str_finding_method+'.pdf'
+        else:
+            pdf_filename=wd+'/plots/correlation_matrix_gpi_gpi_'+str_finding_method+'.pdf'
+    full_data=calculate_blob_parameter_histograms(calc_mean_distribution=calc_mean_distribution,
+                                                  nocalc=nocalc,
+                                                  plot=False,
+                                                  recalc_tracking=recalc_tracking,
+                                                  str_finding_method=str_finding_method)
 
     if not plot_interesting_only:
-        analyzed_keys=read_analyzed_keys()
-        additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
-                              'Total bending energy','Area','Elongation']
+        #analyzed_keys=read_analyzed_keys()
+        analyzed_keys=full_data.keys()
+        # additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
+        #                       'Total bending energy','Area','Elongation']
 
-        for key in additional_diff_keys:
-            analyzed_keys.append(key+' diff')
+        # for key in additional_diff_keys:
+        #     analyzed_keys.append(key+' diff')
     else:
         interesting_key_pairs=[('Area','Convexity'),
                                ('Size radial','Convexity'),
@@ -299,35 +324,38 @@ def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
         analyzed_keys=list(np.unique(interesting_key_pairs))
 
     gpi_labels=analyzed_keys
-
+    print(analyzed_keys)
     correlation_matrix=np.zeros([len(analyzed_keys),len(analyzed_keys)])
-    if calc_mean_distribution:
-        corr_thres_level_matrix=np.zeros([len(analyzed_keys),len(analyzed_keys)])
-
-
+    #No need for correlation threshold levels, there are enough data points available
     for ind1,key1 in enumerate(analyzed_keys):
         ind_nan1=~np.isnan(full_data[key1])
         for ind2,key2 in enumerate(analyzed_keys):
             try:
+
+                if key1 == 'Angle' or key1 == 'Angle of least inertia':
+                    full_data[key1]=np.mod(np.real(full_data[key1]), np.pi/2)
+                    
+                if key2 == 'Angle' or key2 == 'Angle of least inertia':
+                    full_data[key2]=np.mod(np.real(full_data[key2]), np.pi/2)
+                    
                 ind_nan2 = ~np.isnan(full_data[key2])
                 ind_nan = np.logical_and(ind_nan1,ind_nan2)
-                # print(np.sum(ind_nan1),key1)
+
                 data1 = np.real(full_data[key1][ind_nan])
                 data1 -= np.mean(data1)
+
                 data2 = np.real(full_data[key2][ind_nan])
+
                 data2 -= np.mean(data2)
                 correlation_matrix[ind2,ind1] = np.sum(data1*data2)/(np.sqrt(np.sum(data1**2) * np.sum(data2**2)))
-                #n_data=len(data2) if len(data1) > len(data2) else len(data1)
-                #corr_thres_level_matrix[ind2,ind1]=calculate_corr_acceptance_levels(n_data=n_data)
+
             except Exception as e:
                 print(e)
-    # if threshold_corr:
-    #     for i_ts in range(len(analyzed_keys)):
-    #         for j_gpi in range(len(analyzed_keys)):
-    #             if abs(correlation_matrix[i_ts,j_gpi]) < corr_thres_level_matrix[i_ts,j_gpi]:
-    #                 correlation_matrix[i_ts,j_gpi]=0.
+
     if pdf:
         pdf_page=PdfPages(pdf_filename)
+
+
     if plot_interesting_only:
         gpi_labels=['Area',
                     'Major semi-axis',
@@ -358,6 +386,9 @@ def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
         pdf_page.savefig()
         pdf_page.close()
 
+
+
+
 def plot_blob_blob_parameter_trends(pdf=True,
                                     pdf_filename=None,
                                     plot_if_correlation_is_higher_than=None,
@@ -365,6 +396,8 @@ def plot_blob_blob_parameter_trends(pdf=True,
                                     nocalc=True,
                                     calc_mean_distribution=True,
                                     plot_for_publication=False,
+                                    str_finding_method='watershed',
+                                    recalc_tracking=False,
                                     ):
     import pandas
     import ppscore as pps
@@ -372,18 +405,24 @@ def plot_blob_blob_parameter_trends(pdf=True,
     from scipy import stats
     if not plot_for_publication:
         if pdf_filename is None and plot_if_correlation_is_higher_than is not None:
-            pdf_filename=wd+'/plots/gpi_gpi_trends_corr_'+str(plot_if_correlation_is_higher_than)+'.pdf'
+            pdf_filename=wd+'/plots/gpi_gpi_trends_corr_'+str(plot_if_correlation_is_higher_than)+'_'+str_finding_method+'.pdf'
         elif plot_if_correlation_is_higher_than is None:
-            pdf_filename=wd+'/plots/gpi_gpi_trends.pdf'
+            pdf_filename=wd+'/plots/gpi_gpi_trends_'+str_finding_method+'.pdf'
     else:
-        pdf_filename=wd+'/plots/gpi_gpi_trend_8plot.pdf'
+        pdf_filename=wd+'/plots/gpi_gpi_trend_8plot_'+str_finding_method+'.pdf'
 
-    if calc_mean_distribution:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
-    else:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
-    full_data=pickle.load(open(pickle_filename,'rb'))
+    # if calc_mean_distribution:
+    #     pickle_filename=wd+'/processed_data/blob_database_full_data_mean.pickle'
+    # else:
+    #     pickle_filename=wd+'/processed_data/blob_database_full_data_nomean.pickle'
 
+    # full_data=pickle.load(open(pickle_filename,'rb'))
+
+    full_data=calculate_blob_parameter_histograms(calc_mean_distribution=calc_mean_distribution,
+                                                  nocalc=nocalc,
+                                                  plot=False,
+                                                  recalc_tracking=recalc_tracking,
+                                                  str_finding_method=str_finding_method)
     analyzed_keys=read_analyzed_keys()
     additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
                           'Total bending energy','Area','Elongation']
@@ -392,7 +431,7 @@ def plot_blob_blob_parameter_trends(pdf=True,
         analyzed_keys.append(key+' diff')
 
     pdf_page=PdfPages(pdf_filename)
-    pickle_filename=wd+'/processed_data/blob_database_full_data_mean_pps.pickle'
+    pickle_filename=wd+'/processed_data/blob_database_full_data_mean_pps_'+str_finding_method+'.pickle'
     if not nocalc or not os.path.exists(pickle_filename):
         df = pandas.DataFrame()
 
@@ -421,13 +460,15 @@ def plot_blob_blob_parameter_trends(pdf=True,
                     # print(np.sum(ind_nan1),key1)
                     data1_4c=full_data[key1][ind_nan] - np.mean(full_data[key1][ind_nan])
                     data2_4c=full_data[key2][ind_nan] - np.mean(full_data[key2][ind_nan])
-                    fig,ax=plt.subplots(figsize=(8.5/2.54,8.5/2.54))
+                    fig,ax=plt.subplots(figsize=(8.5/2.54,
+                                                 8.5/2.54))
                     correlation=np.sum(data1_4c*data2_4c)/(np.sqrt(np.sum(data1_4c**2)*np.sum(data2_4c**2)))
 
                     if (plot_if_correlation_is_higher_than is not None and
                         np.abs(correlation) > plot_if_correlation_is_higher_than):
                         plot=True
-                    elif plot_if_correlation_is_higher_than is None and plot_if_pps_is_higher_than is None:
+                    elif (plot_if_correlation_is_higher_than is None and
+                          plot_if_pps_is_higher_than is None):
                         plot=True
                     else:
                         plot=False
@@ -459,17 +500,20 @@ def plot_blob_blob_parameter_trends(pdf=True,
                                ('Expansion fraction area','Roundness diff'),
                                ('Position radial','Axes length major'),
                                ]
+
         ranges=[[[0,0.004],[0.92,1.0]],
                 [[0.01,0.07],[0.92,1.0]],
                 [[-0.75,0.5],[0.2,1.0]],
                 [[1.42,1.6],[-2e3,2e3]],
                 [[0,0.075],[-2e3,2e3]],
                 [[0.0,0.03],[-2e3,2e3]],
-                [[0.85,1.2],[-0.1,0.1]],
+                [[0.85,1.2],[-0.15,0.15]],
                 [[1.42,1.6],[0,0.03]],
                 ]
-        fig,axes=plt.subplots(2,4,
-                            figsize=(17/2.54,8.5/2.54))
+        fig,axes=plt.subplots(4,2,
+                              figsize=(8.5/2.54,
+                                       17/2.54))
+
         for ind,(key1,key2) in enumerate(interesting_key_pairs):
             ind_nan1=~np.isnan(full_data[key1])
             ind_nan2=~np.isnan(full_data[key2])
@@ -479,7 +523,7 @@ def plot_blob_blob_parameter_trends(pdf=True,
             data2_4c=np.real(full_data[key2][ind_nan]) - np.real(np.mean(full_data[key2][ind_nan]))
 
             correlation=np.sum(data1_4c*data2_4c)/(np.sqrt(np.sum(data1_4c**2)*np.sum(data2_4c**2)))
-            ax=axes[ind//4,np.mod(ind,4)]
+            ax=axes[ind//2,np.mod(ind,2)]
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('right', size='5%', pad=0.05)
 
@@ -487,12 +531,12 @@ def plot_blob_blob_parameter_trends(pdf=True,
                          np.real(full_data[key2][ind_nan]),
                          bins=[31,31],
                          #weights=np.ones_like(np.real(full_data[key1][ind_nan]))/len(np.real(full_data[key1][ind_nan])),
-                         range=ranges[ind]
+                         range=ranges[ind],
                          #s=0.5
                          )
-            print(key1,key2,correlation)
+            print(key1,';',key2,correlation)
             fig.colorbar(im[3], cax=cax, orientation='vertical')
-            # ax.text(0.1,0.9,str(correlation))
+            #ax.text(0.1,0.9,str(correlation))
             ax.set_xlabel(key1)
             ax.set_ylabel(key2)
             ax.set_title('')
@@ -503,64 +547,97 @@ def plot_blob_blob_parameter_trends(pdf=True,
         pdf_page.close()
 
 
+
 def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                                                        pdf=True,
                                                        pdf_filename=None,
                                                        time_range_around_peak=5e-3,
-                                                       nocalc=False):
+                                                       nocalc=False,
+                                                       plot_interesting_only=False,
+                                                       calculate_mean_distribution=True,
+                                                       str_finding_method='watershed',
+                                                       fix_angle_for_correlation=True
+                                                       ):
 
     if pdf:
         import matplotlib
         matplotlib.use('agg')
 
     if pdf_filename is None:
-        pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_mean.pdf'
+        pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_mean_'+str_finding_method+'.pdf'
 
     if pdf_filename is None:
-        pdf_filename=wd+'/plots/correlation_matrix_gpi_plasma.pdf'
+        pdf_filename=wd+'/plots/correlation_matrix_gpi_plasma_'+str_finding_method+'.pdf'
 
     if pdf:
         pdf_page=PdfPages(pdf_filename)
 
-    full_plasma_data=read_all_plasma_data(nocalc=nocalc)
-    full_blob_data=read_mean_blob_results(nocalc=nocalc)
+    full_plasma_data=read_all_plasma_data(nocalc=True)
+    full_blob_data=read_mean_blob_results(nocalc=nocalc, 
+                                          str_finding_method=str_finding_method,
+                                          fix_angle_for_correlation=fix_angle_for_correlation)
+
+
+    if plot_interesting_only:
+        interesting_key_pairs=[('Area','Convexity'),
+                               ('Size radial','Convexity'),
+                               ('Elongation','Roundness'),
+                               ('Position radial','Velocity radial position'),
+                               ('Axes length minor','Velocity radial position'),
+                               ('Axes length major','Velocity radial position'),
+                               ('Expansion fraction area','Roundness diff'),
+                               ('Position radial','Axes length major'),
+                               ]
+        gpi_labels=list(np.unique(interesting_key_pairs))
+    else:
+        gpi_labels=list(full_blob_data.keys())
+        #gpi_labels=[gpi_labels[0:4],gpi_labels[5:12],gpi_labels[4],gpi_labels[12:]]
 
     correlation_matrix=np.zeros([len(full_plasma_data.keys()),
-                                 len(full_blob_data.keys())
+                                 len(gpi_labels)
                                  ])
+
     corr_accept=calculate_corr_acceptance_levels()
 
-    for ind1,key1 in enumerate(full_blob_data.keys()):
+    for ind1,key1 in enumerate(gpi_labels):
         ind_nan1=~np.isnan(full_blob_data[key1])
+        if key1 == 'Angle' or key1 == 'Angle of least inertia':
+            full_blob_data[key1]=np.mod(np.real(full_blob_data[key1]), np.pi/2)
+            
         for ind2,key2 in enumerate(full_plasma_data.keys()):
             ind_nan2=~np.isnan(full_plasma_data[key2])
 
             ind_nan=np.logical_and(ind_nan1,ind_nan2)
 
-            data1=full_blob_data[key1][ind_nan] - np.mean(full_blob_data[key1][ind_nan])
-            data2=full_plasma_data[key2][ind_nan] - np.mean(full_plasma_data[key2][ind_nan])
-
-            correlation=np.sum(data1*data2)/(np.sqrt(np.sum(data1**2)*np.sum(data2**2)))
-
-            if (np.abs(correlation) > (corr_accept['avg'][np.sum(ind_nan)] +
-                               2*corr_accept['stddev'][np.sum(ind_nan)])):
+            data1 = full_blob_data[key1][ind_nan] - np.mean(full_blob_data[key1][ind_nan])
+            data2 = full_plasma_data[key2][ind_nan] - np.mean(full_plasma_data[key2][ind_nan])
+                
+            correlation = np.sum(data1 * data2) / (np.sqrt(np.sum(data1**2) * np.sum(data2**2)))
+            try:
+                if (np.abs(correlation) > (corr_accept['avg'][np.sum(ind_nan)] +
+                                            2*corr_accept['stddev'][np.sum(ind_nan)])):
+                    correlation_matrix[ind2,ind1]=correlation
+                else:
+                    correlation_matrix[ind2,ind1]=np.nan
+            except:
                 correlation_matrix[ind2,ind1]=correlation
-            else:
-                correlation_matrix[ind2,ind1]=np.nan
-    corr_accept=calculate_corr_acceptance_levels()
 
     plot_pearson_matrix(correlation_matrix,
-                        xlabels=full_blob_data.keys(),
+                        xlabels=gpi_labels,
                         ylabels=full_plasma_data.keys(),
                         title='Blob vs plasma parameter correlation map',
                         colormap='seismic',
                         figsize=(17/2.54,17/2.54), #(8.5/2.54,8.5/2.54*1.2)
-                        charsize=6
+                        charsize=9
                         )
 
     if pdf:
         pdf_page.savefig()
         pdf_page.close()
+        import matplotlib
+        matplotlib.use('qt5agg')
+
+
 
 def plot_blob_plasma_parameter_predictive_power_score(threshold_corr=False,
                                                       pdf=True,
@@ -635,6 +712,9 @@ def plot_blob_plasma_parameter_predictive_power_score(threshold_corr=False,
         pdf_pages.savefig()
     pdf_pages.close()
 
+
+
+
 def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
                                                     pdf=True,
                                                     nocalc=True,
@@ -693,6 +773,8 @@ def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
     pdf_pages.close()
 
 
+
+
 def plot_blob_plasma_parameter_trends(pdf_filename=None,
                                       nocalc=True,
                                       ):
@@ -730,13 +812,17 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
     pdf_page.close()
 
 
+
+
 def read_mean_blob_results(time_range_around_peak=5e-3,
                            nocalc=False,
                            recalc_tracking=False,
-                           min_structure_lifetime=10,
+                           min_structure_lifetime=20,
+                           str_finding_method='watershed',
+                           fix_angle_for_correlation=False,
                            ):
 
-    pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_blob.pickle'
+    pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_blob_'+str_finding_method+'.pickle'
 
     blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
     analyzed_keys=read_analyzed_keys()
@@ -769,21 +855,25 @@ def read_mean_blob_results(time_range_around_peak=5e-3,
                                            nocalc=True,
                                            recalc_tracking=recalc_tracking,
                                            min_structure_lifetime=min_structure_lifetime,
+                                           str_finding_method=str_finding_method,
                                            )
             flap.delete_data_object('*')
             str_by_str=transform_frames_to_structures(blob_results)
-
             for structure in str_by_str:
                 for key in analyzed_keys:
-                    mean_data=[]
+                    shot_data=[]
+                    # if key != 'Angle of least inertia':
                     for data in structure[key]:
                         if np.isreal(data) and ~np.isnan(data): #There are a bunch of complex and nan data which are not handled.
-                            mean_data=np.append(mean_data,
+                            if (key == 'Angle' or key == 'Angle of least inertia') and fix_angle_for_correlation:
+                                data=np.mod(np.real(data), np.pi/2)
+                                
+                            shot_data=np.append(shot_data,
                                                 np.real(data))
                     curr_blob_data[key]=np.append(curr_blob_data[key],
-                                                  np.mean(mean_data))
+                                                  np.mean(shot_data))
                     curr_blob_error[key]=np.append(curr_blob_error[key],
-                                                   np.sqrt(np.var(mean_data)))
+                                                   np.sqrt(np.var(shot_data)))
 
                 for key in additional_diff_keys:
                     mean_data=[]
@@ -798,11 +888,11 @@ def read_mean_blob_results(time_range_around_peak=5e-3,
 
                     curr_blob_error[key+' diff']=np.append(curr_blob_error[key+' diff'],
                                                            np.sqrt(np.var(mean_data)))
-                    if key == 'Elongation':
-                        print(mean_data)
             for key in full_blob_data.keys():
+
                 full_blob_data[key]=np.append(full_blob_data[key],
                                               np.mean(curr_blob_data[key]))
+
                 full_blob_error[key]=np.append(full_blob_error[key],
                                                np.mean(curr_blob_error[key]) /
                                                np.sqrt(len(curr_blob_error[key])))
@@ -810,6 +900,7 @@ def read_mean_blob_results(time_range_around_peak=5e-3,
         pickle.dump(full_blob_data,open(pickle_filename,'wb'))
     else:
         full_blob_data=pickle.load(open(pickle_filename,'rb'))
+
     return full_blob_data
 
 
@@ -843,19 +934,22 @@ def read_all_plasma_data(time_range_around_peak=5e-3,
     return full_plasma_data
 
 
+
+
 def read_blob_results(shot,
                       time_range,
                       calculate_only=False,
                       nocalc=True,
-                      min_structure_lifetime=10,
+                      min_structure_lifetime=20,
                       recalc_tracking=False,
+                      str_finding_method='watershed',
                       ):
     # try:
     if True:
         blob_results=analyze_gpi_structures(exp_id=shot,
                                             time_range=time_range,
                                             normalize='simple',
-                                            str_finding_method='watershed',
+                                            str_finding_method=str_finding_method,
                                             threshold_bg_multiplier=2.,
                                             ellipse_method='linalg',
                                             fit_shape='ellipse',
@@ -872,12 +966,12 @@ def read_blob_results(shot,
                                             nocalc=nocalc,
                                             recalc_tracking=recalc_tracking,
                                             structure_pixel_calc=False,
-
+                                            fix_structure_angles=True,
+                                            
                                             test_structures=False,
                                             return_results=not calculate_only,
 
                                             plot=False,
-                                            levels=51,
                                             plot_str_by_str=True,
                                             plot_scatter=True,
                                             plot_tracking=True,
@@ -886,7 +980,6 @@ def read_blob_results(shot,
                                             pdf=False,
                                             structure_pdf_save=False,
                                             structure_video_save=False,
-
                                             test=False,
                                             )
         if not calculate_only:
@@ -897,6 +990,8 @@ def read_blob_results(shot,
     #     print(e)
     #     if not calculate_only:
     #         return None
+
+
 
 
 def read_blob_database(time_range_around_peak=5e-3,
@@ -943,6 +1038,9 @@ def read_blob_database(time_range_around_peak=5e-3,
 
     return blob_database
 
+
+
+
 def read_blob_elm_database(time_range_around_peak=5e-3,
                            blob_db_file='/Users/mlampert/work/NSTX_workspace/db/2010.csv',
                            elm_db_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good_ne.csv',
@@ -966,6 +1064,9 @@ def read_blob_elm_database(time_range_around_peak=5e-3,
         database[key]=np.append(blob_database[key],elm_database[key])
 
     return database
+
+
+
 
 def read_plasma_parameters_for_db(database=None,
                                   print_ranges=False):
@@ -1013,6 +1114,9 @@ def read_plasma_parameters_for_db(database=None,
     pdf_pages_temperature.close()
 
     return collisionality, q95, greenwald, current, btoroidal, density
+
+
+
 
 def read_plasma_parameters(exp_id=None,
                            time=None,
@@ -1231,11 +1335,11 @@ def read_plasma_parameters(exp_id=None,
         print('Failed to read J99N for shot ',exp_id)
         cdens_99=np.nan
 
-
+    """Plasma frequency"""
     omega_pe=np.sqrt(n_e*q_e**2/m_e/epsilon_0)
 
     #delta_e=c/omega_pe #It's a good question what this is.
-
+    """Sound speed"""
     c_s=np.sqrt(gamma*Z*k*(T_e)/m_i)
 
     n_i=n_e
@@ -1243,7 +1347,10 @@ def read_plasma_parameters(exp_id=None,
              epsilon_0**2 / (n_i * Z**2 * q_e**4 * np.log(ln_LAMBDA)))
     ei_collision_rate=1/tau_ei
 
+    """Collisionality"""
     collisionality=ei_collision_rate/k_B*T_e/(q95*R_ped)
+
+    """Greenwald fraction"""
     greenwald_fraction=density/(current.copy()/(np.pi*a_minor**2)*1e14)
 
     return {'Line integrated density':density,
@@ -1263,3 +1370,58 @@ def read_plasma_parameters(exp_id=None,
             'Current density at 95':cdens_95,
             'Current density at 99':cdens_99,
             }
+
+def fix_structure_angles(structure):
+    
+    @property
+    def second_central_moment(self):
+        if not self.polygon_with_data:
+            raise ValueError('The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
+        mu=np.zeros([2,2])
+        cog=self.center_of_gravity
+
+        if not np.isnan(cog[0]):
+            mu[0,0]=np.sum(self.data*(self.y_data-cog[1])**2)
+            mu[0,1]=-np.sum(self.data*(self.x_data-cog[0])*(self.y_data-cog[1]))
+            mu[1,0]=mu[0,1]
+            mu[1,1]=np.sum(self.data*(self.x_data-cog[0])**2)
+
+        else:
+            mu[:,:]=np.nan
+
+        if self.test:
+            print('mu',mu)
+            print('data',self.data)
+            print('x_data',self.x_data)
+            print('y_data',self.x_data)
+            print('cog',self.centroid)
+        return mu
+
+
+    @property
+    def principal_axes_angle(self):
+        if not self.polygon_with_data:
+            raise ValueError('The polygon doesn\'t have data within, please add data and x_data,y_data coordinates. Returning...')
+
+        if self.test:
+            print('centroid', self.centroid)
+            print('central moment',self.second_central_moment)
+
+        if not np.isnan(self.centroid[0]):
+            try:
+                mu=self.second_central_moment
+                eigvalues,eigvectors=np.linalg.eig(mu)
+                eig_ind=np.argmax(eigvalues)
+                angle=np.arctan(eigvectors[1,eig_ind]/
+                                eigvectors[0,eig_ind])
+                return np.arcsin(np.sin(angle))
+            
+            #   return np.arctan2(eigvectors[1,eig_ind],
+            #                     eigvectors[0,eig_ind])
+            
+            except:
+                return np.nan
+        else:
+            return np.nan
+    
+    return structure

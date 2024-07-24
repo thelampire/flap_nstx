@@ -13,16 +13,20 @@ import scipy
 class Polygon:
 
     def __init__(self,
-                 x=None,
-                 y=None,
-                 x_data=None,
-                 y_data=None,
-                 x_data_pix=None,
-                 y_data_pix=None,
-                 data=None,
-                 upsample=False,
-                 test=False,
-                 path_order=3,
+                 x=None,                                                        #x coord for defining polygon in DEVICE coordinates
+                 y=None,                                                        #y coord for defining polygon in DEVICE coordinates
+
+                 x_data=None,                                                   #x coordinates of pixels enclosed by the polygon in DEVICE coordinates
+                 y_data=None,                                                   #y coordinates of pixels enclosed by the polygon in DEVICE coordinates
+
+                 x_data_pix=None,                                               #x coordinates of pixels enclosed by the polygon in PIXEL coordinates
+                 y_data_pix=None,                                               #y coordinates of pixels enclosed by the polygon in PIXEL coordinates
+
+                 data=None,                                                     #Intensity data enclosed by the polygon
+
+                 path_order=3,                                                  #Order of the polygon path fit onto the vertices defined by x,y
+
+                 test=False,                                                    #Run test procedures
                  ):
 
         if ((x is not None and y is not None) and  (len(x) == len(y))):
@@ -37,24 +41,23 @@ class Polygon:
             if (x_data.shape != y_data.shape or
                x_data.shape != data.shape):
                 raise ValueError('The shapes of the input data do not match.')
+
             self.x_data=x_data
             self.y_data=y_data
 
-            if (x_data_pix is not None and
-                y_data_pix is not None):
-                self.x_data_pix=x_data_pix
-                self.y_data_pix=y_data_pix
-            else:
-                self.x_data_pix=None
-                self.y_data_pix=None
+            self.x_data_pix=x_data_pix
+            self.y_data_pix=y_data_pix
 
             self.data=data
             self.polygon_with_data=True
         else:
             self.x_data=None
             self.y_data=None
+
             self.data=None
             self.polygon_with_data=False
+            self.x_data_pix=None
+            self.y_data_pix=None
 
         self._path=None
         self.path_order=path_order
@@ -309,11 +312,12 @@ class Polygon:
                 angle=np.arctan(eigvectors[1,eig_ind]/
                                 eigvectors[0,eig_ind])
                 return np.arcsin(np.sin(angle))
-
+            
+            #   return np.arctan2(eigvectors[1,eig_ind],
+            #                     eigvectors[0,eig_ind])
+            
             except:
                 return np.nan
-            # return np.arctan2(eigvectors[1,eig_ind],
-            #                   eigvectors[0,eig_ind])
         else:
             return np.nan
 

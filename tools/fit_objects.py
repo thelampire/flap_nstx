@@ -66,7 +66,7 @@ class FitEllipse:
                 self._fit_ellipse_skimage(x, y)
             elif method=='leastsquare':
                 self._fit_ellipse_leastsq(x, y)
-            if method=='linalg_v0':
+            elif method=='linalg_v0':
                 self._fit_ellipse_linalg_v0(x, y)
         except Exception as e:
             print(e)
@@ -125,14 +125,17 @@ class FitEllipse:
             phi = np.arctan((2.*b) / (a - c)) / 2
             if a > c:
                 phi += np.pi/2
+                
         try:
             self._width_gt_height
         except:
             self._calculate_axes_length_linalg()
+            
         if not self._width_gt_height:
             # Ensure that phi is the angle to rotate to the semi-major axis.
             phi += np.pi/2
         # phi = phi % np.pi
+        
         #Adjustment to be between [-pi/2,pi/2]
         if phi > np.pi/2:
             while phi > np.pi/2:

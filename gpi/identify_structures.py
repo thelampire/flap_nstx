@@ -151,6 +151,7 @@ def identify_structures(#General inputs
         elif spatial:
             x_coord_name='Device R'
             x_unit_name='[m]'
+
             y_coord_name='Device z'
             y_unit_name='[m]'
         else:
@@ -366,6 +367,12 @@ def identify_structures(#General inputs
 
             half_coords=prelim_structures[i_str]['Paths'][ind_at_half].to_polygons()[0]
 
+            """
+            These lines cut down the computation cost of .contains_points() by
+            having only a rectangular frame around the polygon to be checked not
+            the entire frame of measurement.
+            """
+
             coords_2d=[]
             data_inside_half=[]
 
@@ -375,7 +382,8 @@ def identify_structures(#General inputs
                                                         y_coord[0,:] <= np.max(half_coords[:,1])))[0])
             for i_coord_x in x_inds_of_half:
                 for j_coord_y in y_inds_of_half:
-                    coords_2d.append([x_coord[:,0][i_coord_x],y_coord[0,:][j_coord_y]])
+                    coords_2d.append([x_coord[:,0][i_coord_x],
+                                      y_coord[0,:][j_coord_y]])
                     data_inside_half.append(data_thresholded[i_coord_x,j_coord_y])
 
             coords_2d=np.asarray(coords_2d)
@@ -383,20 +391,22 @@ def identify_structures(#General inputs
 
             try:
                 ind_inside_half_path=prelim_structures[i_str]['Paths'][ind_at_half].contains_points(coords_2d)
-            except:
-                prelim_structures[i_str]['Size']=None
-                continue
+            except Exception as e:
+                print('Exception in identify structures line 392: ',e)
 
             x_data=coords_2d[ind_inside_half_path,0]
             y_data=coords_2d[ind_inside_half_path,1]
-            int_data=data_inside_half[ind_inside_half_path]
+            enclosed_data=data_inside_half[ind_inside_half_path]
 
             half_polygon=Polygon(x=half_coords[:,0],
                                  y=half_coords[:,1],
                                  x_data=np.asarray(x_data),
                                  y_data=np.asarray(y_data),
-                                 data=np.asarray(int_data),
+                                 x_data_pix=x_coord_pix[ind_inside_half_path],
+                                 y_data_pix=y_coord_pix[ind_inside_half_path],
+                                 data=np.asarray(enclosed_data),
                                  test=test)
+
             if smooth_contours > 0:
                 half_polygon.smooth(refinements=smooth_contours)
 
@@ -526,6 +536,7 @@ def identify_structures(#General inputs
         structures[i_str]['Total bending energy']=polygon.total_bending_energy
         structures[i_str]['Total curvature']=polygon.convexity
 
+        structures[i_str]['Angle of least inertia']=polygon.principal_axes_angle
 
         if fit_shape=='ellipse':
             ellipse=FitEllipse(x=polygon.x,
