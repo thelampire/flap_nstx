@@ -415,8 +415,9 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
             #if True:
                 thomson_profiles['Position r'][i_time_vec]=np.interp(popt[2],
                                                                      flux_coord[np.argmin(flux_coord[:,i_time_vec]):,i_time_vec],
-                                                                     rad_coord[np.argmin(flux_coord[:,i_time_vec]):,i_time_vec])
-            except:
+                                                                     rad_coord[np.argmin(flux_coord[:,i_time_vec]):])
+            except Exception as e:
+                print(e)
                 print('Interpolation failed.')
                 thomson_profiles['Position r'][i_time_vec]=np.nan
 
