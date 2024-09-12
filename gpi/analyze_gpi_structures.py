@@ -610,7 +610,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                       recalc_tracking=recalc_tracking,
                                       smooth_contours=smooth_contours,
                                       comment=comment,
-                                      fix_structure_angles=fix_structure_angles,
+                                      #fix_structure_angles=fix_structure_angles,
                                       )
 
     """*****************

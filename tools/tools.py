@@ -845,24 +845,43 @@ def plot_pearson_matrix(matrix,
                         plot_large=True,
                         plot_values=True,
                         plot_colorbar=True,
+                        linewidth=2,
+                        ticksize=6,
+                        minor_ticksize=False,
+                        major_ticksize=False,
                         ):
     if plot_large:
-        plt.rcParams['lines.linewidth'] = 4
-        plt.rcParams['axes.linewidth'] = 4
+        plt.rcParams['lines.linewidth'] = linewidth
+        plt.rcParams['axes.linewidth'] = linewidth
         plt.rcParams['axes.labelsize'] = charsize
         plt.rcParams['axes.titlesize'] = charsize
 
         plt.rcParams['xtick.labelsize'] = charsize
-        plt.rcParams['xtick.major.size'] = 10
-        plt.rcParams['xtick.major.width'] = 4
-        plt.rcParams['xtick.minor.width'] = 2
-        plt.rcParams['xtick.minor.size'] = 4
+        
+        
 
         plt.rcParams['ytick.labelsize'] = charsize
-        plt.rcParams['ytick.major.width'] = 4
-        plt.rcParams['ytick.major.size'] = 6
-        plt.rcParams['ytick.minor.width'] = 2
-        plt.rcParams['ytick.minor.size'] = 4
+        
+        
+        if major_ticksize:
+            plt.rcParams['xtick.major.size'] = major_ticksize
+            plt.rcParams['ytick.major.size'] = major_ticksize
+        else:
+            plt.rcParams['xtick.major.size'] = ticksize
+            plt.rcParams['ytick.major.size'] = ticksize
+        
+        plt.rcParams['xtick.major.width'] = linewidth
+        plt.rcParams['xtick.minor.width'] = linewidth
+        
+        plt.rcParams['ytick.major.width'] = linewidth
+        plt.rcParams['ytick.minor.width'] = linewidth
+        
+        if minor_ticksize:
+            plt.rcParams['xtick.minor.size'] = minor_ticksize
+            plt.rcParams['ytick.minor.size'] = minor_ticksize
+        else:
+            plt.rcParams['xtick.minor.size'] = ticksize/2
+            plt.rcParams['ytick.minor.size'] = ticksize/2
 
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 

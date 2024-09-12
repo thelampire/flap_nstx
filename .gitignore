@@ -105,3 +105,8 @@ venv.bak/
 *.pickle
 *.mp4
 workspace/
+gpi/.DS_Store
+test/.DS_Store
+tools/original1.tools.py
+analysis/ipython.html
+analysis/.DS_Store
