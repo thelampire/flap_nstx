@@ -618,35 +618,40 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                                   fix_angle_for_correlation=fix_angle_for_correlation,
                                   averaging=averaging,
                                   average=average)
-
+    
     if plot_interesting_only:
-        interesting_key_pairs=[('Area','Convexity'),
-                               ('Size radial','Convexity'),
-                               ('Elongation','Roundness'),
-                               ('Position radial','Velocity radial position'),
-                               ('Axes length minor','Velocity radial position'),
-                               ('Axes length major','Velocity radial position'),
-                               ('Expansion fraction area','Roundness diff'),
-                               ('Position radial','Axes length major'),
-                               ]
-        gpi_labels=list(np.unique(interesting_key_pairs))
+        gpi_labels=['Axes length minor',
+                    'Angle',
+                    'Angle of least inertia',
+                    'Velocity poloidal centroid',
+                    'Angular velocity ALI']
+        
+        plasma_labels=['Line integrated density',
+                     'Sound speed',
+                     'Plasma frequency',
+                     'Pressure max gradient',
+                     'Temperature pedestal width',
+                     'Collisionality',
+                     'Density at max',
+                     ]
     else:
         gpi_labels=list(full_blob_data.keys())
+        plasma_labels=list(full_plasma_data.keys())
         #gpi_labels=[gpi_labels[0:4],gpi_labels[5:12],gpi_labels[4],gpi_labels[12:]]
 
-    correlation_matrix=np.zeros([len(full_plasma_data.keys()),
+    correlation_matrix=np.zeros([len(plasma_labels),
                                  len(gpi_labels)
                                  ])
-
+    
     corr_accept=calculate_corr_acceptance_levels()
     if averaging == 'shot':
         for ind1,key1 in enumerate(gpi_labels):
             
             ind_nan1=~np.isnan(full_blob_data[key1])
-            if key1 == 'Angle' or key1 == 'Angle of least inertia':
-                full_blob_data[key1]=np.mod(np.real(full_blob_data[key1]), np.pi/2)
+            # if key1 == 'Angle' or key1 == 'Angle of least inertia':
+            #     full_blob_data[key1]=np.mod(np.real(full_blob_data[key1]), np.pi/2)
                 
-            for ind2,key2 in enumerate(full_plasma_data.keys()):
+            for ind2,key2 in enumerate(plasma_labels):
                 ind_nan2=~np.isnan(full_plasma_data[key2])
     
                 ind_nan=np.logical_and(ind_nan1,ind_nan2)
@@ -669,9 +674,9 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
     else:
         plasma_data={}
         blob_data={}
-        for ind2,key2 in enumerate(full_plasma_data.keys()):
+        for ind2,key2 in enumerate(plasma_labels):
             plasma_data[key2]={}
-            for ind1,key1 in enumerate(full_blob_data.keys()):
+            for ind1,key1 in enumerate(gpi_labels):
                 plasma_data[key2][key1]=[]
                 for ind_shot in range(len(full_blob_data)):
                     curr_blob_data=full_blob_data[key1][ind_shot]['data']
@@ -692,8 +697,8 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
             
         for ind1, key1 in enumerate(blob_data):
             ind_nan1=~np.isnan(blob_data[key1])
-            if key1 == 'Angle' or key1 == 'Angle of least inertia':
-                blob_data[key1]=np.mod(np.real(blob_data[key1]), np.pi/2)
+            # if key1 == 'Angle' or key1 == 'Angle of least inertia':
+            #     blob_data[key1]=np.mod(np.real(blob_data[key1]), np.pi/2)
                 
             for ind2, key2 in enumerate(plasma_data):
                 ind_nan2=~np.isnan(plasma_data[key2][key1])
@@ -719,7 +724,7 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
     
     plot_pearson_matrix(correlation_matrix,
                         xlabels=gpi_labels,
-                        ylabels=full_plasma_data.keys(),
+                        ylabels=plasma_labels,
                         title='Blob vs plasma parameter correlation map',
                         colormap='seismic',
                         figsize=(17/2.54,17/2.54), #(8.5/2.54,8.5/2.54*1.2)
@@ -891,7 +896,12 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
     pdf_page=PdfPages(pdf_filename)
 
     full_plasma_data=read_all_plasma_data(nocalc=nocalc)
-    full_blob_data=read_mean_blob_results(nocalc=nocalc)
+    #full_blob_data=read_mean_blob_results(nocalc=nocalc)
+    full_blob_data=read_blob_data(nocalc=nocalc, 
+                                  str_finding_method='watershed',
+                                  fix_angle_for_correlation=True,
+                                  averaging='shot',
+                                  average='avg')
     corr_accept=calculate_corr_acceptance_levels()
     for ind1,key1 in enumerate(full_blob_data.keys()):
         ind_nan1=~np.isnan(full_blob_data[key1])
@@ -918,6 +928,7 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
             else:
                 plot_page=True
             if plot_page:
+                print(key1,key2,correlation)
                 fig,ax=plt.subplots(
                                     figsize=(8.5/2.54,8.5/2.54*1.2)
                                     )
@@ -932,8 +943,10 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
 
 
 
+
+
 """********************************************************************************
-                        READING RESULTS STARTING FROM HERE
+                        READING RESULTS STARTING HERE
 ********************************************************************************"""
 
 
@@ -1023,8 +1036,8 @@ def read_blob_data(time_range_around_peak=5e-3, #Reads either mean or full blob 
                     # if key != 'Angle of least inertia':
                     for data in structure[key]:
                         #if np.isreal(data) and ~np.isnan(data): #There are a bunch of complex and nan data which are not handled.
-                        if (key == 'Angle' or key == 'Angle of least inertia') and fix_angle_for_correlation:
-                            data=np.mod(np.real(data), np.pi/2)
+                        # if (key == 'Angle' or key == 'Angle of least inertia') and fix_angle_for_correlation:
+                        #     data=np.mod(np.real(data), np.pi/2)
                             
                         shot_data=np.append(shot_data,
                                             np.real(data))
