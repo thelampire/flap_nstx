@@ -26,6 +26,8 @@ from flap_nstx.test import test_angular_displacement_estimation
 from flap_nstx.analysis import calculate_blob_parameter_histograms
 from flap_nstx.analysis import plot_blob_blob_parameter_trends
 from flap_nstx.analysis import calculate_blob_blob_parameter_correlation_matrix
+from flap_nstx.analysis import plot_blob_plasma_parameter_trends
+from flap_nstx.analysis import calculate_blob_plasma_parameter_correlation_matrix
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -37,34 +39,17 @@ from skimage.filters import window, difference_of_gaussians
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/publication_figures/rsi_2022'
 
+flap_nstx.tools.set_matplotlib_for_publication(labelsize=0.,
+                                               linewidth=0.5,
+                                               major_ticksize=2.,
+                                               minor_ticksize=1.)
 
-plt.rc('font', family='serif', serif='Helvetica')
-labelsize=9.
-linewidth=0.5
-major_ticksize=2.
-plt.rc('text', usetex=False)
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['ps.fonttype'] = 42
-plt.rcParams['lines.linewidth'] = linewidth
-plt.rcParams['axes.linewidth'] = linewidth
-plt.rcParams['axes.labelsize'] = labelsize
-plt.rcParams['axes.titlesize'] = labelsize
-
-plt.rcParams['xtick.labelsize'] = labelsize
-plt.rcParams['xtick.major.size'] = major_ticksize
-plt.rcParams['xtick.major.width'] = linewidth
-plt.rcParams['xtick.minor.width'] = linewidth/2
-plt.rcParams['xtick.minor.size'] = major_ticksize/2
-
-plt.rcParams['ytick.labelsize'] = labelsize
-plt.rcParams['ytick.major.width'] = linewidth
-plt.rcParams['ytick.major.size'] = major_ticksize
-plt.rcParams['ytick.minor.width'] = linewidth/2
-plt.rcParams['ytick.minor.size'] = major_ticksize/2
-plt.rcParams['legend.fontsize'] = labelsize
+"""
+DOES NOT YET HAVE THE DATA AVAILABILITY OUTPUT
+"""
 
 
-def plot_results_for_iaea_2023(plot_figure=2,
+def plot_results_for_pop_2024(plot_figure=2,
                                save_data_into_txt=False,
                                plot_all=False,
                                nocalc=False):
@@ -72,8 +57,8 @@ def plot_results_for_iaea_2023(plot_figure=2,
     if plot_all:
         plot_figure=-1
         for i in range(15):
-            plot_results_for_iaea_2023(plot_figure=i,
-                                     save_data_into_txt=save_data_into_txt)
+            plot_results_for_pop_2024(plot_figure=i,
+                                      save_data_into_txt=save_data_into_txt)
 
     """
     GPI plot
@@ -151,4 +136,35 @@ def plot_results_for_iaea_2023(plot_figure=2,
                                         calc_mean_distribution=False)
 
     if plot_figure == 9:
-        pass
+        plot_blob_plasma_parameter_trends(plot_for_publication=True)
+        
+    if plot_figure == 10:
+        calculate_blob_plasma_parameter_correlation_matrix(nocalc=False, 
+                                                           averaging='shot', 
+                                                           average='avg', 
+                                                           str_finding_method='watershed', 
+                                                           quantity='correlation', 
+                                                           plot_for_publication=True, 
+                                                           colormap='seismic', 
+                                                           plot_full=True, 
+                                                           threshold_corr=False, 
+                                                           linewidth=1, 
+                                                           ticksize=3, 
+                                                           charsize=9)
+        
+
+    if plot_figure == 11:
+        calculate_blob_plasma_parameter_correlation_matrix(nocalc=False, 
+                                                           averaging='shot', 
+                                                           average='avg', 
+                                                           str_finding_method='watershed', 
+                                                           quantity='predictive_power', 
+                                                           plot_for_publication=True, 
+                                                           colormap='seismic', 
+                                                           plot_full=True, 
+                                                           threshold_corr=False, 
+                                                           linewidth=1, 
+                                                           ticksize=3, 
+                                                           charsize=9,
+                                                           plot_colorbar=False)
+        

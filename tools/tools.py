@@ -834,21 +834,31 @@ def calculate_corr_acceptance_levels(n_data=160,
 
     return corr_accept
 
+
+
 def plot_pearson_matrix(matrix,
                         xlabels=None,
                         ylabels=None,
                         title='',
                         colormap='seismic',
                         figsize=(8.5/2.54,8.5/2.54*1.2),
+                        
                         charsize=9,
+                        charsize_score=9/1.5,
+                        charcolor_score='white',
+                        
                         zrange=[-1,1],
                         plot_large=True,
                         plot_values=True,
                         plot_colorbar=True,
-                        linewidth=2,
+                        linewidth=1,
                         ticksize=6,
+                        
                         minor_ticksize=False,
                         major_ticksize=False,
+                        
+                        colorbar_ticks=None,
+                        fig_ax=None
                         ):
     if plot_large:
         plt.rcParams['lines.linewidth'] = linewidth
@@ -884,52 +894,59 @@ def plot_pearson_matrix(matrix,
             plt.rcParams['ytick.minor.size'] = ticksize/2
 
     from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-    fig,ax=plt.subplots(figsize=figsize)
-
+    
+    if fig_ax is None:
+        fig,ax=plt.subplots(figsize=figsize)
+    else:
+        fig,ax=fig_ax
+        
     im=ax.matshow(matrix,
-                #fignum=fig,
                 cmap=colormap,
                 vmin=zrange[0],
                 vmax=zrange[1],
                 )
 
-    # for (i, j), z in np.ndenumerate(correlation_matrix):
-    #     ax.text(j, i, '{:0.1f}'.format(z), ha='center', va='center', color='white')
-
-    plt.xticks(ticks=np.arange(matrix.shape[1]),
-               labels=xlabels, #full_blob_data.keys(),
-               rotation='vertical',
-                                            )
-    plt.yticks(np.arange(matrix.shape[0]),
-               labels=ylabels) #full_plasma_data.keys())
+    ax.set_xticks(ticks=np.arange(matrix.shape[1]),
+                  labels=xlabels,
+                  rotation=45,
+                  ha='left',
+                  rotation_mode='anchor'
+                  )
+    ax.set_yticks(ticks=np.arange(matrix.shape[0]),
+                  labels=ylabels)
+    
     if plot_colorbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes('right', size='5%', pad=0.05)
-        fig.colorbar(im, cax=cax, orientation='vertical')
+        fig.colorbar(im, cax=cax, orientation='vertical', ticks=colorbar_ticks)
+        if colorbar_ticks is not None:
+            print(colorbar_ticks)
+            # cax.set_yticks(colorbar_ticks, labels=colorbar_ticks)
+        
     ax.set_title(title)
-    #plt.tight_layout(pad=0.1)
-    ax.set_xticks(np.arange(0, len(xlabels), 1))
-    ax.set_yticks(np.arange(0, len(ylabels), 1))
+
+    # ax.set_xticks(np.arange(0, len(xlabels), 1))
+    # ax.set_yticks(np.arange(0, len(ylabels), 1))
     ax.set_xticks(np.arange(-.5, len(xlabels), 1), minor=True)
     ax.set_yticks(np.arange(-.5, len(ylabels), 1), minor=True)
 
-# Gridlines based on minor ticks
-    ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
+    # Gridlines based on minor ticks
+    ax.grid(which='minor', color='black', linestyle='-', linewidth=linewidth)
     if plot_values:
         for (i, j), z in np.ndenumerate(matrix):
             ax.text(j, i, '{:0.1f}'.format(z),
                     ha='center',
                     va='center',
-                    color='white',
-                    size=charsize/1.5)
+                    color=charcolor_score,
+                    size=charsize_score)
 
-    plt.tight_layout(pad=0.1)
-    plt.show()
+    
+    
 
 def set_matplotlib_for_publication(labelsize=8.,
                                    linewidth=0.5,
                                    major_ticksize=2.,
+                                   minor_ticksize=1.,
                                    ):
 
     plt.rc('font', family='serif', serif='Helvetica')
@@ -945,13 +962,13 @@ def set_matplotlib_for_publication(labelsize=8.,
     plt.rcParams['xtick.major.size'] = major_ticksize
     plt.rcParams['xtick.major.width'] = linewidth
     plt.rcParams['xtick.minor.width'] = linewidth/2
-    plt.rcParams['xtick.minor.size'] = major_ticksize/2
+    plt.rcParams['xtick.minor.size'] = minor_ticksize
 
     plt.rcParams['ytick.labelsize'] = labelsize
     plt.rcParams['ytick.major.width'] = linewidth
     plt.rcParams['ytick.major.size'] = major_ticksize
     plt.rcParams['ytick.minor.width'] = linewidth/2
-    plt.rcParams['ytick.minor.size'] = major_ticksize/2
+    plt.rcParams['ytick.minor.size'] = minor_ticksize
     plt.rcParams['legend.fontsize'] = labelsize
 
 def fringe_jump_correction(data,                                                #Data input
@@ -976,3 +993,51 @@ def fringe_jump_correction(data,                                                
         if fringe_exists == 0:
             break
     return data
+
+def mutual_information(x, 
+                       y, 
+                       bins=None, 
+                       normalized=True):
+    
+    if bins is None:
+        bins=9
+
+    def shan_entropy(c):
+        c_normalized = c / float(np.sum(c))
+        c_normalized = c_normalized[np.nonzero(c_normalized)]
+        H = -sum(c_normalized* np.log2(c_normalized))  
+        return H
+
+    c_XY = np.histogram2d(x,y,bins)[0]
+    c_X = np.histogram(x,bins)[0]
+    c_Y = np.histogram(y,bins)[0]
+ 
+    H_X = shan_entropy(c_X)
+    H_Y = shan_entropy(c_Y)
+    H_XY = shan_entropy(c_XY)
+    
+    if normalized:
+        MI = (H_X + H_Y - H_XY)/np.sqrt(H_X * H_Y)
+    else:
+        MI = (H_X + H_Y - H_XY)
+        
+    return MI
+
+def correlation(data1,data2,
+                threshold_correlation=False,
+                correlation_accept=None,
+                confidence_sigma=None):
+    
+    data1 = data1 - np.mean(data1)
+    data2 = data2 - np.mean(data2)
+    
+    correlation = np.sum(data1 * data2) / (np.sqrt(np.sum(data1**2) * np.sum(data2**2)))
+    
+    if threshold_correlation:
+        try:
+            if not (np.abs(correlation) > (correlation_accept['avg'][len(data1)] +
+                                       confidence_sigma*correlation_accept['stddev'][len(data1)])):
+                correlation=np.nan
+        except:
+            pass
+    return correlation

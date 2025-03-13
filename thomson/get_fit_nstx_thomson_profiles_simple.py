@@ -172,31 +172,31 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
             psi_values_ts[np.isnan(psi_values_ts)]=0.
             flux_coord=psi_values_ts
         thomson_profiles={'time_vec':time_vec,
-                         'Data':data,
-                         'Device R':rad_coord,
-                         'Flux r':flux_coord,
-                         'Fit parameters':np.zeros([time_vec.shape[0],5]),
-                         'Fit parameter errors':np.zeros([time_vec.shape[0],5]),
-                         'Height':np.zeros(time_vec.shape),
-                         'Width':np.zeros(time_vec.shape),
-                         'Global gradient':np.zeros(time_vec.shape),
-                         'Position':np.zeros(time_vec.shape),
-                         'Position r':np.zeros(time_vec.shape),
-                         'SOL offset':np.zeros(time_vec.shape),
-                         'Max gradient':np.zeros(time_vec.shape),
-                         'Value at max':np.zeros(time_vec.shape),
-
-                         'Error':{'Height':np.zeros(time_vec.shape),
-                                  'SOL offset':np.zeros(time_vec.shape),
-                                  'Position':np.zeros(time_vec.shape),
-                                  'Position r':np.zeros(time_vec.shape),
-                                  'Width':np.zeros(time_vec.shape),
-                                  'Global gradient':np.zeros(time_vec.shape),
-                                  'Max gradient':np.zeros(time_vec.shape),
-                                  'Value at max':np.zeros(time_vec.shape),
-                                  },
-                         }
-        if modified_tanh:
+                          'Data':data,
+                          'Device R':rad_coord,
+                          'Flux r':flux_coord,
+                          'Fit parameters':np.zeros([time_vec.shape[0],5]),
+                          'Fit parameter errors':np.zeros([time_vec.shape[0],5]),
+                          'Height':np.zeros(time_vec.shape),
+                          'Width':np.zeros(time_vec.shape),
+                          'Global gradient':np.zeros(time_vec.shape),
+                          'Position':np.zeros(time_vec.shape),
+                          'Position r':np.zeros(time_vec.shape),
+                          'SOL offset':np.zeros(time_vec.shape),
+                          'Max gradient':np.zeros(time_vec.shape),
+                          'Value at max':np.zeros(time_vec.shape),
+                          
+                          'Error':{'Height':np.zeros(time_vec.shape),
+                                   'SOL offset':np.zeros(time_vec.shape),
+                                   'Position':np.zeros(time_vec.shape),
+                                   'Position r':np.zeros(time_vec.shape),
+                                   'Width':np.zeros(time_vec.shape),
+                                   'Global gradient':np.zeros(time_vec.shape),
+                                   'Max gradient':np.zeros(time_vec.shape),
+                                   'Value at max':np.zeros(time_vec.shape),
+                                   },
+                          }
+        if modified_tanh:   
             thomson_profiles['Slope']=np.zeros(time_vec.shape)
             thomson_profiles['Error']['Slope']=np.zeros(time_vec.shape)
 
@@ -439,7 +439,7 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
 
             if modified_tanh:
                 thomson_profiles['Error']['Slope'][i_time_vec]=perr[4]
-
+        #TODO: where is the multiplier of 4 coming from
         thomson_profiles['Max gradient']=(thomson_profiles['SOL offset']-thomson_profiles['Height'])/(4*thomson_profiles['Width'])
         thomson_profiles['Value at max']=(thomson_profiles['SOL offset']+thomson_profiles['Height'])/2.
         thomson_profiles['Global gradient']=(thomson_profiles['SOL offset']-thomson_profiles['Height'])/(4*thomson_profiles['Width'])
