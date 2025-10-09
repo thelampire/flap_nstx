@@ -90,6 +90,7 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
         conn.openTree('ACTIVESPEC', exp_id)
         time_vec=conn.get('\\TS_BEST:TS_TIMES').data()
         rad_coord=conn.get('\\TS_BEST:FIT_RADII').data()/100.
+        
         if pressure:
             data=conn.get('\\TS_BEST:FIT_PE').data()
             error=conn.get('\\TS_BEST:FIT_PE_ERR').data()
@@ -122,13 +123,13 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
             try:
                 conn.openTree('EFIT02',exp_id)    
                 
-                data_psirz=conn.get('\PSIRZ').data()
-                time_psirz=conn.get('dim_of(\PSIRZ,0)').data()
-                rad_coord_psirz=conn.get('dim_of(\PSIRZ,1)').data()
+                data_psirz=conn.get('\\PSIRZ').data()
+                time_psirz=conn.get('dim_of(\\PSIRZ,0)').data()
+                rad_coord_psirz=conn.get('dim_of(\\PSIRZ,1)').data()
 
-                data_ssimag=conn.get('\SSIMAG').data()
+                data_ssimag=conn.get('\\SSIMAG').data()
 
-                data_ssibry=conn.get('\SSIBRY').data()
+                data_ssibry=conn.get('\\SSIBRY').data()
 
                 
                 # R_data=flap.get_data('NSTX_MDSPlus',
@@ -171,6 +172,7 @@ def get_fit_nstx_thomson_profiles_simple(exp_id=None,                           
                 
             psi_values_ts[np.isnan(psi_values_ts)]=0.
             flux_coord=psi_values_ts
+            
         thomson_profiles={'time_vec':time_vec,
                           'Data':data,
                           'Device R':rad_coord,

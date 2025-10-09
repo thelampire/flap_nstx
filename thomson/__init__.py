@@ -1,4 +1,4 @@
-from .fit_nstx_thomson_profiles import get_fit_nstx_thomson_profiles
+from .get_fit_nstx_thomson_profiles import get_fit_nstx_thomson_profiles
 from .get_fit_nstx_thomson_profiles_simple import get_fit_nstx_thomson_profiles_simple
 
 from .get_nstx_thomson_gradient import get_nstx_thomson_gradient

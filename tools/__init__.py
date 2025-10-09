@@ -6,6 +6,7 @@ from .tools import make_plot_cursor_format, signal_windowed_avg_err, kmeans, kme
 from .tools import randomsample, nearestcentres, Lqmetric, Kmeans, calculate_corr_acceptance_levels
 from .tools import plot_pearson_matrix, set_matplotlib_for_publication
 from .tools import fringe_jump_correction, mutual_information, correlation
+from .tools import calculate_plasma_squareness
 
-from .fit_functions import mtanh_func, mtanh_p_func, mtanh_pp_func, mtanh_ppp_func
+from .fit_functions import mtanh_func, mtanh_p_func, mtanh_pp_func, mtanh_ppp_func, tanh_function, mtanh_function
 from .skimage_phase_correlation_mod import phase_cross_correlation_mod_ml

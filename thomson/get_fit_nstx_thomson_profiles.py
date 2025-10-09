@@ -16,6 +16,7 @@ import flap
 import flap_nstx
 import flap_mdsplus
 
+from flap_nstx.tools import tanh_function, mtanh_function
 flap_nstx.register()
 flap_mdsplus.register('NSTX_MDSPlus')
 
@@ -125,31 +126,37 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                 radial_range=[np.min(d.coordinate(r_coord_name)[0]),
                               np.max(d.coordinate(r_coord_name)[0])]
 
-
+        # print(time_vec.shape,d.data.shape, d.coordinate('Flux r')[0].shape)
         thomson_profiles={'time_vec':time_vec,
-                         'Data':d.data,
-                         'Device R':d.coordinate('Device R')[0],
-                         'Flux r':d.coordinate('Flux r')[0],
-                         'Fit parameters':np.zeros([time_vec.shape[0],5]),
-                         'Fit parameter errors':np.zeros([time_vec.shape[0],5]),
-                         'a':np.zeros(time_vec.shape),
-                         'Height':np.zeros(time_vec.shape),
-                         'Width':np.zeros(time_vec.shape),
-                         'Global gradient':np.zeros(time_vec.shape),
-                         'Position':np.zeros(time_vec.shape),
-                         'Position r':np.zeros(time_vec.shape),
-                         'SOL offset':np.zeros(time_vec.shape),
-                         'Max gradient':np.zeros(time_vec.shape),
-                         'Value at max':np.zeros(time_vec.shape),
-
-                         'Error':{'Height':np.zeros(time_vec.shape),
-                                  'SOL offset':np.zeros(time_vec.shape),
-                                  'Position':np.zeros(time_vec.shape),
-                                  'Position r':np.zeros(time_vec.shape),
-                                  'Width':np.zeros(time_vec.shape),
-                                  'Global gradient':np.zeros(time_vec.shape),
-                                  'Max gradient':np.zeros(time_vec.shape),
-                                  'Value at max':np.zeros(time_vec.shape),
+                          'Data':d.data,
+                          'Device R':d.coordinate('Device R')[0],
+                          'Flux r':d.coordinate('Flux r')[0],
+                          
+                          'Fit parameters':np.zeros([time_vec.shape[0],5]),
+                          'Fit parameter errors':np.zeros([time_vec.shape[0],5]),
+                          'Fit parameter covariance':np.zeros([time_vec.shape[0],5,5]),
+                          
+                          'a':np.zeros(time_vec.shape),
+                          'Height':np.zeros(time_vec.shape),
+                          'Width':np.zeros(time_vec.shape),
+                          'Global gradient':np.zeros(time_vec.shape),
+                          'Position':np.zeros(time_vec.shape),
+                          'Position r':np.zeros(time_vec.shape),
+                          'SOL offset':np.zeros(time_vec.shape),
+                          'Max gradient':np.zeros(time_vec.shape),
+                          'Value at max':np.zeros(time_vec.shape),
+                          'SOL avg':np.zeros(time_vec.shape),
+                          
+                          'Error':{'Data':d.error,
+                                   'Height':np.zeros(time_vec.shape),
+                                   'SOL offset':np.zeros(time_vec.shape),
+                                   'Position':np.zeros(time_vec.shape),
+                                   'Position r':np.zeros(time_vec.shape),
+                                   'Width':np.zeros(time_vec.shape),
+                                   'Global gradient':np.zeros(time_vec.shape),
+                                   'Max gradient':np.zeros(time_vec.shape),
+                                   'Value at max':np.zeros(time_vec.shape),
+                                   'SOL avg':np.zeros(time_vec.shape),
                                   },
                          }
         if modified_tanh:
@@ -163,28 +170,20 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
         if radial_range is not None:
             x_range=radial_range
 
-    #    def mtanh_fit_function(r, b_height, b_sol, b_pos, b_width, b_slope):           #This version of the code is not working due to the b_slope linear dependence
-    #        def mtanh(x,b_slope):
-    #            return ((1+b_slope*x)*np.exp(x)-np.exp(-x))/(np.exp(x)+np.exp(-x))
-    #        return (b_height-b_sol)/2*(mtanh((b_pos-r)/(2*b_width),b_slope)+1)+b_sol
-
         if not modified_tanh:
-            def tanh_fit_function(r, b_height, b_sol, b_pos, b_width):
-                def tanh(x):
-                    return (np.exp(x)-np.exp(-x))/(np.exp(x)+np.exp(-x))
-                return (b_height-b_sol)/2*(tanh((b_pos-r)/(2*b_width))+1)+b_sol
+            tanh_fit_function=tanh_function
         else:
-            def tanh_fit_function(x, b_height, b_sol, b_pos, b_width, b_slope):
-                x_mod=2*(x - b_pos)/b_width
-                return (b_height+b_sol)/2 + (b_height-b_sol)/2*((1 - b_slope*x_mod)*np.exp(-x_mod) - np.exp(x_mod))/(np.exp(x_mod) + np.exp(-x_mod))
+            tanh_fit_function=mtanh_function
 
         if test_time_vec:
             print('Fit 2nd in ',time_mod.time_vec()-start_time_vec)
             start_time_vec=time_mod.time_vec()
+            
         rmaxis=flap.get_data('NSTX_MDSPlus',
                              name='\EFIT02::\RMAXIS',
                              exp_id=exp_id,
                              object_name='RMAXIS')
+        
         d2=flap.get_data('NSTX_THOMSON',
                         exp_id=exp_id,
                         name='',
@@ -199,7 +198,7 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             print('Fit 3rd in ',time_mod.time_vec()-start_time_vec)
             start_time_vec=time_mod.time_vec()
 
-        for i_time_vec in range(len(time_vec)):
+        for i_time_vec, cur_time in enumerate(time_vec):
             if r_coord_name =='Flux r':
                 x_data=d.coordinate('Flux r')[0][:,i_time_vec]
                 y_data=d.data[:,i_time_vec]
@@ -260,9 +259,8 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                                    d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1]) /
                             average_profiles/np.sum(d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)
                             )
-                    y_data_error=np.mean(d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1],axis=1)/np.sqrt(average_profiles)
+                    y_data_error=np.sqrt(np.sum(d.error[ind_max:,i_time_vec-average_profiles+1:i_time_vec+1]**2,axis=1))/np.sqrt(average_profiles)
                 else:
-
                     ind_max=np.argmax(d.data[:,i_time_vec])
                     x_data=d.coordinate('Device R')[0][ind_max:,i_time_vec]
                     y_data=d.data[ind_max:,i_time_vec]
@@ -312,11 +310,16 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                 if modified_tanh:
                     popt=[np.nan,np.nan,np.nan,np.nan,np.nan]
                     perr=[np.nan,np.nan,np.nan,np.nan,np.nan]
+                    pcov=np.zeros([5,5])
+                    pcov[:,:]=np.nan
                 else:
                     popt=[np.nan,np.nan,np.nan,np.nan]
                     perr=[np.nan,np.nan,np.nan,np.nan]
+                    pcov=np.zeros([4,4])
+                    pcov[:,:]=np.nan
+                    
                 successful_fitting=False
-
+            
             if test or (plot_time_vec is not None and i_time_vec==np.argmin(np.abs(plot_time_vec-time_vec))):
                 plt.cla()
                 if successful_fitting:
@@ -364,9 +367,11 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             if modified_tanh:
                 thomson_profiles['Fit parameters'][i_time_vec,:]=popt
                 thomson_profiles['Fit parameter errors'][i_time_vec,:]=perr
+                thomson_profiles['Fit parameter covariance'][i_time_vec,:,:]=pcov
             else:
                 thomson_profiles['Fit parameters'][i_time_vec,0:4]=popt
                 thomson_profiles['Fit parameter errors'][i_time_vec,0:4]=perr
+                thomson_profiles['Fit parameter covariance'][i_time_vec,0:4,0:4]=pcov
 
             thomson_profiles['Height'][i_time_vec]=popt[0]
             thomson_profiles['SOL offset'][i_time_vec]=popt[1]
@@ -375,14 +380,43 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             try:
             #if True:
                 thomson_profiles['Position r'][i_time_vec]=np.interp(popt[2],
-                                                                d.coordinate('Flux r')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec],
-                                                                d.coordinate('Device R')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec])
+                                                                     d.coordinate('Flux r')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec],
+                                                                     d.coordinate('Device R')[0][np.argmin(d.coordinate('Flux r')[0][:,i_time_vec]):,i_time_vec])
             except:
                 print('Interpolation failed.')
                 thomson_profiles['Position r'][i_time_vec]=np.nan
 
             thomson_profiles['Width'][i_time_vec]=popt[3]
-
+            if r_coord_name == 'Flux r':
+                ind_max=np.argmin(d.coordinate('Flux r')[0][:,i_time_vec])
+                ind_sol=np.where(d.coordinate('Flux r')[0][ind_max:,i_time_vec] > 1.0)
+                
+                
+                
+            else:
+                
+                R_separatrix=flap.get_data('NSTX_MDSPlus',
+                                           name='\EFIT02::\RMIDOUT',
+                                           exp_id=exp_id,
+                                           ).slice_data(slicing={'Time':cur_time}).data-0.02
+                
+                
+                ind_max=np.argmax(d.data[:,i_time_vec])
+                
+                if temperature:
+                    sol_limit=0.05
+                if density:
+                    sol_limit=5e18
+                if pressure:
+                    sol_limit=5e18*0.05*11606*1e3
+                    
+                ind_sol=np.where(np.logical_and(d.coordinate('Device R')[0][ind_max:,i_time_vec] > R_separatrix, 
+                                                d.data[ind_max:,i_time_vec] < sol_limit))
+                
+            thomson_profiles['SOL avg'][i_time_vec]=np.mean((d.data[ind_max:,i_time_vec])[ind_sol])
+            # thomson_profiles['Error']['SOL avg'][i_time_vec]=np.sqrt(np.var((d.data[ind_max:,i_time_vec])[ind_sol]))
+            thomson_profiles['Error']['SOL avg'][i_time_vec]=np.sqrt(np.sum(d.error[ind_max:,i_time_vec][ind_sol]**2))/len(ind_sol)
+            
             if modified_tanh:
                 thomson_profiles['Slope'][i_time_vec]=popt[4]
 
@@ -392,10 +426,10 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
             thomson_profiles['Error']['Width'][i_time_vec]=perr[3]
             thomson_profiles['Error']['Value at max'][i_time_vec]=(perr[0]+perr[1])/2
             thomson_profiles['Error']['Global gradient'][i_time_vec]=(perr[0]/popt[3]+
-                                                                 perr[1]/popt[3]+
-                                                                 np.abs((-popt[1]+popt[0])/popt[3]**2)*perr[3])
+                                                                      perr[1]/popt[3]+
+                                                                      np.abs((-popt[1]+popt[0])/popt[3]**2)*perr[3])
             thomson_profiles['Error']['Max gradient'][i_time_vec]=(np.abs(1/(4*popt[3])*perr[1])+
-                                                              np.abs(1/(4*popt[3])*perr[0]))
+                                                                   np.abs(1/(4*popt[3])*perr[0]))
 
             if modified_tanh:
                 thomson_profiles['Error']['Slope'][i_time_vec]=perr[4]

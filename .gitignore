@@ -110,3 +110,7 @@ test/.DS_Store
 tools/original1.tools.py
 analysis/ipython.html
 analysis/.DS_Store
+gpi/analyze_gpi_structures_chatgpt_o3-mini-high.py
+gpi/analyze_gpi_structures_chatgpt_o3-mini-high_2nd.py
+gpi/analyze_gpi_structures_chatgpt_o3-mini-high_v3.py
+gpi/analyze_gpi_structures_chatgpt_o3-mini-high_v4.py

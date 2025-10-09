@@ -19,7 +19,7 @@ thisdir = os.path.dirname(os.path.realpath(__file__))
 fn = os.path.join(thisdir,"../flap_nstx.cfg")
 flap.config.read(file_name=fn)
 #Scientific library imports
-
+wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 from flap_nstx.tools import Polygon, FitEllipse, FitGaussian
 
 import cv2
@@ -701,10 +701,11 @@ def identify_structures(#General inputs
                 ax.set_ylim([y_coord.min(),y_coord.max()])
         else:
             plt.cla()
-            fig,axes=plt.subplots(1,4,
-                                  figsize=(17/2.54,8.5/2.54))
-            xpos, ypos= (-0.2,1.1)
-            ax=axes[0]
+            np.set_printoptions(threshold=np.inf)
+            fig,axes=plt.subplots(2,2,
+                                  figsize=(8.5/2.54,10/2.54))
+            xpos, ypos= (-0.4,1.1)
+            ax=axes[0,0]
             ax.contourf(x_coord,
                         y_coord,
                         data,
@@ -716,21 +717,31 @@ def identify_structures(#General inputs
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
             ax.text(xpos, ypos, '(a)', transform=ax.transAxes, size=9)
-
-            ax=axes[1]
+         
+            if save_data_for_publication:
+                file1=open(wd+'/a_preproc_frame.txt','w+')
+                file1.write(str(data))
+                file1.close()
+                
+            ax=axes[0,1]
             ax.contourf(x_coord,
                         y_coord,
                         data_thresholded)
-            ax.set_title('Thresholded\n frame')
+            ax.set_title('Thresholded frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
             #ax.set_ylabel('y [pix]')
-            ax.get_yaxis().set_visible(False)
+            # ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
             ax.text(xpos, ypos, '(b)', transform=ax.transAxes, size=9)
 
-            ax=axes[2]
+            if save_data_for_publication:
+                file1=open(wd+'/b_thresholded.txt','w+')
+                file1.write(str(data_thresholded))
+                file1.close()
+
+            ax=axes[1,0]
             ax.contourf(x_coord,
                         y_coord,
                         binary)
@@ -738,23 +749,33 @@ def identify_structures(#General inputs
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
             #ax.set_ylabel('y [pix]')
-            ax.get_yaxis().set_visible(False)
+            # ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
             ax.text(xpos, ypos, '(c)', transform=ax.transAxes, size=9)
 
-            ax=axes[3]
+            if save_data_for_publication:
+                file1=open(wd+'/c_binary.txt','w+')
+                file1.write(str(binary))
+                file1.close()
+
+            ax=axes[1,1]
             ax.contourf(x_coord,
                         y_coord,
                         labels)
-            ax.set_title('Segmented\n frame')
+            ax.set_title('Segmented frame')
             ax.set_aspect(1.0)
             ax.set_xlabel('x [pix]')
             #ax.set_ylabel('y [pix]')
-            ax.get_yaxis().set_visible(False)
+            # ax.get_yaxis().set_visible(False)
             ax.set_xlim([x_coord.min(),x_coord.max()])
             ax.set_ylim([y_coord.min(),y_coord.max()])
             ax.text(xpos, ypos, '(d)', transform=ax.transAxes, size=9)
+
+            if save_data_for_publication:
+                file1=open(wd+'/d_segmented.txt','w+')
+                file1.write(str(labels))
+                file1.close()
 
             # plt.tight_layout(pad=0.1)
 
@@ -785,6 +806,9 @@ def identify_structures(#General inputs
                              b*np.sin(R)*np.cos(phi))
 
                 if plot_result or plot_full: #This plots the structures and the fit ellipses one by one
+                    if not plot_full_for_publication:
+                        fig,axes=plt.subplots(1,4,
+                                              figsize=(17/2.54,8.5/2.54))
                     if plot_result:
                         _plot_ellipses_centers(ax,
                                                x_polygon,
@@ -801,11 +825,10 @@ def identify_structures(#General inputs
                 if save_data_for_publication:
                     exp_id=data_object.exp_id
                     time=data_object.coordinate('Time')[0][0,0]
-                    wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
                     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_half_path_no.'+str(i_str)+'.txt'
                     file1=open(filename, 'w+')
-                    for i in range(len(x)):
-                        file1.write(str(x[i])+'\t'+str(y[i])+'\n')
+                    for i in range(len(x_polygon)):
+                        file1.write(str(x_polygon[i])+'\t'+str(y_polygon[i])+'\n')
                     file1.close()
 
                     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_fit_ellipse_no.'+str(i_str)+'.txt'
@@ -827,7 +850,6 @@ def identify_structures(#General inputs
         if save_data_for_publication:
             exp_id=data_object.exp_id
             time=data_object.coordinate('Time')[0][0,0]
-            wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
             filename=wd+'/'+str(exp_id)+'_'+str(time)+'_raw_data.txt'
             file1=open(filename, 'w+')
             for i in range(len(data[0,:])):
@@ -850,7 +872,8 @@ def _plot_ellipses_centers(ax_cur,
                            ellipse_color=None,
                            polygon_linewidth=1,
                            ellipse_linewidth=1,
-                           plot_structure_mid=False
+                           semiaxis_linewidth=1,
+                           plot_structure_mid=False,
                            ):
 
     #Plot the half path polygon
@@ -880,7 +903,10 @@ def _plot_ellipses_centers(ax_cur,
                  structure['Center'][0]+structure['Axes length'][0]*np.cos(structure['Angle'])],
                 [structure['Center'][1]-structure['Axes length'][0]*np.sin(structure['Angle']),
                  structure['Center'][1]+structure['Axes length'][0]*np.sin(structure['Angle'])],
-                color='magenta')
+                color='magenta',
+                linewidth=semiaxis_linewidth,
+                )
+    
     if plot_structure_mid:
         ax_cur.scatter(structure['Centroid'][0],
                        structure['Centroid'][1],

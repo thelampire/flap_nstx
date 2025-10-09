@@ -22,6 +22,7 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 #Scientific library imports
 try:
     plt
+    # pass
 except:
     import matplotlib.pyplot as plt
 
@@ -481,7 +482,7 @@ def filename(exp_id=None,
 
     if exp_id is None:
         raise ValueError('The exp_id needs to be set for the filename.')
-    filename='NSTX_GPI_'+str(exp_id)
+    filename='NSTX_'+str(exp_id)
 
     if time_range is None:
         filename+='_whole'
@@ -1041,3 +1042,149 @@ def correlation(data1,data2,
         except:
             pass
     return correlation
+
+def calculate_plasma_squareness(R, z, 
+                                upper=False, 
+                                lower=False,
+                                test=False):
+    ind_R_mid=np.argmax(R)
+    R_mid=R[ind_R_mid]
+    z_mid=z[ind_R_mid]
+    
+    ind_z_top=np.argmax(z)
+    ind_z_bot=np.argmin(z)
+    
+    R_top=R[ind_z_top]
+    R_bot=R[ind_z_bot]
+    z_top=z[ind_z_top]
+    z_bot=z[ind_z_bot]
+    
+    R_ellipse_intersection_top, z_ellipse_intersection_top = ellipse_line_intersection(R_top,z_mid, R_mid-R_top, z_top-z_mid, R_top,z_mid,R_mid,z_top)[0]
+    R_separatrix_intersection_top, z_separatrix_intersection_top = path_line_intersections(R, z, R_top,z_mid,R_mid,z_top)[0]
+    
+    R_ellipse_intersection_bot, z_ellipse_intersection_bot = ellipse_line_intersection(R_bot,z_mid, (R_mid-R_bot), (z_bot-z_mid), R_bot,z_mid,R_mid,z_bot)[0]
+    R_separatrix_intersection_bot, z_separatrix_intersection_bot = path_line_intersections(R, z, R_bot,z_mid,R_mid,z_bot)[0]
+    
+    def _distance(x1,y1,x2,y2):
+        return np.sqrt((x1-x2)**2 + (y1-y2)**2)
+    
+    AB_top=_distance(R_top,z_mid, R_separatrix_intersection_top,z_separatrix_intersection_top)
+    AC_top=_distance(R_top,z_mid, R_ellipse_intersection_top,z_ellipse_intersection_top)
+    CD_top=_distance(R_ellipse_intersection_top, z_ellipse_intersection_top, R_mid,z_top)
+    
+    AB_bot=_distance(R_bot,z_mid, R_separatrix_intersection_bot,z_separatrix_intersection_bot)
+    AC_bot=_distance(R_bot,z_mid, R_ellipse_intersection_bot,z_ellipse_intersection_bot)
+    CD_bot=_distance(R_ellipse_intersection_bot,z_ellipse_intersection_bot, R_mid,z_bot)
+    
+    upper_squareness=(AB_top-AC_top)/CD_top
+    lower_squareness=(AB_bot-AC_bot)/CD_bot
+    
+    if test:
+        plt.figure()
+        plt.plot(R,z)
+        plt.scatter([R_top,R_bot,R_mid,R_bot,R_top,R_mid,R_mid],
+                    [z_mid,z_mid,z_mid,z_bot,z_top,z_top,z_bot])
+        
+        plt.scatter([R_separatrix_intersection_bot,R_separatrix_intersection_top],
+                    [z_separatrix_intersection_bot,z_separatrix_intersection_top])
+        
+        plt.scatter([R_ellipse_intersection_bot,R_ellipse_intersection_top],
+                    [z_ellipse_intersection_bot,z_ellipse_intersection_top])
+        
+        print([R_ellipse_intersection_bot,R_ellipse_intersection_top],
+              [z_ellipse_intersection_bot,z_ellipse_intersection_top])
+        
+        print([R_separatrix_intersection_bot,R_separatrix_intersection_top],
+              [z_separatrix_intersection_bot,z_separatrix_intersection_top])
+        
+    if upper: return upper_squareness 
+    elif lower: return lower_squareness
+    else: return {'lower': lower_squareness, 'upper':upper_squareness}
+
+def line_segment_intersection(x1,y1,x2,y2, x3,y3,x4,y4, tol=1e-12):
+    """
+    Intersection of two finite line segments P1P2 and P3P4.
+    Returns (x,y) if they intersect, else None.
+    """
+    denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4)
+    if abs(denom) < tol:
+        return None  # segments are parallel or coincident
+    
+    t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom
+    u = ((x1-x3)*(y1-y2) - (y1-y3)*(x1-x2)) / denom
+
+    if 0-tol <= t <= 1+tol and 0-tol <= u <= 1+tol:
+        xi = x1 + t*(x2-x1)
+        yi = y1 + t*(y2-y1)
+        return (xi, yi)
+    return None
+
+def path_line_intersections(path_x, path_y, x1,y1,x2,y2):
+    """
+    Find intersections between a polyline path (path_x, path_y)
+    and a finite line segment (x1,y1)-(x2,y2).
+
+    Returns a list of (x,y) intersection points.
+    """
+    pts = []
+    for i in range(len(path_x)-1):
+        px1, py1 = path_x[i],   path_y[i]
+        px2, py2 = path_x[i+1], path_y[i+1]
+        p = line_segment_intersection(x1,y1,x2,y2, px1,py1,px2,py2)
+        if p is not None:
+            pts.append(p)
+    return pts
+    
+    
+def ellipse_line_intersection(xc, yc, a, b, x1, y1, x2, y2, segment_only=True, tol=1e-12):
+    """
+    Find intersection points between ellipse and line (or segment).
+
+    Ellipse: ( (x - xc)^2 / a^2 ) + ( (y - yc)^2 / b^2 ) = 1
+    Line: through (x1,y1) and (x2,y2)
+
+    Parameters
+    ----------
+    xc, yc : float
+        Ellipse center coordinates.
+    a, b : float
+        Semi-major and semi-minor axes (along x and y).
+    x1, y1, x2, y2 : float
+        Coordinates of line endpoints.
+    segment_only : bool, default=True
+        If True, only return intersections lying within the segment [P1,P2].
+    tol : float
+        Tolerance for numerical comparisons.
+
+    Returns
+    -------
+    intersections : list of (x,y)
+        List of intersection points (0, 1, or 2).
+    """
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    # Parametric line: (x,y) = (x1 + t*dx, y1 + t*dy)
+    # Substitute into ellipse equation
+    A = (dx**2)/(a**2) + (dy**2)/(b**2)
+    B = 2*((x1-xc)*dx/(a**2) + (y1-yc)*dy/(b**2))
+    C = ((x1-xc)**2)/(a**2) + ((y1-yc)**2)/(b**2) - 1
+
+    # Quadratic At^2 + Bt + C = 0
+    disc = B**2 - 4*A*C
+    pts = []
+    if disc < -tol:
+        return pts  # no intersection
+    elif abs(disc) <= tol:
+        t = -B/(2*A)
+        if (not segment_only) or (0-tol <= t <= 1+tol):
+            pts.append((x1 + t*dx, y1 + t*dy))
+    else:
+        sqrt_disc = np.sqrt(disc)
+        t1 = (-B + sqrt_disc)/(2*A)
+        t2 = (-B - sqrt_disc)/(2*A)
+        for t in (t1, t2):
+            if (not segment_only) or (0-tol <= t <= 1+tol):
+                pts.append((x1 + t*dx, y1 + t*dy))
+    return pts

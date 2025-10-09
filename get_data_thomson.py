@@ -200,7 +200,8 @@ def get_data_thomson(exp_id=None,
             #                          exp_id=exp_id,
             #                          object_name='PSIN')
             
-        except:
+        except Exception as e:
+            print(e)
             raise ValueError("The PSIRZ MDSPlus node cannot be reached.")
         
         psi_n=(psirz.data-ssimag.data[:,None,None])/(ssibry.data-ssimag.data)[:,None,None]

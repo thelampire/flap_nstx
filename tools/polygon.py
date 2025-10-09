@@ -366,7 +366,8 @@ class Polygon:
 
         Hx=np.diff(np.append(Tx[-1],Tx))/ds2
         Hy=np.diff(np.append(Ty[-1],Ty))/ds2
-        self._curvature_vector=np.asarray([Hx,Hy]).transpose()
+        
+        self._curvature_vector = np.asarray([Hx,Hy]).transpose()
         curvature=np.sqrt(Hx**2+Hy**2)
 
         if self.test:

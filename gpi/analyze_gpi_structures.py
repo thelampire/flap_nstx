@@ -35,6 +35,7 @@ flap.config.read(file_name=fn)
 #Scientific modules
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.ticker import MaxNLocator
 
 import numpy as np
 import pickle
@@ -114,8 +115,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            plot_tracking=True,                   #Plot the tracked structures with a line
                            plot_scatter=False,                   #Add scatter points  to the lineplots
                            structure_video_save=False,           #Save the video of the overplot ellipses
+                           video_start_frame=0,
                            video_resolution=(1024,1024),
                            video_framerate=24,
+                           
                            nocolorbar=False,
                            structure_pdf_save=False,             #Save the struture finding algorithm's plot output into a PDF (can create very large PDF's, the number of pages equals the number of frames)
 
@@ -215,11 +218,19 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
     plot_results=plot
 
+    # if plot_for_publication:
+    #     set_matplotlib_for_publication(labelsize=9,
+    #                                    linewidth=0.5,
+    #                                    major_ticksize=2.,
+    #                                    )
+
     fit_shape=fit_shape.capitalize()
 
     pickle_filename=filename+'.pickle'
+    
     if os.path.exists(pickle_filename) and nocalc:
         try:
+            print('Loading '+pickle_filename)
             pickle.load(open(pickle_filename, 'rb'))
         except:
             print('The pickle file cannot be loaded. Recalculating the results.')
@@ -536,6 +547,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       save_data_for_publication=save_data_for_publication)
 
                 if plot_watershed_steps and i_frames == plot_watershed_steps:
+                    plt.tight_layout(pad=0.1)
                     pdf_plot_watershed.savefig()
                     pdf_plot_watershed.close()
 
@@ -649,11 +661,13 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                               colortable=colortable,
                               wd=wd,
                               n_color=n_color,
+                              video_start_frame=video_start_frame,
                               )
 
     if plot_example_structure_frames:
         _plot_example_structure_frames(exp_id=exp_id,
                                        time_range=time_range,
+                                       plot_time_range=plot_time_range,
                                        sample_0=sample_0,
                                        wd=wd,
                                        object_name=object_name,
@@ -663,6 +677,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                        frame_properties=frame_properties,
                                        time=time,
                                        plot_example_structure_frames=plot_example_structure_frames,
+                                       plot_separatrix=plot_separatrix,
+                                       separatrix_coordinates=(d_sep_x,d_sep_y),
+                                       # save_data_for_publication=save_data_for_publication,
                                        )
 
     #Plotting the results
@@ -687,11 +704,13 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     if plot_example_frames_results:
         _plot_example_frames_results(exp_id=exp_id,
                                      time_range=time_range,
+                                     plot_time_range=plot_time_range,
                                      frame_properties=frame_properties,
                                      wd=wd,
                                      n_color=n_color,
                                      colortable=colortable,
                                      pdf=pdf,
+                                     save_data_for_publication=save_data_for_publication,
                                      )
 
     if return_results:
@@ -938,6 +957,7 @@ def transform_frames_to_structures(frame_properties):
                 current_label=frame_properties['structures'][i_frames][j_str]['Label']
                 if current_label is not None and current_label > max_str_label:
                     max_str_label=current_label
+                    
     struct_by_struct=[]
     for ind in range(max_str_label+1):
         struct_by_struct.append({'Time':[],}.copy())
@@ -1613,25 +1633,20 @@ def _plot_results(pdf=False,
 
         figsize=(8.5/2.54,
                  8.5/2.54/1.618*1.1)
-
-        set_matplotlib_for_publication(labelsize=9,
-                                       linewidth=0.5,
-                                       major_ticksize=2.,
-                                       )
     else:
         figsize=None
 
     if not plot_str_by_str:
         _plot_avg_results(frame_properties=frame_properties,
-                              time_range=time_range,
-                              figsize=figsize,
-                              plot_vertical_line_at=plot_vertical_line_at,
-                              overplot_average=overplot_average,
-                              plot_for_publication=plot_for_publication,
-                              pdf=pdf,
-                              pdf_pages=pdf_pages,
-                              plot_scatter=plot_scatter,
-                              )
+                          time_range=time_range,
+                          figsize=figsize,
+                          plot_vertical_line_at=plot_vertical_line_at,
+                          overplot_average=overplot_average,
+                          plot_for_publication=plot_for_publication,
+                          pdf=pdf,
+                          pdf_pages=pdf_pages,
+                          plot_scatter=plot_scatter,
+                          )
     else:
         _plot_str_by_str(frame_properties=frame_properties,
                          plot_scatter=plot_scatter,
@@ -1657,6 +1672,8 @@ def _plot_results(pdf=False,
 
 def _plot_example_structure_frames(exp_id=None,
                                    time_range=None,
+                                   plot_time_range=None,
+                                   
                                    sample_0=None,
                                    wd=None,
                                    object_name=None,
@@ -1666,8 +1683,18 @@ def _plot_example_structure_frames(exp_id=None,
                                    frame_properties=None,
                                    time=None,
                                    plot_example_structure_frames=None,
+                                   save_data_for_publication=False,
+                                   plot_separatrix=False,
+                                   separatrix_coordinates=None,
                                    ):
-
+    
+    (d_sep_x,d_sep_y)=separatrix_coordinates
+    
+    if plot_time_range is not None:
+        if plot_time_range[0] < time_range[0] or plot_time_range[1] > time_range[1]:
+            raise ValueError('The plot time range is not in the interval of the original time range.')
+        time_range=plot_time_range
+    
     import matplotlib.colors as mcolors
     colortable=list(mcolors.TABLEAU_COLORS.keys())
     n_color=len(colortable)
@@ -1682,7 +1709,14 @@ def _plot_example_structure_frames(exp_id=None,
     pdf_pages=PdfPages(wd+'/plots/'+pdf_filenames_frames)
     from flap_nstx.gpi import _plot_ellipses_centers
     import scipy
-
+    
+    if plot_time_range:
+        data_object=flap.get_data_object(object_name)
+        sliced_data=data_object.slice_data(slicing={'Time':flap.Intervals(plot_time_range[0],
+                                                                          plot_time_range[1])})
+        frame_sample_0=sliced_data.coordinate('Sample')[0][0,0,0]-sample_0
+        sample_0=sliced_data.coordinate('Sample')[0][0,0,0]
+        
     slicing_frame={'Sample':sample_0}
 
     frame=flap.slice_data(object_name,
@@ -1702,10 +1736,10 @@ def _plot_example_structure_frames(exp_id=None,
         plot_nframe=15
         plot_ncol=5
 
+
     fig,axes=plt.subplots(int(plot_nframe/plot_ncol),plot_ncol,
                           figsize=(8.5/2.54,3.5*plot_nframe/plot_ncol/2.54),
                           )
-
     for i_frames in range(0,plot_nframe):
         ax=axes[i_frames//plot_ncol,
                 np.mod(i_frames,plot_ncol)]
@@ -1726,8 +1760,36 @@ def _plot_example_structure_frames(exp_id=None,
         else:
             ax.contourf(x_coord, y_coord, frame.data, levels=levels)
 
+        if plot_separatrix:
+            slicing={'Time':frame.coordinate('Time')[0][0,0]}
+            
+            d_sep_x_sliced=d_sep_x.slice_data(slicing=slicing)
+            d_sep_y_sliced=d_sep_y.slice_data(slicing=slicing)
+            
+            print(slicing)
+            separatrix_data=np.zeros([d_sep_x_sliced.shape[0],2])
+            separatrix_data[:,0]=d_sep_x_sliced.data
+            separatrix_data[:,1]=d_sep_y_sliced.data
+            
+            print(d_sep_x_sliced.coordinate('Time'))
+            
+            if plot_separatrix and separatrix_data is not None:
+                ax.plot(separatrix_data[:,0],
+                        separatrix_data[:,1],
+                        linewidth=1,
+                        color='red')
+                # if save_data_for_publication:
+                #     exp_id=data_object.exp_id
+                #     time=frame.coordinate('Time')[0][0,0]
+                #     wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+                #     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_separatrix.txt'
+                #     file1=open(filename, 'w+')
+                #     for i in range(len(separatrix_data[:,0])):
+                #         file1.write(str(separatrix_data[i,0])+'\t'+str(separatrix_data[i,1])+'\n')
+                #     file1.close()
+
         ax.set_aspect(1.0)
-        structures=frame_properties['structures'][i_frames+plot_example_structure_frames]
+        structures=frame_properties['structures'][frame_sample_0+i_frames+plot_example_structure_frames]
 
         if structures is not None and len(structures) > 0:
             #Parametric reproduction of the Ellipse
@@ -1748,15 +1810,16 @@ def _plot_example_structure_frames(exp_id=None,
                     y_ellipse = (structures[i_str]['Center'][1] +
                                  a*np.cos(R)*np.sin(phi) +
                                  b*np.sin(R)*np.cos(phi))
+                    
                     _plot_ellipses_centers(ax,
                                            x_polygon, y_polygon,
                                            x_ellipse, y_ellipse,
                                            structures[i_str],
                                            polygon_color=colortable[int(np.mod(structures[i_str]['Label']+1,n_color))],
-                                           #ellipse_color=colortable[int(np.mod(structures[i_str]['Label'],n_color))],
                                            ellipse_color='black',
                                            polygon_linewidth=1,
                                            ellipse_linewidth=0.25,
+                                           semiaxis_linewidth=0.5,
                                            plot_structure_mid=False,
                                            )
                 elif structures[i_str]['Half path'] is not None:
@@ -1765,8 +1828,40 @@ def _plot_example_structure_frames(exp_id=None,
                                 color=colortable[int(np.mod(structures[i_str]['Label']+1,n_color))],
                                 linewidth=1
                                 )
+        #         if save_data_for_publication:
+        #             exp_id=data_object.exp_id
+        #             time=frame.coordinate('Time')[0][0,0]
+        #             wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+        #             filename=wd+'/'+str(exp_id)+'_'+str(time)+'_half_path_no.'+str(i_str)+'.txt'
+        #             file1=open(filename, 'w+')
+        #             for i in range(len(x_polygon)):
+        #                 file1.write(str(x_polygon[i])+'\t'+str(y_polygon[i])+'\n')
+        #             file1.close()
+
+        #             filename=wd+'/'+str(exp_id)+'_'+str(time)+'_fit_ellipse_no.'+str(i_str)+'.txt'
+        #             file1=open(filename, 'w+')
+        #             for i in range(len(x_ellipse)):
+        #                 file1.write(str(x_ellipse[i])+'\t'+str(y_ellipse[i])+'\n')
+        #             file1.close()
+                    
+        # if save_data_for_publication:
+        #     time=frame.coordinate('Time')[0][0,0]
+        #     wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+        #     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_raw_data.txt'
+        #     file1=open(filename, 'w+')
+        #     data=frame.data
+        #     for i in range(len(data[0,:])):
+        #         string=''
+        #         for j in range(len(data[:,0])):
+        #             string+=str(data[j,i])+'\t'
+        #         string+='\n'
+        #         file1.write(string)
+        #     file1.close()
+                        
+                        
         ax.set_xlabel('R' + ' '+ x_unit_name)
         ax.set_ylabel('z' + ' '+ y_unit_name)
+        
         if np.mod(i_frames,plot_ncol) != 0:
             ax.get_yaxis().set_visible(False)
 
@@ -1779,24 +1874,36 @@ def _plot_example_structure_frames(exp_id=None,
 
         ax.set_xlim([x_coord.min(),x_coord.max()])
         ax.set_ylim([y_coord.min(),y_coord.max()])
-        ax.set_title("{:.3f}".format(time[i_frames+plot_example_structure_frames]*1e3)+' ms',
-                     fontsize=8)
+        ax.set_title("{:.3f}".format(frame.coordinate('Time')[0][0,0]*1e3)+' ms',
+                     fontsize=8, y=0.95)
 
-    plt.tight_layout(pad=0.1)
+    plt.tight_layout(h_pad=0.3,
+                     w_pad=0.1)
+    
     pdf_pages.savefig()
     pdf_pages.close()
 
 
 
+
+
 def _plot_example_frames_results(exp_id=None,
                                  time_range=None,
+                                 plot_time_range=None,
                                  frame_properties=None,
                                  wd=None,
                                  n_color=None,
                                  colortable=None,
                                  pdf=None,
+                                 markersize=0.5,
+                                 save_data_for_publication=False,
                                  ):
 
+    set_matplotlib_for_publication(labelsize=8,
+                                    linewidth=0.2,
+                                    major_ticksize=2.,
+                                    )
+    
     differential_keys=list(frame_properties['derived'].keys())
     
     #pdf_pages=PdfPages(wd+'/plots/plot_example_frame_results.pdf')
@@ -1811,47 +1918,101 @@ def _plot_example_frames_results(exp_id=None,
     struct_by_struct=transform_frames_to_structures(frame_properties)
     #return struct_by_struct
     #print('str_by_str_len: ',struct_by_struct)
-
+    labels=['a','b','c','d','e','f']
     #Area, Angle, Elongation, Roundness
-    fig, axes = plt.subplots(4,1,figsize=(17/2.54,12/2.54))
-    for ind,key in enumerate(['Area','Angle','Roundness','Total curvature']):
+    fig, axes = plt.subplots(6,1,figsize=(17/2.54,12/2.54))
+    for ind,key in enumerate(['Position radial', 'Position poloidal', 'Area','Angle','Roundness','Total curvature']):
         ax=axes[ind]
+        
+        if save_data_for_publication:
+            labels=['a','b','c','d','e','f']
+            wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+            filename=f'{wd}/{labels[ind]}_{exp_id}_{time_range[0]}_{time_range[1]}_{key}_example.txt'
+            file1=open(filename, 'w+')
+            
+        if key == 'Area':
+            frame_properties['data'][key]['label']='A'
+            frame_properties['data'][key]['unit']='$mm^2$'
         for ind_str in range(len(struct_by_struct)):
             if struct_by_struct[ind_str]['Time'] !=[]:
                 if key not in differential_keys:
+                    if key == 'Area':
+                        struct_by_struct[ind_str][key] = np.asarray(struct_by_struct[ind_str][key]) * 1e5
+                        
                     try:
                         ax.plot(np.asarray(struct_by_struct[ind_str]['Time']),
                                 struct_by_struct[ind_str][key],
                                 '-o',
-                                markersize=3,
+                                markersize=markersize,
+                                linewidth=0.2,
                                 label=str(ind_str),
-                                color=colortable[np.mod(int(ind_str)+1,n_color)]
-
+                                color=colortable[np.mod(int(ind_str)+1,n_color)], 
                                 )
+                        
+                        if save_data_for_publication:
+                            file1.write(f'Structure #{ind_str}:\n')
+                            for ind_save in range(len(np.asarray(struct_by_struct[ind_str]['Time']))):
+                                file1.write(str(np.asarray(struct_by_struct[ind_str]['Time'][ind_save]))+'\t'+str(struct_by_struct[ind_str][key][ind_save])+'\n')
+                            file1.write('\n')
+
 
                     except Exception as e:
                         print(str(e))
-                    ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
+                        
+                    if frame_properties['data'][key]['unit'] != '':
+                        ax.set_ylabel(frame_properties['data'][key]['label']+' '+
+                                      '['+frame_properties['data'][key]['unit']+']', fontsize=8)
+                    else:
+                        if frame_properties['data'][key]['label'] == 'Round.':
+                            frame_properties['data'][key]['label']='Roundness'
+                        ax.set_ylabel(frame_properties['data'][key]['label'], fontsize=8)
                 else:
                     try:
                         ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:]),
                                 struct_by_struct[ind_str][key],
                                 '-o',
-                                markersize=3,
+                                markersize=markersize,
+                                linewidth=0.2,
                                 label=str(ind_str),
                                 color=colortable[int(np.mod(ind_str+1,n_color))],
                                 )
-
+                        
+                        if save_data_for_publication:
+                            file1.write(f'Structure #{ind_str}:\n')
+                            for ind_save in range(len(np.asarray(struct_by_struct[ind_str]['Time'][1:]))):
+                                file1.write(str(np.asarray(struct_by_struct[ind_str]['Time'][ind_save]))+'\t'+str(struct_by_struct[ind_str][key][ind_save])+'\n')
+                            file1.write('\n')
+                            
                     except Exception as e:
                         print(str(e))
-                    ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
-        if ind < 3:
-            ax.get_xaxis().set_visible(False)
-        ax.set_xlabel('Time [s]')
-        ax.set_xlim(np.asarray(time_range))
-        ax.set_title(str(key)+ ' vs. time')
-
+                        
+                    if frame_properties['data'][key]['unit'] != '':
+                        ax.set_ylabel(frame_properties['derived'][key]['label']+' '+
+                                      '['+frame_properties['derived'][key]['unit']+']', fontsize=8)
+                    else:
+                        if frame_properties['derived'][key]['label'] == 'Round.':
+                            frame_properties['derived'][key]['label']='Roundness'
+                        ax.set_ylabel(frame_properties['derived'][key]['label'], fontsize=8)
+                        
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
+        if ind < 5:
+            ax.xaxis.label.set_visible(False)
+            ax.set_xticklabels([])
+        ax.text(-0.1, 0.9, '('+labels[ind]+')', transform=ax.transAxes, size=8)
+        ax.set_xlabel('Time [s]', fontsize=8)
+        if plot_time_range is not None:
+            ax.set_xlim(np.asarray(plot_time_range))
+        else:
+            ax.set_xlim(np.asarray(time_range))
+        if ind == 0:
+            ax.set_ylim([1.43,1.55])
+        if ind == 1:
+            ax.set_ylim([0.07,0.35])
+        # ax.set_title(str(key)+ ' vs. time', fontsize=8)
         fig.tight_layout(pad=0.1)
+    if save_data_for_publication:
+        file1.close()
+        
     if pdf:
        pdf_pages.savefig()
        pdf_pages.close()
@@ -1877,6 +2038,7 @@ def _structure_video_save(sample_0=None,
                          colortable=None,
                          wd=None,
                          n_color=None,
+                         video_start_frame=0,
                          ):
 
     from flap_nstx.gpi import _plot_ellipses_centers
@@ -1902,7 +2064,7 @@ def _structure_video_save(sample_0=None,
     y_coord=frame.coordinate(y_coord_name)[0]
 
 
-    for i_frames in range(0,n_frames):
+    for i_frames in range(video_start_frame,n_frames):
         slicing_frame={'Sample':sample_0+i_frames}
 
         frame=flap.slice_data(object_name,
@@ -1988,7 +2150,7 @@ def _structure_video_save(sample_0=None,
                                            ellipse_linewidth=1.5)
 
         ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
-        ax.set_ylabel(x_coord_name + ' '+ y_unit_name)
+        ax.set_ylabel(y_coord_name + ' '+ y_unit_name)
         ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
         plt.show()
         plt.pause(0.001)
@@ -2289,7 +2451,7 @@ def frame_properties_dict(exp_id, time, time_unit, distance_unit):
 
     key='Roundness'
     frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Round.'
+    frame_properties['data'][key]['label']='Roundness'
     frame_properties['data'][key]['unit']=''
 
     key='Separatrix dist'
@@ -2387,11 +2549,11 @@ def frame_properties_dict(exp_id, time, time_unit, distance_unit):
 
 def read_analyzed_keys():
 
-    analyzed_keys=['Centroid radial', 'Centroid poloidal',
+    analyzed_keys=[#'Centroid radial', 'Centroid poloidal',
                    'Position radial', 'Position poloidal',
-                   #'COG radial', 'COG poloidal', #NOT CALCULATED IN THE DATABASE
                    'Center of gravity radial', 'Center of gravity poloidal',
-
+                   #'Center radial', 'Center poloidal', #added later, might cause trouble
+                   
                    'Axes length minor','Axes length major',
                    'Size radial', 'Size poloidal',
                    'Area',
@@ -2406,6 +2568,8 @@ def read_analyzed_keys():
 
                    'Convexity', 'Solidity', 'Roundness', 'Total curvature',
                    'Total bending energy',
+                   
+                   #'Born', 'Died', 'Splits', 'Merges', #added later, might cause trouble
                    ]
 
     return analyzed_keys

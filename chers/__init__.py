@@ -1,0 +1,3 @@
+from .get_fit_nstx_chers_profiles import get_fit_nstx_chers_profiles
+
+# from .get_nstx_thomson_gradient import get_nstx_thomson_gradient
