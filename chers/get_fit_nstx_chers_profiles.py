@@ -103,7 +103,7 @@ def get_fit_nstx_chers_profiles(exp_id=None,                                    
         chers_profiles=pickle.load(open(pickle_filename,'rb'))
     else:
 
-        conn=mds.Connection('skylark.pppl.gov')
+        conn=mds.Connection('skylark.pppl.gov:8505')
         conn.openTree('ACTIVESPEC', exp_id)
         
         if ion_temperature:

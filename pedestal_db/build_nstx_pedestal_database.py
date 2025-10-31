@@ -19,9 +19,6 @@ import flap_nstx
 flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.analysis import read_blob_database
-from flap_nstx.chers import get_fit_nstx_chers_profiles
-from flap_nstx.gpi import analyze_gpi_structures, transform_frames_to_structures
-from flap_nstx.gpi import read_analyzed_keys
 from flap_nstx.thomson import get_fit_nstx_thomson_profiles
 
 from flap_nstx.pedestal_db import nstx_pedestal_database_header,nstx_pedestal_database_dictionary
@@ -436,12 +433,12 @@ def calculate_squareness(pedestal_db):
     time_range=pedestal_db['Shot data']['time_range']
     
     radial_coordinates=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT02::\RBDRY',
+                                     name='\\EFIT02::\\RBDRY',
                                      exp_id=shot,
                                      object_name='RMAXIS').slice_data(slicing={'Time':flap.Intervals(time_range[0],time_range[1])}).data
     
     vertical_coordinates=flap.get_data('NSTX_MDSPlus',
-                                       name='\EFIT02::\ZBDRY',
+                                       name='\\EFIT02::\\ZBDRY',
                                        exp_id=shot,
                                        object_name='RMAXIS').slice_data(slicing={'Time':flap.Intervals(time_range[0],time_range[1])}).data
     lower_squareness=0
@@ -474,8 +471,7 @@ def calculate_pedestal_profile_fitting(pedestal_db,
     
     shot=pedestal_db['Shot data']['shot']
     time_range=pedestal_db['Shot data']['time_range']
-    fit_chers=False
-    
+    fit_ion=False
     if 'Temperature' in key_param: 
         param_boolean=[True,False,False,False,False,False]                      #[Temperature, Density, Pressure, Toroidal velocity, Effective charge state, Carbon density]
         param_string='Temperature'
@@ -490,22 +486,22 @@ def calculate_pedestal_profile_fitting(pedestal_db,
         
     if ' ion ' in key_param:
         param_string+=' ion'
-        fit_chers=True
+        fit_ion=True
         
     if 'Density carbon' in key_param:
         param_boolean=[False,False,False,False,False,True]
         param_string='Density C6'
-        fit_chers=True
+        fit_ion=True
     
     if 'Velocity toroidal' in key_param:
         param_boolean=[False,False,False,True,False,False]
         param_string='Velocity toroidal'
-        fit_chers=True
+        fit_ion=True
         
     if 'Effective charge state' in key_param:
         param_boolean=[False,False,False,False,True,False]
         param_string='Effective charge state'
-        fit_chers=True
+        fit_ion=True
 
     try:
         pedestal_db[key_param]['data']
@@ -513,40 +509,23 @@ def calculate_pedestal_profile_fitting(pedestal_db,
     except:
         #THESE READ THE ENTIRE SHOT"S PROFILES AND FIT THEM
         #for now I calculate average of fitted profiles and not fitted average profiles
-        if fit_chers:
-            params=get_fit_nstx_chers_profiles(exp_id=shot,
-                                                 
-                                               ion_temperature=param_boolean[0],
-                                               ion_density=param_boolean[1],
-                                               ion_pressure=param_boolean[2],
-                                               toroidal_velocity=param_boolean[3],
-                                               effective_charge_state=param_boolean[4],
-                                               carbon_density=param_boolean[5],
-                                               
-                                               spline_data=False,
-                                               modified_tanh=True,
-                                                 
-                                               flux_coordinates=True,
-                                               flux_range=[0.,1.1],
-                                                 
-                                               pdf_object=None,
-                                               plot_time_vec=None
-                                               )
-        else:
-            params=get_fit_nstx_thomson_profiles(exp_id=shot,
-                                                 
-                                                 temperature=param_boolean[0],
-                                                 density=param_boolean[1],
-                                                 pressure=param_boolean[2],
-                                                 
-                                                 spline_data=True,
-                                                 modified_tanh=True,
-                                                 outboard_only=True,
-                                                 
-                                                 flux_coordinates=True,
-                                                 flux_range=[0.,1.1],
-                                                 
-                                                 )
+        
+        params=get_fit_nstx_thomson_profiles(exp_id=shot,
+                                             
+                                             electron=not fit_ion,
+                                             ion=fit_ion,
+                                             
+                                             temperature=param_boolean[0],
+                                             density=param_boolean[1],
+                                             pressure=param_boolean[2],
+                                             
+                                             spline_data=True,
+                                             modified_tanh=True,
+                                             
+                                             flux_coordinates=True,
+                                             flux_range=[0.,1.1],
+                                             )        
+
         ind_time=np.where(np.logical_and(params['time_vec'] > time_range[0],
                                          params['time_vec'] < time_range[1]))[0]
         
