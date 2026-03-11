@@ -28,8 +28,8 @@ import flap_mdsplus
 
 flap_mdsplus.register('NSTX_MDSPlus')
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 #Scientific modules
@@ -134,6 +134,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            plot_example_frames_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
                            plot_nframe=None,
                            plot_ncol=None,
+                           linewidth=None,
 
                             #File input/output options
                            filename=None,                        #Filename for restoring data
@@ -1222,7 +1223,7 @@ def track_structures(frame_properties=None,
                 #print('merging')
                 for j_str2 in range(n_str2):
                     merging_indices=np.squeeze(str_overlap_matrix[:,j_str2])
-    
+                    
                     #No overlap between the new structrure and the old ones
                     if np.sum(merging_indices) == 0:
                         structures_2[j_str2]['Label'] = highest_label+1
@@ -1232,9 +1233,13 @@ def track_structures(frame_properties=None,
     
                     #There is one overlap between the current and the previous
                     elif np.sum(merging_indices) == 1:
-                        ind_str1=np.where(merging_indices == 1)
+                        try:
+                            ind_str1=np.where(merging_indices == 1)[0]
+                        except:
+                            ind_str1=[0]
                         #One and only one overlap
                         if np.sum(str_overlap_matrix[ind_str1[0],:]) == 1:
+                            #print(ind_str1[0])
                             structures_2[j_str2]['Label'] = structures_1[int(ind_str1[0])]['Label']
                             structures_2[j_str2]=correct_structure_angle(structure_2=structures_2[j_str2],
                                                                          structure_1=structures_1[int(ind_str1[0])])
@@ -1243,7 +1248,7 @@ def track_structures(frame_properties=None,
                                                                              sample_time=sample_time,
                                                                              fit_shape=fit_shape)
     
-                        #If splitting is happening, that's handled later.
+                        #If splitting is happening, it's handled later.
                         else:
                             pass
                     #Previous structures merge
@@ -1686,6 +1691,7 @@ def _plot_example_structure_frames(exp_id=None,
                                    save_data_for_publication=False,
                                    plot_separatrix=False,
                                    separatrix_coordinates=None,
+                                   linewidth=None,
                                    ):
     
     (d_sep_x,d_sep_y)=separatrix_coordinates
@@ -1810,16 +1816,23 @@ def _plot_example_structure_frames(exp_id=None,
                     y_ellipse = (structures[i_str]['Center'][1] +
                                  a*np.cos(R)*np.sin(phi) +
                                  b*np.sin(R)*np.cos(phi))
-                    
+                    if linewidth is None:
+                        polygon_linewidth=1
+                        ellipse_linewidth=0.25
+                        semiaxis_linewidth=0.5
+                    else:
+                        polygon_linewidth=linewidth['polygon']
+                        ellipse_linewidth=linewidth['ellipse']
+                        semiaxis_linewidth=linewidth['semiaxis']
                     _plot_ellipses_centers(ax,
                                            x_polygon, y_polygon,
                                            x_ellipse, y_ellipse,
                                            structures[i_str],
                                            polygon_color=colortable[int(np.mod(structures[i_str]['Label']+1,n_color))],
                                            ellipse_color='black',
-                                           polygon_linewidth=1,
-                                           ellipse_linewidth=0.25,
-                                           semiaxis_linewidth=0.5,
+                                           polygon_linewidth=polygon_linewidth,
+                                           ellipse_linewidth=ellipse_linewidth,
+                                           semiaxis_linewidth=semiaxis_linewidth,
                                            plot_structure_mid=False,
                                            )
                 elif structures[i_str]['Half path'] is not None:
@@ -2149,8 +2162,8 @@ def _structure_video_save(sample_0=None,
                                            polygon_linewidth=3,
                                            ellipse_linewidth=1.5)
 
-        ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
-        ax.set_ylabel(y_coord_name + ' '+ y_unit_name)
+        ax.set_xlabel(x_coord_name.replace('Device ','') + ' '+ x_unit_name)
+        ax.set_ylabel(y_coord_name.replace('Device ','') + ' '+ y_unit_name)
         ax.set_title(str(exp_id)+' @ '+str(frame.coordinate('Time')[0][0,0]))
         plt.show()
         plt.pause(0.001)

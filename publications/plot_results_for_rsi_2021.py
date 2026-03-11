@@ -21,8 +21,8 @@ from flap_nstx.test import test_spatial_displacement_estimation
 import flap
 import flap_nstx
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 styled=True

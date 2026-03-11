@@ -15,8 +15,8 @@ import flap
 import flap_nstx
 flap_nstx.register()
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 #Scientific library imports
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
@@ -503,8 +503,9 @@ def identify_structures(#General inputs
                     structures[-1]['Polygon']=full_polygon
 
                 except Exception as e:
-                     print('Exception in flap_nstx.gpi.identify_structures at line 459:')
-                     print(e)
+                     if not e == "'MultiPolygon' object has no attribute 'exterior'":
+                         print('Exception in flap_nstx.gpi.identify_structures at line 506:')
+                         print(e)
                      continue
 
 
@@ -838,8 +839,8 @@ def identify_structures(#General inputs
                     file1.close()
 
             if plot_result:
-                ax.set_xlabel(x_coord_name + ' '+ x_unit_name)
-                ax.set_ylabel(x_coord_name + ' '+ y_unit_name)
+                ax.set_xlabel(x_coord_name.replace('Device ','') + ' '+ x_unit_name)
+                ax.set_ylabel(y_coord_name.replace('Device ','') + ' '+ y_unit_name)
                 ax.set_title(str(exp_id)+' @ '+str(data_object.coordinate('Time')[0][0,0]))
                 plt.show()
                 plt.pause(0.001)

@@ -14,8 +14,8 @@ import flap
 import flap_nstx
 flap_nstx.register()
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 #Scientific library imports
 

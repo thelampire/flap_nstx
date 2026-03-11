@@ -52,7 +52,6 @@ fig_dir='/plots'
 
 
 def calculate_all_blob_results(time_range_around_peak=5e-3,
-
                                min_structure_lifetime=20,
                                str_finding_method='watershed',
                                plot=False,
@@ -60,30 +59,85 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
                                nocalc=False,
                                recalc_tracking=False,
                                test=False,
+                               calculate_for_lh_study=False,
+                               download_data_only=False,
                                ):
+    
+    if not calculate_for_lh_study:
+        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
 
-    blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
-
-    ncalc=len(blob_database['shot'])
-
-    for ind in range(ncalc):
-        start_time=time_mod.time()
-        blob_time=blob_database['time'][ind]
-        #if blob_database['shot'][ind] == 142270 or blob_database['shot'][ind] == 142279:
-        read_blob_results(blob_database['shot'][ind],
-                          [blob_time-time_range_around_peak,
-                           blob_time+time_range_around_peak],
-                          #calc_only=True,
-                          nocalc=nocalc,
-                          recalc_tracking=recalc_tracking,
-                          min_structure_lifetime=min_structure_lifetime,
-                          str_finding_method=str_finding_method,
-                          )
-
-        elapsed_time=time_mod.time()-start_time
-        remaining_time=elapsed_time*(ncalc-ind-1)
-        print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
-        flap.delete_data_object('*')
+        ncalc=len(blob_database['shot'])
+        for ind in range(ncalc):
+            start_time=time_mod.time()
+            blob_time=blob_database['time'][ind]
+            #if blob_database['shot'][ind] == 142270 or blob_database['shot'][ind] == 142279:
+            read_blob_results(blob_database['shot'][ind],
+                              [blob_time-time_range_around_peak,
+                               blob_time+time_range_around_peak],
+                              #calc_only=True,
+                              nocalc=nocalc,
+                              recalc_tracking=recalc_tracking,
+                              min_structure_lifetime=min_structure_lifetime,
+                              str_finding_method=str_finding_method,
+                              )
+    
+            elapsed_time=time_mod.time()-start_time
+            remaining_time=elapsed_time*(ncalc-ind-1)
+            print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
+            flap.delete_data_object('*')
+    else:
+        l_mode_database=read_blob_lh_mode_database(l_mode=True, 
+                                                   filter_lh_transition=True, 
+                                                   filter_elms=False, #Filtering will be done during the analysis based on the ELM database established during the ELM work
+                                                   blob_db_filter=False,
+                                                   time_range_around_peak=time_range_around_peak)
+        
+        h_mode_database=read_blob_lh_mode_database(h_mode=True, 
+                                                   filter_lh_transition=True, 
+                                                   filter_elms=False, 
+                                                   blob_db_filter=False,
+                                                   time_range_around_peak=time_range_around_peak)
+        
+        ncalc=len(l_mode_database['shot'])+len(h_mode_database['shot'])
+        
+        for database in [l_mode_database,h_mode_database]:
+            for ind, shot in enumerate(database['shot']):
+                
+                if shot < 138113: continue
+            
+                start_time=time_mod.time()
+                avg_time=np.mean(database['time'][:,ind])
+                if avg_time > 10:
+                    multiplier=1e-3
+                else:
+                    multiplier=1
+                if download_data_only:
+                    print(f'Downloading shot # {shot}')
+                    try:
+                        d=flap.get_data('NSTX_GPI',
+                                        exp_id=int(shot),
+                                        name='',
+                                        object_name='GPI')
+                    except:
+                        print(f'Failed to download shot # {shot}')
+                else:
+                    print(f'Calculating shot # {shot} at time {avg_time}')
+                    read_blob_results(int(shot),
+                                    [database['time'][0,ind]*multiplier,
+                                    database['time'][1,ind]*multiplier],
+                                    #calc_only=True,
+                                    nocalc=nocalc,
+                                    recalc_tracking=recalc_tracking,
+                                    min_structure_lifetime=min_structure_lifetime,
+                                    str_finding_method=str_finding_method,
+                                    )
+            
+                elapsed_time=time_mod.time()-start_time
+                remaining_time=elapsed_time*(ncalc-ind-1)
+                print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
+                flap.delete_data_object('*')
+            
+            
 
 
 def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
@@ -99,6 +153,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         str_finding_method='watershed',
                                         analyze_h_mode_only=False,
                                         analyze_l_mode_only=False,
+                                        filtered_blob_db=False, #Filters the database for ELMs based on the ELM db. Half of the shots are removed. Data should be filtered after the shot.
                                         plot_LH_diff=False,
                                         save_data_for_publication=False,
                                         ):
@@ -129,9 +184,13 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     if not analyze_h_mode_only and not analyze_l_mode_only:
         blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
     elif analyze_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database(h_mode=True,
+                                                 time_range_around_peak=time_range_around_peak,
+                                                 filtered_blob_db=filtered_blob_db)
     elif analyze_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database(l_mode=True,
+                                                 time_range_around_peak=time_range_around_peak,
+                                                 filtered_blob_db=filtered_blob_db)
         
     analyzed_keys=read_analyzed_keys()
     
@@ -471,9 +530,11 @@ def calculate_blob_parameter_histograms2(time_range_around_peak=5e-3,
     if not analyze_h_mode_only and not analyze_l_mode_only:
         blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
     elif analyze_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database(h_mode=True,
+                                                 time_range_around_peak=time_range_around_peak)
     elif analyze_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database(l_mode=True,
+                                                 time_range_around_peak=time_range_around_peak)
         
     analyzed_keys=read_analyzed_keys()
     

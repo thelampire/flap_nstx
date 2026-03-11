@@ -32,8 +32,8 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/publication_figures/pop_2022'
 
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 styled=True

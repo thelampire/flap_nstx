@@ -33,7 +33,7 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
         # read the data
     if (exp_id is None):
         raise ValueError('exp_id should be set for NSTX GPI.')
-    if (type(exp_id) is not int):
+    if (type(exp_id) not in [int, np.int64]):
         raise TypeError("exp_id should be an integer and not %s"%(type(exp_id)))
 
     default_options = {'Local datapath':'data',
@@ -88,7 +88,11 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
         file_name='nstx'+str(exp_id)+'.cin'
     else:
         file_name='nstx'+cam+str(exp_id)+'.cin'
-    file_folder=_options['Datapath']+'/'+folder[cam]+\
+    if year > 2009:
+        data_path=_options['Datapath']
+    else:
+        data_path=_options['Datapath']+'-archive'
+    file_folder=data_path+'/'+folder[cam]+\
                 '/'+str(year)+'/'
     remote_file_name=file_folder+file_name
     local_file_folder=_options['Local datapath']+'/'+str(exp_id)+'/'
@@ -125,9 +129,9 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
             return d
 
     images=pims.Cine(local_file_folder+file_name)
-
+    #print(np.asarray(images[:], dtype=np.int16).shape)
     data_arr=np.flip(np.asarray(images[:], dtype=np.int16),2) #The original data is 80x64, this line converts it to 64x80
-
+    
     #The header dict contains the capture information along with the entire image number and the first_image_no (when the recording started)
     #The frame_rate corresponds with the one from IDL.
     trigger_time=images.header_dict['first_image_no']/images.frame_rate
@@ -194,10 +198,12 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
 #                                               step=[coeff_z[0],coeff_z[1]],
 #                                               dimension_list=[1,2]
 #                                               )))
-    r_coordinates=np.zeros([64,80])
-    z_coordinates=np.zeros([64,80])
-    for i_x in range(64):
-        for i_y in range(80):
+    data_shape=list(data_arr.shape[1:])
+    r_coordinates=np.zeros(data_shape)
+    z_coordinates=np.zeros(data_shape)
+    # print(data_shape)
+    for i_x in range(r_coordinates.shape[0]):
+        for i_y in range(z_coordinates.shape[1]):
             r_coordinates[i_x,i_y]=coeff_r[0]*i_x+coeff_r[1]*i_y+coeff_r[2]
             z_coordinates[i_x,i_y]=coeff_z[0]*i_x+coeff_z[1]*i_y+coeff_z[2]
 

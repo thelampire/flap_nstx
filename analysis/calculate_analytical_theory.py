@@ -28,8 +28,8 @@ from flap_nstx.gpi import calculate_nstx_gpi_frame_by_frame_velocity
 from flap_nstx.publications import read_ahmed_fit_parameters, read_ahmed_edge_current, read_ahmed_matlab_file
 from flap_nstx.analysis import thick_wire_estimation_numerical
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,'../flap_nstx.cfg')
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 

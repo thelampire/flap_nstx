@@ -21,8 +21,8 @@ flap_nstx.register()
 
 #Setting up FLAP
 flap_mdsplus.register('NSTX_MDSPlus')    
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn) 
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 
@@ -1140,6 +1140,7 @@ def plot_gpi_profile_dependence_ultimate(pdf=False,
                     vmin=0, vmax=1, cmap="Blues", linewidths=0.5, 
                     #annot=True
                     )
+        plt.title('Predictive Power Score Matrix')
         if pdf:
             pdf_pages.savefig()
                         

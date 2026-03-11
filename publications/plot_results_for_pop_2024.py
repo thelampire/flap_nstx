@@ -14,8 +14,8 @@ import copy
 import flap
 import flap_nstx
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 
@@ -58,8 +58,9 @@ def plot_results_for_pop_2024(plot_figure=2,
     if plot_all:
         plot_figure=-1
         for i in range(15):
-            plot_results_for_pop_2024(plot_figure=i,
-                                      save_data_into_txt=save_data_into_txt)
+            if i not in [0,1,3]:
+                plot_results_for_pop_2024(plot_figure=i,
+                                          save_data_into_txt=save_data_into_txt)
 
     """
     GPI plot

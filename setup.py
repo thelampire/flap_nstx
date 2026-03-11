@@ -36,12 +36,16 @@ setup(
         'scipy >= 1.8.0',
         'tornado >= 6.1',
         'pims >= 0.5',
-        'cv2 >= 3.4.2',
         'scipy >= 1.7.5',
-        'skimage >= 0.18.3',
-        'sklearn >= 0.24.2',
+        'scikit-image >= 0.18.3',
+        'scikit-learn >= 0.24.2',
         'imageio >= 2.9.0',
         'pandas >= 1.2.4',
+        'shapely >= 2.1.2',
+        'pims >= 0.7',
+        'seaborn >= 0.13.2',
+        'imageio >= 2.37.0',
+        ''
 
     ],
     classifiers = [

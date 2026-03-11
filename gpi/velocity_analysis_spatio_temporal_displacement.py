@@ -17,8 +17,8 @@ import flap_mdsplus
 flap_mdsplus.register('NSTX_MDSPlus')
 from flap_nstx.gpi import nstx_gpi_contour_structure_finder
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 #Scientific modules

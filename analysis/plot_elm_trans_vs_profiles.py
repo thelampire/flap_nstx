@@ -20,8 +20,8 @@ from flap_nstx.thomson import get_nstx_thomson_gradient, get_fit_nstx_thomson_pr
 from flap_nstx.analysis import read_ahmed_fit_parameters
 
 from matplotlib.backends.backend_pdf import PdfPages
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,'../flap_nstx.cfg')
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 

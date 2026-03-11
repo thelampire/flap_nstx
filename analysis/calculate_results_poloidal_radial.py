@@ -15,8 +15,8 @@ import flap
 import flap_nstx
 from flap_nstx.gpi import calculate_nstx_gpi_avg_frame_velocity
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 flap_nstx.register()
 

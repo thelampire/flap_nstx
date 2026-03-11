@@ -26,8 +26,8 @@ import flap_mdsplus
 
 flap_mdsplus.register('NSTX_MDSPlus')
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 #Scientific modules
@@ -300,8 +300,8 @@ def read_blob_results(shot,
                       recalc_tracking=False,
                       str_finding_method='watershed',
                       ):
-    # try:
-    if True:
+    try:
+    #if True:
         blob_results=analyze_gpi_structures(exp_id=shot,
                                             time_range=time_range,
                                             normalize='simple',
@@ -341,11 +341,11 @@ def read_blob_results(shot,
         if not calculate_only:
             return blob_results
 
-    # except Exception as e:
-    #     print('Exception in read_plasma_parameter_db_blob.py line 86.')
-    #     print(e)
-    #     if not calculate_only:
-    #         return None
+    except Exception as e:
+        print('Exception in read_data_for_analyze_blob_database.py line 345.')
+        print(e)
+        if not calculate_only:
+            return None
 
 
 
@@ -423,7 +423,11 @@ def read_blob_elm_database(time_range_around_peak=5e-3,
 
 def read_blob_lh_mode_database(l_mode=False,
                                h_mode=False,
-                               time_range_around_peak=None):
+                               filtered_blob_db=True, #filter the database to shots read by read_blob_database
+                               time_range_around_peak=None,
+                               filter_lh_transition=False,
+                               filter_elms=False,
+                               ):
     
     all_db_file='/Users/mlampert/work/NSTX_workspace/db/2010_all.csv'
     
@@ -435,24 +439,62 @@ def read_blob_lh_mode_database(l_mode=False,
         raise ValueError('EIther l_mode or h_mode needs to be set.')
     
     all_database=pandas.read_csv(all_db_file)
-    lh_mode_shot_inds=np.asarray([ind for ind,item in enumerate(list(all_database['comments by Ricky'])) if find_string in item])
+    all_database['peak signal'] /= 1e3
+    lh_mode_shot_inds=[ind for ind,item in enumerate(list(all_database['comments by Ricky'])) if find_string in item]
+    lh_mode_shots=all_database['shot'][np.asarray(lh_mode_shot_inds)]
     
-    if time_range_around_peak is not None:
-        blob_shots=read_blob_database(time_range_around_peak=time_range_around_peak)['shot']
-        blob_times=read_blob_database(time_range_around_peak=time_range_around_peak)['time']
+    if filtered_blob_db:
+        if time_range_around_peak is not None:
+            blob_shots=read_blob_database(time_range_around_peak=time_range_around_peak)['shot']
+            blob_times=read_blob_database(time_range_around_peak=time_range_around_peak)['time']
+        else:
+            blob_shots=read_blob_database()['shot']
+            blob_times=read_blob_database()['time']
+        lh_mode_shots_in_blob_db=([int(shot) for shot in blob_shots if shot in np.asarray(lh_mode_shots)])
+        lh_mode_times_in_blob_db=np.asarray([time for time,shot in zip(blob_times, blob_shots) if shot in np.asarray(lh_mode_shots)])
+        database={'shot':lh_mode_shots_in_blob_db,
+                  'time':lh_mode_times_in_blob_db}
     else:
-        blob_shots=read_blob_database()['shot']
-        blob_times=read_blob_database()['time']
-    
-    lh_mode_shots=np.asarray(all_database['shot'])[lh_mode_shot_inds]
-    
-    lh_mode_shots_in_blob_db=([int(shot) for shot in blob_shots if shot in lh_mode_shots])
-    lh_mode_times_in_blob_db=np.asarray([time for time,shot in zip(blob_times, blob_shots) if shot in lh_mode_shots])
+        for ind,movie_rating in enumerate(all_database['movie rating'][np.asarray(lh_mode_shot_inds)]):
+            if movie_rating not in ['A', 'A+']:
+                lh_mode_shot_inds.pop(ind)
+        lh_mode_shot_inds=np.asarray(lh_mode_shot_inds)
 
-    database={'shot':lh_mode_shots_in_blob_db,
-              'time':lh_mode_times_in_blob_db}
+        if type(time_range_around_peak) in [int,float]:
+            time_range_around_peak=[time_range_around_peak,
+                                    time_range_around_peak]
 
+        if time_range_around_peak is not None:
+                    
+            database={'shot':np.asarray(all_database['shot'][lh_mode_shot_inds]),
+                      'time':np.asarray([all_database['peak signal'][lh_mode_shot_inds]-time_range_around_peak[0],
+                                         all_database['peak signal'][lh_mode_shot_inds]+time_range_around_peak[1]])}
+        
+            if filter_lh_transition:
+                lh_mode_shot_inds=list(lh_mode_shot_inds)
+                for ind_index, ind in enumerate(lh_mode_shot_inds):
+                    if (not np.isnan(all_database['L-H time'][ind]) or
+                        not np.isnan(all_database['H-L time'][ind])):
+                            lh_mode_shot_inds.pop(ind_index)
+                lh_mode_shot_inds=np.asarray(lh_mode_shot_inds)
+                
+            if filter_elms:
+                for ind_index, ind in enumerate(lh_mode_shot_inds):
+                    if (all_database['ELM time'][ind] > all_database['peak signal'][ind]-[time_range_around_peak[0]] and 
+                        all_database['ELM time'][ind] < all_database['peak signal'][ind]+time_range_around_peak[1]):
+                        lh_mode_shot_inds.pop(ind_index)
+                        # if (np.abs(all_database['ELM time'][ind]-(all_database['peak signal'][ind])-time_range_around_peak)<
+                        #     (all_database['peak signal'][ind])+time_range_around_peak-np.abs(all_database['ELM time'][ind])):
+                        #     database['time'][0,ind_index]=all_database['ELM time'][ind]
+                        # else:
+                        #     database['time'][1,ind_index]=all_database['ELM time'][ind]
+        else:   
+            database={'shot':np.asarray(all_database['shot'][lh_mode_shot_inds]),
+                      'time':np.asarray(all_database['peak signal'][lh_mode_shot_inds])}
+        
     return database
+
+
 
 def read_plasma_parameters_for_table_in_paper(database=None,
                                               print_ranges=False):

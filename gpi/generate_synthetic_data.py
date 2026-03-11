@@ -20,8 +20,8 @@ from skimage.transform import warp_polar, rotate, rescale, warp
 
 from imageio import imread
 
-thisdir = os.path.dirname(os.path.realpath(__file__))
-fn = os.path.join(thisdir,"../flap_nstx.cfg")
+thisdir = os.path.dirname(os.path.realpath(flap_nstx.__file__))
+fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 def nstx_gpi_generate_synthetic_data(exp_id=None,                               #Artificial exp_id, should be starting from zero and not the one which is used by e.g. background_shot
