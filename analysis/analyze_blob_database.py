@@ -89,18 +89,19 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
         l_mode_database=read_blob_lh_mode_database(l_mode=True, 
                                                    filter_lh_transition=True, 
                                                    filter_elms=False, #Filtering will be done during the analysis based on the ELM database established during the ELM work
-                                                   blob_db_filter=False,
+                                                   filtered_blob_db=False,
                                                    time_range_around_peak=time_range_around_peak)
         
         h_mode_database=read_blob_lh_mode_database(h_mode=True, 
                                                    filter_lh_transition=True, 
                                                    filter_elms=False, 
-                                                   blob_db_filter=False,
+                                                   filtered_blob_db=False,
                                                    time_range_around_peak=time_range_around_peak)
         
         ncalc=len(l_mode_database['shot'])+len(h_mode_database['shot'])
         
-        for database in [l_mode_database,h_mode_database]:
+#        for database in [l_mode_database,h_mode_database]:
+        for database in [h_mode_database]:
             for ind, shot in enumerate(database['shot']):
                 
                 if shot < 138113: continue
@@ -130,6 +131,7 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
                                     recalc_tracking=recalc_tracking,
                                     min_structure_lifetime=min_structure_lifetime,
                                     str_finding_method=str_finding_method,
+                                    calculate_only=True,
                                     )
             
                 elapsed_time=time_mod.time()-start_time

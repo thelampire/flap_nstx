@@ -301,7 +301,7 @@ def read_blob_results(shot,
                       str_finding_method='watershed',
                       ):
     try:
-    #if True:
+    # if True:
         blob_results=analyze_gpi_structures(exp_id=shot,
                                             time_range=time_range,
                                             normalize='simple',
@@ -342,10 +342,10 @@ def read_blob_results(shot,
             return blob_results
 
     except Exception as e:
-        print('Exception in read_data_for_analyze_blob_database.py line 345.')
-        print(e)
-        if not calculate_only:
-            return None
+       print('Exception in read_data_for_analyze_blob_database.py line 345.')
+       print(e)
+       if not calculate_only:
+           return None
 
 
 
