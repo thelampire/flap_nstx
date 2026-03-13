@@ -185,8 +185,12 @@ def identify_structures(#General inputs
                    'Y coord':None,
                    'Data':None,
 
-                   'Born':False,    #Calculated during tracking in analyze_gpi_structures
+                   'Born':False,    #Calculated during tracking in track_structures
                    'Died':False,
+                   
+                   'Missing frames':None,
+                   'Active':False,
+                   
                    'Splits':False,
                    'Merges':False,
                    'Label':None,

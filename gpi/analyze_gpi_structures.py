@@ -42,15 +42,6 @@ import pickle
 #Plot settings for publications
 
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
-#Constants for the calculation
-#Using the spatial calibration to find the actual velocities.
-coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
-coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
-
-# Originally used coordinates for reference. (Vertical, radial geometrical coordinates)
-# coeff_r=np.asarray([3.7183594,-0.77821046,1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
-# coeff_z=np.asarray([0.18090118,3.0657776,70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
-
 
 def analyze_gpi_structures(exp_id=None,                          #Shot number
                            time_range=None,                      #The time range for the calculation
@@ -95,6 +86,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                            tracking='weighted',                  #Tracking methods 'overlap' or 'weighted'
                            tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
+                           max_gap=1,
                            smooth_contours=5,                    #Smooths contours with the corner cutting technique this many times.
                            remove_orphans=True,                  #Structures which "live" shorter than min_structure_lifetime
                            min_structure_lifetime=10,            #are cut out from the calculation
@@ -204,7 +196,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     exp_id=data_object.exp_id
                 elif type(data_object) == str:
                     exp_id=flap.get_data_object_ref(data_object).exp_id
-            except:
+            except Exception as e:
+                print('Exception in analyze_gpi_structures at line 200.')
+                print(e)
                 exp_id=0
 
         filename=flap_nstx.tools.filename(exp_id=exp_id,
@@ -236,6 +230,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         except:
             print('The pickle file cannot be loaded. Recalculating the results.')
             nocalc=False
+            
     elif nocalc:
         print(pickle_filename)
         print('The pickle file cannot be loaded. Recalculating the results.')
@@ -274,7 +269,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 else:
                     d_flux=None
             except Exception as e:
-                print('Exception occurred in analyze_gpi_structures.py at line 254.')
+                print('Exception occurred in analyze_gpi_structures.py at line 272.')
                 print(e)
 
         if structure_pdf_save:
@@ -466,6 +461,15 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                     exp_id=exp_id,
                                     object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
 
+                #Constants for the calculation
+                #Using the spatial calibration to find the actual velocities.
+                coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
+                coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+                
+                # Originally used coordinates for reference. (Vertical, radial geometrical coordinates)
+                # coeff_r=np.asarray([3.7183594,-0.77821046,1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
+                # coeff_z=np.asarray([0.18090118,3.0657776,70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+
                 sep_GPI_ind=np.where(np.logical_and(R_sep > coeff_r[2],
                                                     np.logical_and(z_sep > coeff_z[2],
                                                                    z_sep < coeff_z[2]+79*coeff_z[0]+64*coeff_z[1])))
@@ -487,7 +491,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                 slicing_frame={'Sample':sample_0+i_frames}
 
-
                 frame=flap.slice_data(object_name,
                                       exp_id=exp_id,
                                       slicing=slicing_frame,
@@ -503,6 +506,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     pdf_plot_watershed=PdfPages(wd+'/plots/watershed_steps.pdf')
                 else:
                     plot_full=False
+                    
+                    
                 slicing={'Time':frame.coordinate('Time')[0][0,0]}
                 if d_sep_x is not None and d_sep_y is not None:
                     d_sep_x_sliced=d_sep_x.slice_data(slicing=slicing)
@@ -564,26 +569,26 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 """
 
                 #Crude average size calculation
-                if structures_dict is not None and len(structures_dict) != 0: #Valid structure size
+                if structures_dict: #Valid structure size
                     valid_structure_size=True
                 else:
                     valid_structure_size=False
                     
-                frame_properties=calculate_average_frame_properties(frame_properties,
-                                                                    i_frames=i_frames,
-                                                                    valid_structure_size=valid_structure_size,
-                                                                    structures_dict=structures_dict,
-                                                                    weighting=weighting,
-                                                                    fit_shape=fit_shape,
-                                                                    maxing=maxing,
-                                                                    structure_pixel_calc=structure_pixel_calc,
-                                                                    frame=frame,
-                                                                    skip_mdsplus=skip_mdsplus,
-                                                                    R_sep_GPI=R_sep_GPI,
-                                                                    z_sep_GPI=z_sep_GPI,
-                                                                    R_sep_GPI_interp=R_sep_GPI_interp,
-                                                                    z_sep_GPI_interp=z_sep_GPI_interp,
-                                                                    )
+                frame_properties = calculate_average_frame_properties(frame_properties,
+                                                                      i_frames=i_frames,
+                                                                      valid_structure_size=valid_structure_size,
+                                                                      structures_dict=structures_dict,
+                                                                      weighting=weighting,
+                                                                      fit_shape=fit_shape,
+                                                                      maxing=maxing,
+                                                                      structure_pixel_calc=structure_pixel_calc,
+                                                                      frame=frame,
+                                                                      skip_mdsplus=skip_mdsplus,
+                                                                      R_sep_GPI=R_sep_GPI,
+                                                                      z_sep_GPI=z_sep_GPI,
+                                                                      R_sep_GPI_interp=R_sep_GPI_interp,
+                                                                      z_sep_GPI_interp=z_sep_GPI_interp,
+                                                                      )
             if structure_pdf_save:
                 pdf_structures.close()
             #Saving results into a pickle file
@@ -605,26 +610,27 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     Structure tracking
     ***************"""
     
-    frame_properties=track_structures(frame_properties=frame_properties,
-                                      exp_id=exp_id,
-                                      time_range=time_range,
-                                      tracking=tracking,
-                                      tracking_assignment=tracking_assignment,
-                                      matrix_weight=matrix_weight,
-                                      test=test,
-                                      fit_shape=fit_shape,
-                                      prev_str_weighting=prev_str_weighting,
-                                      calculate_rough_diff_velocities=calculate_rough_diff_velocities,
-                                      weighting=weighting,
-                                      maxing=maxing,
-                                      remove_orphans=remove_orphans,
-                                      min_structure_lifetime=min_structure_lifetime,
-                                      nocalc=nocalc,
-                                      recalc_tracking=recalc_tracking,
-                                      smooth_contours=smooth_contours,
-                                      comment=comment,
-                                      #fix_structure_angles=fix_structure_angles,
-                                      )
+    frame_properties = track_structures(frame_properties=frame_properties,
+                                        max_gap=max_gap,
+                                        exp_id=exp_id,
+                                        time_range=time_range,
+                                        tracking=tracking,
+                                        tracking_assignment=tracking_assignment,
+                                        matrix_weight=matrix_weight,
+                                        test=test,
+                                        fit_shape=fit_shape,
+                                        prev_str_weighting=prev_str_weighting,
+                                        calculate_rough_diff_velocities=calculate_rough_diff_velocities,
+                                        weighting=weighting,
+                                        maxing=maxing,
+                                        remove_orphans=remove_orphans,
+                                        min_structure_lifetime=min_structure_lifetime,
+                                        nocalc=nocalc,
+                                        recalc_tracking=recalc_tracking,
+                                        smooth_contours=smooth_contours,
+                                        comment=comment,
+                                        #fix_structure_angles=fix_structure_angles,
+                                        )
 
     """*****************
     PLOTTING THE RESULTS
@@ -716,46 +722,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
     if return_results:
         return frame_properties
-
-
-
-#Wrapper function for calculating differential key results.
-def calculate_differential_keys(structure_2 = None,
-                                structure_1 = None,
-                                sample_time = None,
-                                fit_shape = 'Ellipse',
-                                ):
-
-    structure_2['Velocity radial COG'] = (structure_2['Polygon'].center_of_gravity[0]-
-                                          structure_1['Polygon'].center_of_gravity[0])/sample_time
-    structure_2['Velocity poloidal COG'] = (structure_2['Polygon'].center_of_gravity[1]-
-                                            structure_1['Polygon'].center_of_gravity[1])/sample_time
-    structure_2['Velocity radial centroid']=(structure_2['Polygon'].centroid[0]-
-                                             structure_1['Polygon'].centroid[0])/sample_time
-    structure_2['Velocity poloidal centroid']=(structure_2['Polygon'].centroid[1]-
-                                               structure_1['Polygon'].centroid[1])/sample_time
-    structure_2['Velocity radial position']=(structure_2[fit_shape].center[0]-
-                                             structure_1[fit_shape].center[0])/sample_time
-    structure_2['Velocity poloidal position']=(structure_2[fit_shape].center[1]-
-                                               structure_1[fit_shape].center[1])/sample_time
-    structure_2['Expansion fraction area']=np.sqrt(structure_2['Polygon'].area/
-                                                   structure_1['Polygon'].area)
-    structure_2['Expansion fraction axes']=np.sqrt(structure_2[fit_shape].axes_length[0]/
-                                                   structure_1[fit_shape].axes_length[0]*
-                                                   structure_2[fit_shape].axes_length[1]/
-                                                   structure_1[fit_shape].axes_length[1])
-
-    structure_2['Angular velocity angle']=(structure_2['Angle']-
-                                           structure_1['Angle'])/sample_time
-    try:
-        structure_1['Angle of least inertia']
-    except:
-        #Not fringe jump corrected
-        structure_1['Angle of least inertia']=structure_1['Polygon'].principal_axes_angle
-
-    structure_2['Angular velocity ALI']=(structure_2['Angle of least inertia']-
-                                         structure_1['Angle of least inertia'])/sample_time
-    return structure_2
 
 
 
@@ -941,7 +907,7 @@ def transform_frames_to_structures(frame_properties):
                                 else:
                                     struct_by_struct[ind_structure][key_str].append(np.nan)
                             except Exception as e:
-                                print('Exception occurred in analyze_gpi_structures at line 2056: ', e)
+                                print('Exception occurred in analyze_gpi_structures at line 910: ', e)
                                 print(key_str, frame_properties['structures'][i_frames][j_str][key_str])
                                 print(frame_properties['structures'][i_frames][j_str].keys())
                                 struct_by_struct[ind_structure][key_str].append(np.nan)
@@ -1049,8 +1015,11 @@ def _plot_results(pdf=False,
                  8.5/2.54/1.618*1.1)
     else:
         figsize=None
-
+        
+    if not pdf: pdf_pages=None
+    
     if not plot_str_by_str:
+        
         _plot_avg_results(frame_properties=frame_properties,
                           time_range=time_range,
                           figsize=figsize,
@@ -1379,6 +1348,7 @@ def _plot_example_frames_results(exp_id=None,
 
 
                     except Exception as e:
+                        print('Exception in analyze_gpi_structures on line 1348')
                         print(str(e))
                         
                     if frame_properties['data'][key]['unit'] != '':
@@ -1406,6 +1376,7 @@ def _plot_example_frames_results(exp_id=None,
                             file1.write('\n')
                             
                     except Exception as e:
+                        print('Exception in analyze_gpi_structures on line 1376')
                         print(str(e))
                         
                     if frame_properties['data'][key]['unit'] != '':
@@ -1656,6 +1627,7 @@ def _plot_str_by_str(frame_properties=None,
                                     color=colortable[np.mod(int(ind_str)+1,n_color)]
                                     )
                     except Exception as e:
+                        print('Exception in analyze_gpi_structures at line 1627')
                         print(str(e))
                     ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
                 else:
@@ -1664,14 +1636,15 @@ def _plot_str_by_str(frame_properties=None,
                             if key in ['Angular velocity angle', 'Angular velocity ALI']:
                                 pass
                             ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
-                                    struct_by_struct[ind_str][key],
-                                    linestyle,
-                                    label=str(ind_str),
-                                    markersize=5,
-                                    color=colortable[int(np.mod(ind_str+1,n_color))],
-                                    )
+                                        struct_by_struct[ind_str][key],
+                                        linestyle,
+                                        label=str(ind_str),
+                                        markersize=5,
+                                        color=colortable[int(np.mod(ind_str+1,n_color))],
+                                        )
 
                     except Exception as e:
+                        print('Exception in analyze_gpi_structures at line 1644')
                         print(str(e))
                     ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
 
