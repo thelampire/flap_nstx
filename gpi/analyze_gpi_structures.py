@@ -569,7 +569,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 """
 
                 #Crude average size calculation
-                if structures_dict: #Valid structure size
+                if structures_dict:
                     valid_structure_size=True
                 else:
                     valid_structure_size=False
@@ -897,7 +897,8 @@ def transform_frames_to_structures(frame_properties):
                     frame_properties['structures'][i_frames][j_str]['Label'] != []):
 
                     ind_structure=int(frame_properties['structures'][i_frames][j_str]['Label'])
-                    for key_str in frame_properties['structures'][i_frames][j_str].keys():
+                    keys=frame_properties['structures'][i_frames][j_str].keys()
+                    for key_str in keys:
                         if key_str in analyzed_keys:
                             if key_str not in struct_by_struct[ind_structure].keys():
                                 struct_by_struct[ind_structure][key_str]=[]
@@ -911,6 +912,7 @@ def transform_frames_to_structures(frame_properties):
                                 print(key_str, frame_properties['structures'][i_frames][j_str][key_str])
                                 print(frame_properties['structures'][i_frames][j_str].keys())
                                 struct_by_struct[ind_structure][key_str].append(np.nan)
+                                
                     struct_by_struct[ind_structure]['Time'].append(frame_properties['Time'][i_frames])
     return struct_by_struct
 
@@ -1019,7 +1021,6 @@ def _plot_results(pdf=False,
     if not pdf: pdf_pages=None
     
     if not plot_str_by_str:
-        
         _plot_avg_results(frame_properties=frame_properties,
                           time_range=time_range,
                           figsize=figsize,
@@ -1150,12 +1151,9 @@ def _plot_example_structure_frames(exp_id=None,
             d_sep_x_sliced=d_sep_x.slice_data(slicing=slicing)
             d_sep_y_sliced=d_sep_y.slice_data(slicing=slicing)
             
-            print(slicing)
             separatrix_data=np.zeros([d_sep_x_sliced.shape[0],2])
             separatrix_data[:,0]=d_sep_x_sliced.data
             separatrix_data[:,1]=d_sep_y_sliced.data
-            
-            print(d_sep_x_sliced.coordinate('Time'))
             
             if plot_separatrix and separatrix_data is not None:
                 ax.plot(separatrix_data[:,0],
@@ -1600,9 +1598,9 @@ def _plot_str_by_str(frame_properties=None,
                      pdf=False,
                      pdf_pages=None,
                      ):
+    
 #            frame_properties['structures'][i_frames]
     struct_by_struct=transform_frames_to_structures(frame_properties)
-
     analyzed_keys=read_analyzed_keys()
     #return struct_by_struct
     #print('str_by_str_len: ',struct_by_struct)
@@ -1617,35 +1615,31 @@ def _plot_str_by_str(frame_properties=None,
             if struct_by_struct[ind_str]['Time'] !=[]:
                 if key not in differential_keys:
                     try:
-                        if plot_tracking:
-
-                            ax.plot(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
-                                    struct_by_struct[ind_str][key],
-                                    linestyle,
-                                    label=str(ind_str),
-                                    markersize=5,
-                                    color=colortable[np.mod(int(ind_str)+1,n_color)]
-                                    )
+                        ax.plot(np.asarray(struct_by_struct[ind_str]['Time'])*1e3,
+                                struct_by_struct[ind_str][key],
+                                linestyle,
+                                label=str(ind_str),
+                                markersize=5,
+                                color=colortable[np.mod(int(ind_str)+1,n_color)]
+                                )
                     except Exception as e:
                         print('Exception in analyze_gpi_structures at line 1627')
                         print(str(e))
                     ax.set_ylabel(frame_properties['data'][key]['label']+' '+'['+frame_properties['data'][key]['unit']+']')
                 else:
                     try:
-                        if plot_tracking:
-                            if key in ['Angular velocity angle', 'Angular velocity ALI']:
-                                pass
-                            ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
-                                        struct_by_struct[ind_str][key],
-                                        linestyle,
-                                        label=str(ind_str),
-                                        markersize=5,
-                                        color=colortable[int(np.mod(ind_str+1,n_color))],
-                                        )
+                        ax.plot(np.asarray(struct_by_struct[ind_str]['Time'][1:])*1e3,
+                                struct_by_struct[ind_str][key],
+                                linestyle,
+                                label=str(ind_str),
+                                markersize=5,
+                                color=colortable[int(np.mod(ind_str+1,n_color))],
+                                )
 
                     except Exception as e:
                         print('Exception in analyze_gpi_structures at line 1644')
                         print(str(e))
+                        print(ind_str, key)
                     ax.set_ylabel(frame_properties['derived'][key]['label']+' '+'['+frame_properties['derived'][key]['unit']+']')
 
         ax.set_xlabel('Time [ms]')
