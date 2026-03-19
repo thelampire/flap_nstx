@@ -82,6 +82,7 @@ def identify_structures(#General inputs
                         plot_separatrix=True,                   #Plot the separatrix onto the video/frames.
                         separatrix_data=None,                   #Data from the separatrix in the form of [N,2] [:.0] is horizontal, [:,1] is vertical.
 
+                        verbose=False,
                         test=False,                             #Test the contours and the structures before any kind of processing
                         save_data_for_publication=False,        #Save the data for publication
                         ):
@@ -210,8 +211,8 @@ def identify_structures(#General inputs
 
     if threshold_level is not None:
         if data.max() < threshold_level:
-            print('The maximum of the signal doesn\'t reach the threshold level.')
-            return None
+            if verbose: print('The maximum of the signal doesn\'t reach the threshold level.')
+            return
         data_thresholded = data - threshold_level
         data_thresholded[np.where(data_thresholded < 0)] = 0.
     else:
@@ -347,6 +348,7 @@ def identify_structures(#General inputs
                         cut_structures.append(prelim_structures[i_str])
                 prelim_structures=cut_structures
         if test: print('N after removing interlaced:',len(prelim_structures))
+        
         for i_str in range(len(prelim_structures)):
 
             str_levels=prelim_structures[i_str]['Levels']
@@ -472,8 +474,9 @@ def identify_structures(#General inputs
                 else:
                     continue
             except Exception as e:
-                print('Exception at flap_nstx.gpi.identify_structures line 438:')
-                print(e)
+                if verbose:
+                    print('Exception at flap_nstx.gpi.identify_structures line 438:')
+                    print(e)
 
             from matplotlib.path import Path
 
@@ -507,10 +510,10 @@ def identify_structures(#General inputs
                     structures[-1]['Polygon']=full_polygon
 
                 except Exception as e:
-                     if not e == "'MultiPolygon' object has no attribute 'exterior'":
-                         print('Exception in flap_nstx.gpi.identify_structures at line 506:')
-                         print(e)
-                     continue
+                    if verbose: 
+                        print('Exception in flap_nstx.gpi.identify_structures at line 506:')
+                        print(e)
+                    #continue
 
 
     #Calculate the ellipse and its properties for the half level contours
@@ -546,7 +549,8 @@ def identify_structures(#General inputs
         if fit_shape=='ellipse':
             ellipse=FitEllipse(x=polygon.x,
                                y=polygon.y,
-                               method=ellipse_method)
+                               method=ellipse_method,
+                               verbose=verbose)
 
             structures[i_str]['Ellipse']=ellipse
             fit_struct=ellipse
@@ -554,7 +558,8 @@ def identify_structures(#General inputs
         elif fit_shape=='gaussian':
             gaussian=FitGaussian(x=polygon.x_data,
                                  y=polygon.y_data,
-                                 data=polygon.data)
+                                 data=polygon.data,
+                                 verbose=verbose)
             structures[i_str]['Gaussian']=gaussian
             fit_struct=gaussian
 
@@ -580,17 +585,15 @@ def identify_structures(#General inputs
         if structures[i_str]['Axes length'][1]/structures[i_str]['Axes length'][0] < elongation_threshold:
             structures[i_str]['Angle']=np.nan
 
-
-
         size=fit_struct.size
         if np.iscomplex(size[0]) or np.iscomplex(size[1]):
-            print('Size is complex')
+            if verbose: print('Size is complex')
             fit_struct.set_invalid()
 
         if ignore_large_structure:
             if (size[0] > x_coord.max()-x_coord.min() or
                 size[1] > y_coord.max()-y_coord.min()):
-                print('Size is larger than the frame size.')
+                if verbose: print('Size is larger than the frame size.')
                 fit_struct.set_invalid()
 
     if test: print('N before size thres:',len(structures))
@@ -620,7 +623,7 @@ def identify_structures(#General inputs
                     print('sx',structures[i_str]['Size'][0])
                     print('sy',structures[i_str]['Size'][1])
                     print('thres',str_size_lower_thres)
-                print('Structure is popped.')
+                if verbose: print('Structure is popped.')
                 structures.pop(i_str)
 
 
@@ -650,7 +653,6 @@ def identify_structures(#General inputs
                          levels=nlevel)
 
             if plot_flux_surfaces and surface_data_obj is not None:
-                print(surface_data_obj.coordinate(y_coord_name)[0])
                 plt.contour(surface_data_obj.coordinate(x_coord_name)[0],
                             surface_data_obj.coordinate(y_coord_name)[0],
                             surface_data_obj.data.transpose(),

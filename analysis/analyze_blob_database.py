@@ -17,12 +17,11 @@ import flap
 import flap_nstx
 flap_nstx.register('NSTX_GPI')
 
-from flap_nstx.analysis import read_mean_blob_results, read_blob_data,read_all_plasma_data,read_blob_results
-from flap_nstx.analysis import read_blob_database, read_blob_elm_database, read_blob_lh_mode_database
+from flap_nstx.analysis import read_all_blob_data, read_all_plasma_data, read_blob_data
+from flap_nstx.analysis import read_blob_database_file, read_blob_elm_database, read_blob_lh_mode_database_file
 from flap_nstx.analysis import read_plasma_parameters, return_interesting
 
-from flap_nstx.gpi import transform_frames_to_structures
-from flap_nstx.gpi import read_analyzed_keys
+from flap_nstx.gpi import transform_frames_to_structures, read_analyzed_keys
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
 from flap_nstx.tools import correlation, mutual_information
 
@@ -64,14 +63,14 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
                                ):
     
     if not calculate_for_lh_study:
-        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_database_file(time_range_around_peak=time_range_around_peak)
 
         ncalc=len(blob_database['shot'])
         for ind in range(ncalc):
             start_time=time_mod.time()
             blob_time=blob_database['time'][ind]
             #if blob_database['shot'][ind] == 142270 or blob_database['shot'][ind] == 142279:
-            read_blob_results(blob_database['shot'][ind],
+            read_blob_data(blob_database['shot'][ind],
                               [blob_time-time_range_around_peak,
                                blob_time+time_range_around_peak],
                               #calc_only=True,
@@ -86,17 +85,17 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
             print('Remaining time from the calculation: '+str(remaining_time/3600.)+' hours.')
             flap.delete_data_object('*')
     else:
-        l_mode_database=read_blob_lh_mode_database(l_mode=True, 
-                                                   filter_lh_transition=True, 
-                                                   filter_elms=False, #Filtering will be done during the analysis based on the ELM database established during the ELM work
-                                                   filtered_blob_db=False,
-                                                   time_range_around_peak=time_range_around_peak)
+        l_mode_database=read_blob_lh_mode_database_file(l_mode=True, 
+                                                        filter_lh_transition=True, 
+                                                        filter_elms=False, #Filtering will be done during the analysis based on the ELM database established during the ELM work
+                                                        filtered_blob_db=False,
+                                                        time_range_around_peak=time_range_around_peak)
         
-        h_mode_database=read_blob_lh_mode_database(h_mode=True, 
-                                                   filter_lh_transition=True, 
-                                                   filter_elms=False, 
-                                                   filtered_blob_db=False,
-                                                   time_range_around_peak=time_range_around_peak)
+        h_mode_database=read_blob_lh_mode_database_file(h_mode=True, 
+                                                        filter_lh_transition=True, 
+                                                        filter_elms=False, 
+                                                        filtered_blob_db=False,
+                                                        time_range_around_peak=time_range_around_peak)
         
         ncalc=len(l_mode_database['shot'])+len(h_mode_database['shot'])
         
@@ -115,24 +114,24 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
                 if download_data_only:
                     print(f'Downloading shot # {shot}')
                     try:
-                        d=flap.get_data('NSTX_GPI',
-                                        exp_id=int(shot),
-                                        name='',
-                                        object_name='GPI')
+                        flap.get_data('NSTX_GPI',
+                                      exp_id=int(shot),
+                                      name='',
+                                      object_name='GPI')
                     except:
                         print(f'Failed to download shot # {shot}')
                 else:
                     print(f'Calculating shot # {shot} at time {avg_time}')
-                    read_blob_results(int(shot),
-                                    [database['time'][0,ind]*multiplier,
-                                    database['time'][1,ind]*multiplier],
-                                    #calc_only=True,
-                                    nocalc=nocalc,
-                                    recalc_tracking=recalc_tracking,
-                                    min_structure_lifetime=min_structure_lifetime,
-                                    str_finding_method=str_finding_method,
-                                    calculate_only=True,
-                                    )
+                    read_blob_data(int(shot),
+                                      [database['time'][0,ind]*multiplier,
+                                       database['time'][1,ind]*multiplier],
+                                      max_gap=2,
+                                      nocalc=nocalc,
+                                      recalc_tracking=recalc_tracking,
+                                      min_structure_lifetime=min_structure_lifetime,
+                                      str_finding_method=str_finding_method,
+                                      calculate_only=True,
+                                      )
             
                 elapsed_time=time_mod.time()-start_time
                 remaining_time=elapsed_time*(ncalc-ind-1)
@@ -184,15 +183,16 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     pickle_filename += '.pickle'
     
     if not analyze_h_mode_only and not analyze_l_mode_only:
-        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
+        blob_database = read_blob_database_file(time_range_around_peak=time_range_around_peak)
+        
     elif analyze_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,
-                                                 time_range_around_peak=time_range_around_peak,
-                                                 filtered_blob_db=filtered_blob_db)
+        blob_database = read_blob_lh_mode_database_file(h_mode=True,
+                                                        time_range_around_peak=time_range_around_peak,
+                                                        filtered_blob_db=filtered_blob_db)
     elif analyze_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,
-                                                 time_range_around_peak=time_range_around_peak,
-                                                 filtered_blob_db=filtered_blob_db)
+        blob_database = read_blob_lh_mode_database_file(l_mode=True,
+                                                        time_range_around_peak=time_range_around_peak,
+                                                        filtered_blob_db=filtered_blob_db)
         
     analyzed_keys=read_analyzed_keys()
     
@@ -213,7 +213,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
         for ind in range(ncalc):
             blob_time=blob_database['time'][ind]
             start_time=time_mod.time()
-            blob_results=read_blob_results(int(blob_database['shot'][ind]),
+            blob_results=read_blob_data(int(blob_database['shot'][ind]),
                                            [blob_time-time_range_around_peak,
                                             blob_time+time_range_around_peak],
                                            nocalc=True,
@@ -492,115 +492,6 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
     return full_data
 
-def calculate_blob_parameter_histograms2(time_range_around_peak=5e-3,
-                                        pdf=False,
-                                        pdf_filename=None,
-                                        plot=True,
-                                        plot_for_publication=False,
-                                        save_data_into_txt=False,
-                                        calc_mean_distribution=False,
-                                        nocalc=True,
-                                        recalc_tracking=False,
-                                        min_structure_lifetime=20,
-                                        str_finding_method='watershed',
-                                        analyze_h_mode_only=False,
-                                        analyze_l_mode_only=False,
-                                        save_data_for_publication=False,
-                                        ):
-    """
-    Just for reading the data, should be merged with read data and the indices
-    of differential and normal data would need to be handled properly.
-    """
-    
-    import matplotlib
-    if pdf:
-        matplotlib.use('agg')
-    else:
-        matplotlib.use('qt5agg')
-
-    if pdf_filename is None:
-        if calc_mean_distribution:
-            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_mean_'+str_finding_method+'.pdf'
-        else:
-            pdf_filename=wd+fig_dir+'/blob_database_parameter_histograms_nomean_'+str_finding_method+'.pdf'
-
-    if calc_mean_distribution:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_mean_'+str_finding_method+'.pickle'
-    else:
-        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean_'+str_finding_method+'.pickle'
-
-    if not analyze_h_mode_only and not analyze_l_mode_only:
-        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
-    elif analyze_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
-    elif analyze_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
-        
-    analyzed_keys=read_analyzed_keys()
-    
-    additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
-                          'Total bending energy','Area','Elongation']
-
-    ncalc=len(blob_database['shot'])
-
-    full_data={}
-
-    for key in analyzed_keys:
-        full_data[key]=[]
-    for key in additional_diff_keys:
-        full_data[key+' diff']=[]
-
-    if not os.path.exists(pickle_filename) or not nocalc or analyze_l_mode_only or analyze_h_mode_only:
-        n_str=0
-        for ind in range(ncalc):
-            blob_time=blob_database['time'][ind]
-            start_time=time_mod.time()
-            blob_results=read_blob_results(blob_database['shot'][ind],
-                                           [blob_time-time_range_around_peak,
-                                            blob_time+time_range_around_peak],
-                                           nocalc=True,
-                                           recalc_tracking=recalc_tracking,
-                                           min_structure_lifetime=min_structure_lifetime,
-                                           str_finding_method=str_finding_method,
-                                           )
-
-            flap.delete_data_object('*')
-            str_by_str=transform_frames_to_structures(blob_results)
-
-            for ind_str, structure in enumerate(str_by_str):
-                n_str+=1
-                for key in analyzed_keys:
-                        if key in          ['Velocity radial COG', 'Velocity poloidal COG',
-                                           'Velocity radial centroid', 'Velocity poloidal centroid',
-                                           'Velocity radial position', 'Velocity poloidal position',
-                                           'Expansion fraction area', 'Expansion fraction axes',
-                                           'Angular velocity angle', 'Angular velocity ALI']:
-                            full_data[key]=np.append(full_data[key],structure[key])
-                        else:
-                            full_data[key]=np.append(full_data[key],
-                                                     structure[key][1:])
-
-                for key in additional_diff_keys:
-                    diff=(np.asarray(structure[key])[1:] - np.asarray(structure[key])[0:-1])
-                    full_data[key+' diff']=np.append(full_data[key+' diff'],diff)
-            remaining_time=(time_mod.time()-start_time)*(ncalc-ind-1)
-
-            hours = int(remaining_time // 3600)
-            minutes = int((remaining_time % 3600) // 60)
-            seconds = int(remaining_time % 60)
-
-            print('Remaining time from the calculation: '+f"{hours}h {minutes:02}min {seconds:02}sec")
-        print('n_str:',n_str)
-        if not analyze_h_mode_only and not analyze_l_mode_only:
-            pickle.dump(full_data,open(pickle_filename,'wb'))
-    else:
-        full_data=pickle.load(open(pickle_filename,'rb'))
-
-    return full_data
-
-
 
 def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
                                                      pdf=True,
@@ -716,22 +607,61 @@ def calculate_blob_blob_parameter_correlation_matrix(threshold_corr=False,
                     print(key1, key2)
                     print(e)
     else:
-        full_data_l_mode=calculate_blob_parameter_histograms2(calc_mean_distribution=calc_mean_distribution,
-                                                         nocalc=nocalc,
-                                                         plot=False,
-                                                         recalc_tracking=recalc_tracking,
-                                                         str_finding_method=str_finding_method,
-                                                         analyze_h_mode_only=False,
-                                                         analyze_l_mode_only=True
-                                                         )
-        full_data_h_mode=calculate_blob_parameter_histograms2(calc_mean_distribution=calc_mean_distribution,
-                                                         nocalc=nocalc,
-                                                         plot=False,
-                                                         recalc_tracking=recalc_tracking,
-                                                         str_finding_method=str_finding_method,
-                                                         analyze_h_mode_only=True,
-                                                         analyze_l_mode_only=False
-                                                         )
+        # full_data_l_mode=calculate_blob_parameter_histograms2(calc_mean_distribution=calc_mean_distribution,
+        #                                                  nocalc=nocalc,
+        #                                                  plot=False,
+        #                                                  recalc_tracking=recalc_tracking,
+        #                                                  str_finding_method=str_finding_method,
+        #                                                  analyze_h_mode_only=False,
+        #                                                  analyze_l_mode_only=True
+        #                                                  )
+        
+        # full_data_h_mode=calculate_blob_parameter_histograms2(calc_mean_distribution=calc_mean_distribution,
+        #                                                  nocalc=nocalc,
+        #                                                  plot=False,
+        #                                                  recalc_tracking=recalc_tracking,
+        #                                                  str_finding_method=str_finding_method,
+        #                                                  analyze_h_mode_only=True,
+        #                                                  analyze_l_mode_only=False
+        #                                                  )
+        
+        (time_range_around_peak=5e-3, #Reads either mean or full blob results. the original read_blob_data procedure reads one shot only
+                               nocalc=False,
+                               recalc_tracking=False,
+                               min_structure_lifetime=20,
+                               str_finding_method='watershed',
+                               fix_angle_for_correlation=False,
+                               read_mean_results=False, #Obsolete
+                               averaging='shot',
+                               average='avg', #[avg, std, max, no] returns average, returns standard deviation, returns maximum value in the shot (for read_mean_results), or for the blob (average_blob_by_blob)
+                               
+                               replicate_histogram2=False,
+                               replicate_old_read_blob_data=False,
+                               
+                               read_l_mode_only=False,
+                               read_h_mode_only=False,
+                               ):
+        if calc_mean_distribution:
+            averaging='shot'
+        else:
+            averaging='no'
+        full_data_l_mode=read_all_blob_data(min_structure_lifetime=min_structure_lifetime
+                                            averaging=averaging,
+                                            nocalc=nocalc,
+                                            recalc_tracking=recalc_tracking,
+                                            str_finding_method=str_finding_method,
+                                            read_l_mode_only=True,
+                                            replicate_histogram2=True,
+                                            )
+        
+        full_data_h_mode=read_all_blob_data(averaging=averaging,
+                                            nocalc=nocalc,
+                                            recalc_tracking=recalc_tracking,
+                                            str_finding_method=str_finding_method,
+                                            read_h_mode_only=True,
+                                            replicate_histogram2=True,
+                                            )
+        
         interesting_key_pairs=[('Area','Convexity'),
                                 ('Size radial','Convexity'),
                                 ('Elongation','Roundness'),
@@ -1336,11 +1266,11 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
 
     full_plasma_data=read_all_plasma_data(nocalc=nocalc_plasma_data)
 
-    full_blob_data=read_blob_data(nocalc=nocalc_blob_data, 
-                                  str_finding_method=str_finding_method,
-                                  fix_angle_for_correlation=fix_angle_for_correlation,
-                                  averaging=averaging,
-                                  average=average)
+    full_blob_data=process_blob_results(nocalc=nocalc_blob_data, 
+                                        str_finding_method=str_finding_method,
+                                        fix_angle_for_correlation=fix_angle_for_correlation,
+                                        averaging=averaging,
+                                        average=average)
     
     scale_length=(full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 /
                       full_plasma_data['Pedestal radius']**0.2)
@@ -1782,13 +1712,13 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
             full_plasma_data=pickle.load(open(pickle_filename_plasma,'rb'))
         #full_blob_data=read_mean_blob_results(nocalc=nocalc)
         if not os.path.exists(pickle_filename_blob):
-            full_blob_data=read_blob_data(nocalc=nocalc, 
-                                          str_finding_method='watershed',
-                                          fix_angle_for_correlation=True,
-                                          averaging='shot',
-                                          average='avg',
-                                          read_l_mode_only=analyze_l_mode_only,
-                                          read_h_mode_only=analyze_h_mode_only)
+            full_blob_data=read_all_blob_data(nocalc=nocalc, 
+                                              str_finding_method='watershed',
+                                              fix_angle_for_correlation=True,
+                                              averaging='shot',
+                                              average='avg',
+                                              read_l_mode_only=analyze_l_mode_only,
+                                              read_h_mode_only=analyze_h_mode_only)
             
             pickle.dump(full_blob_data,open(pickle_filename_blob,'wb'))
         else:
@@ -1805,13 +1735,13 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
         #full_blob_data=read_mean_blob_results(nocalc=nocalc)
         
         if not os.path.exists(pickle_filename_blob_l_mode):
-            full_blob_data_l_mode=read_blob_data(nocalc=nocalc, 
-                                          str_finding_method='watershed',
-                                          fix_angle_for_correlation=True,
-                                          averaging='shot',
-                                          average='avg',
-                                          read_l_mode_only=True,
-                                          read_h_mode_only=False)
+            full_blob_data_l_mode=read_all_blob_data(nocalc=nocalc, 
+                                                     str_finding_method='watershed',
+                                                     fix_angle_for_correlation=True,
+                                                     averaging='shot',
+                                                     average='avg',
+                                                     read_l_mode_only=True,
+                                                     read_h_mode_only=False)
             
             pickle.dump(full_blob_data_l_mode,open(pickle_filename_blob_l_mode,'wb'))
         else:
@@ -1827,7 +1757,7 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
             full_plasma_data_h_mode=pickle.load(open(pickle_filename_plasma_h_mode,'rb'))
         
         if not os.path.exists(pickle_filename_blob_h_mode):
-            full_blob_data_h_mode=read_blob_data(nocalc=nocalc, 
+            full_blob_data_h_mode=read_all_blob_data(nocalc=nocalc, 
                                                  str_finding_method='watershed',
                                                  fix_angle_for_correlation=True,
                                                  averaging='shot',
@@ -2136,7 +2066,7 @@ def plot_blob_experiment_vs_theory_radial_velocity(pdf_filename=None,
 
     full_plasma_data=read_all_plasma_data(nocalc=nocalc)
     #full_blob_data=read_mean_blob_results(nocalc=nocalc)
-    full_blob_data=read_blob_data(nocalc=nocalc, 
+    full_blob_data=read_all_blob_data(nocalc=nocalc, 
                                   str_finding_method='watershed',
                                   fix_angle_for_correlation=True,
                                   averaging='shot',
@@ -2201,7 +2131,7 @@ def plot_blob_regime_graph(pdf_filename=None,
     full_plasma_data=read_all_plasma_data(nocalc=nocalc,
                                           calculate_parameters_in_sol=True)
     
-    full_blob_data=read_blob_data(nocalc=nocalc, 
+    full_blob_data=read_all_blob_data(nocalc=nocalc, 
                                   str_finding_method='watershed',
                                   fix_angle_for_correlation=True,
                                   averaging='shot',
@@ -2304,7 +2234,7 @@ def plot_well_known_parameter_dependences(pdf_filename=None,
     full_plasma_data=read_all_plasma_data(nocalc=nocalc,
                                           calculate_parameters_in_sol=True)
     #full_blob_data=read_mean_blob_results(nocalc=nocalc)
-    full_blob_data=read_blob_data(nocalc=nocalc, 
+    full_blob_data=read_all_blob_data(nocalc=nocalc, 
                                   str_finding_method='watershed',
                                   fix_angle_for_correlation=True,
                                   averaging='shot',

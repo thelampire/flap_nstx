@@ -18,6 +18,8 @@ class FitEllipse:
                  y=None,                                                        #The y coordinates of the input data as a numpy array
                  method='linalg',                                                #linalg, skimage, leastsquare, or linalg_v0 (deprecated)
                  elongation_base='size',                                        #size or axes
+                 
+                 verbose=False,
                  test=False,
                  ):
 
@@ -56,20 +58,24 @@ class FitEllipse:
         self._ymean=np.mean(y)
         self._elongation_base=elongation_base
         self._test=test
+        self._verbose=verbose
 
         try:
         #if True:
-
             if method=='linalg':
                 self._fit_ellipse_linalg(x, y)
+                
             elif method=='skimage':
                 self._fit_ellipse_skimage(x, y)
+                
             elif method=='leastsquare':
                 self._fit_ellipse_leastsq(x, y)
+                
             elif method=='linalg_v0':
                 self._fit_ellipse_linalg_v0(x, y)
+                
         except Exception as e:
-            print(e)
+            if verbose: print(e)
             self.set_invalid()
 
 
@@ -80,7 +86,7 @@ class FitEllipse:
         self._center=np.asarray([np.nan,np.nan])
         self._parameters=np.asarray([np.nan]*6)
 
-        print('Ellipse fitting failed')
+        if self._verbose: print('Ellipse fitting failed')
 
     def _fit_ellipse_linalg(self, x, y):
         """
@@ -408,7 +414,7 @@ class FitEllipse:
         # ysize=np.sqrt(by**2-4*ay*cy)/np.abs(ay)
 
         if np.imag(xsize) != 0 or np.imag(ysize) !=0:
-            print('size is complex')
+            if self._verbose: print('size is complex')
             xsize=np.nan
             ysize=np.nan
         return np.array([xsize,ysize])
@@ -417,7 +423,8 @@ class FitGaussian:
     def __init__(self,
                  x=None,
                  y=None,
-                 data=None):
+                 data=None,
+                 verbose=False):
 
 
         self._fwhm_to_sigma=(2*np.sqrt(2*np.log(2)))
@@ -425,7 +432,7 @@ class FitGaussian:
         self.y=y
         self.data=data
         self.fit_gaussian(x,y,data)
-
+        self._verbose=verbose
 
     def fit_gaussian(self,x,y,data):
         xdata=np.vstack((x.ravel(),y.ravel()))
@@ -448,7 +455,7 @@ class FitGaussian:
         except:
             self.popt=np.zeros(7)
             self.popt[:]=np.nan
-            print('Gaussian fitting failed.')
+            if self._verbose: print('Gaussian fitting failed.')
 
 
         theta=self.popt[5]

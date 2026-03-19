@@ -18,8 +18,7 @@ import flap
 import flap_nstx
 flap_nstx.register('NSTX_GPI')
 
-from flap_nstx.gpi import analyze_gpi_structures, transform_frames_to_structures
-from flap_nstx.gpi import read_analyzed_keys
+from flap_nstx.gpi import analyze_gpi_structures, transform_frames_to_structures, read_analyzed_keys
 from flap_nstx.thomson import get_fit_nstx_thomson_profiles
 
 import flap_mdsplus
@@ -40,44 +39,88 @@ import pandas
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
-"""****************************************************************************
-                        READING RESULTS STARTS HERE
-****************************************************************************"""
 
+def read_all_blob_data(time_range_around_peak=5e-3, #Reads either mean or full blob results. the original read_blob_data procedure reads one shot only
+                       nocalc=False,
+                       recalc_tracking=False,
+                       min_structure_lifetime=20,
+                       str_finding_method='watershed',
+                       fix_angle_for_correlation=False,
+                       read_mean_results=False, #Obsolete
+                       averaging='shot',
+                       average='avg', #[avg, std, max, no] returns average, returns standard deviation, returns maximum value in the shot (for read_mean_results), or for the blob (average_blob_by_blob)
+                       
+                       replicate_histogram2=False,
+                       replicate_old_read_blob_data=False,
+                       
+                       read_l_mode_only=False,
+                       read_h_mode_only=False,
+                       ):
+    
+    
+    """
+    Reads all blob data from the databae provided by either read_blob_database or read_blob_lh_mode_database.
 
+    Parameters
+    ----------
+    time_range_around_peak : TYPE, optional
+        DESCRIPTION. The default is 5e-3.
+    nocalc : TYPE, optional
+        DESCRIPTION. The default is False.
+    recalc_tracking : TYPE, optional
+        DESCRIPTION. The default is False.
+    min_structure_lifetime : TYPE, optional
+        DESCRIPTION. The default is 20.
+    str_finding_method : TYPE, optional
+        DESCRIPTION. The default is 'watershed'.
+    fix_angle_for_correlation : TYPE, optional
+        DESCRIPTION. The default is False.
+    read_mean_results : TYPE, optional
+        DESCRIPTION. The default is False.
+    averaging : TYPE, optional
+        DESCRIPTION. The default is 'shot'.
+    average : TYPE, optional
+        DESCRIPTION. The default is 'avg'.
+    read_l_mode_only : TYPE, optional
+        DESCRIPTION. The default is False.
+    read_h_mode_only : TYPE, optional
+        DESCRIPTION. The default is False.
+    
+    replicate_histogram2 : boolean, optional
+        legacy code for backwards compatibility. If one produces finite difference
+        data, it will have less data points than the data itself. the _histogram2
+        method solved this by leaving the first data point out essentially shifting
+        the data back by one sampling time, while read_blob_data handled it by
+        adding another diff data point to the end of the data. Both are wrong but
+        has to be here for replicability and legacy reasons.
+        
+        The correct method is to use either symmetric difference and drop the
+        data points of the data at the beginning and the end. Or one can use
+        "pre" setting and drop only the first data point.
 
+        The default is False
+    replicate_old_read_blob_data: boolean, optional
+        Added a diff data points to the end of each data creating nearest neighbor
+        "interpolation". Retained for legacy resons.
+        The default is False.
+     : TYPE
+        DESCRIPTION.
 
+    Raises
+    ------
+    ValueError
+        DESCRIPTION.
 
-def read_mean_blob_results(time_range_around_peak=5e-3,
-                           nocalc=False,
-                           recalc_tracking=False,
-                           min_structure_lifetime=20,
-                           str_finding_method='watershed',
-                           fix_angle_for_correlation=False,
-                           ):
+    Returns
+    -------
+    full_blob_db_data : TYPE
+        DESCRIPTION.
+        
+    TODO: read_blob_lh_mode_database was modified. This code has to be modified
+    to accommodate the new database that can have time ranges in it instead of
+    a single time point.
 
-    return read_blob_data(time_range_around_peak=time_range_around_peak,
-                          nocalc=nocalc,
-                          recalc_tracking=recalc_tracking,
-                          min_structure_lifetime=min_structure_lifetime,
-                          str_finding_method=str_finding_method,
-                          fix_angle_for_correlation=fix_angle_for_correlation,
-                          read_mean_results=True,
-                          )
-
-
-def read_blob_data(time_range_around_peak=5e-3, #Reads either mean or full blob results. the original read_blob_results procedure reads one shot only
-                   nocalc=False,
-                   recalc_tracking=False,
-                   min_structure_lifetime=20,
-                   str_finding_method='watershed',
-                   fix_angle_for_correlation=False,
-                   read_mean_results=False, #Obsolete
-                   averaging='shot',
-                   average='avg', #[avg, std, max, no] returns average, returns standard deviation, returns maximum value in the shot (for read_mean_results), or for the blob (average_blob_by_blob)
-                   read_l_mode_only=False,
-                   read_h_mode_only=False,
-                   ):
+    """
     
     if read_mean_results:
         averaging='shot'
@@ -90,271 +133,384 @@ def read_blob_data(time_range_around_peak=5e-3, #Reads either mean or full blob 
         pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_blob_'+str_finding_method+'_full_data.pickle'
     else:
         raise ValueError('Averaging needs to be either shot, blob or no')
+    
+    difference_method='pre',
+    
+    if replicate_histogram2:
+        averaging='no'
         
             
     if read_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database_file(l_mode=True,
+                                                      time_range_around_peak=time_range_around_peak)
     elif read_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_lh_mode_database_file(h_mode=True,
+                                                      time_range_around_peak=time_range_around_peak)
     else:
-        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak)
+        blob_database=read_blob_database_file(time_range_around_peak=time_range_around_peak)
         
     analyzed_keys=read_analyzed_keys()
+    
+    diff_keys=['Velocity radial COG', 'Velocity poloidal COG',
+               'Velocity radial centroid', 'Velocity poloidal centroid',
+               'Velocity radial position', 'Velocity poloidal position',
+               'Expansion fraction area', 'Expansion fraction axes',
+               'Angular velocity angle', 'Angular velocity ALI'] #These are calculated at the time when the blob results are calculated
+        
     additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
                           'Total bending energy','Area','Elongation', 
-                          'Size radial', 'Size poloidal']
+                          'Size radial', 'Size poloidal'] # These are calculated in this method.
 
     ncalc=len(blob_database['shot'])
 
-    full_blob_data={}
+    full_blob_db_data={}
 
     for key in analyzed_keys:
-        full_blob_data[key]=[]
+        full_blob_db_data[key]=[]
     for key in additional_diff_keys:
-        full_blob_data[key+' diff']=[]
+        full_blob_db_data[key+' diff']=[]
     
-    full_blob_error=copy.deepcopy(full_blob_data)
+    full_blob_db_error = copy.deepcopy(full_blob_db_data)
 
-    curr_blob_data_ref=copy.deepcopy(full_blob_data)
-    curr_blob_error_ref=copy.deepcopy(full_blob_data)
+    curr_blob_data_ref = copy.deepcopy(full_blob_db_data)
+    curr_blob_error_ref = copy.deepcopy(full_blob_db_data)
 
     if not os.path.exists(pickle_filename) or not nocalc or read_l_mode_only or read_h_mode_only:
+        n_str = 0
         for ind in range(ncalc):
-            curr_blob_data=copy.deepcopy(curr_blob_data_ref)
-            curr_blob_error=copy.deepcopy(curr_blob_error_ref)
+            start_time=time_mod.time()
+            curr_shot_data=copy.deepcopy(curr_blob_data_ref)
+            curr_shot_error=copy.deepcopy(curr_blob_error_ref)
             blob_time=blob_database['time'][ind]
             shot=blob_database['shot'][ind]
 
-            blob_results=read_blob_results(shot,
-                                           [blob_time-time_range_around_peak,
-                                            blob_time+time_range_around_peak],
-                                           nocalc=True,
-                                           recalc_tracking=recalc_tracking,
-                                           min_structure_lifetime=min_structure_lifetime,
-                                           str_finding_method=str_finding_method,
-                                           )
+            blob_results = read_blob_data(shot,
+                                          [blob_time - time_range_around_peak,
+                                           blob_time + time_range_around_peak],
+                                          nocalc = True,
+                                          recalc_tracking = recalc_tracking,
+                                          min_structure_lifetime = min_structure_lifetime,
+                                          str_finding_method = str_finding_method,
+                                          )
             
             flap.delete_data_object('*')
-            str_by_str=transform_frames_to_structures(blob_results)
+            str_by_str = transform_frames_to_structures(blob_results)
             
             for structure in str_by_str: 
-                for key in analyzed_keys:
-                    shot_data=[]
+                for key in analyzed_keys + additional_diff_keys:
                     # if key != 'Angle of least inertia':
-                    for data in structure[key]:
-                        #if np.isreal(data) and ~np.isnan(data): #There are a bunch of complex and nan data which are not handled.
-                        # if (key == 'Angle' or key == 'Angle of least inertia') and fix_angle_for_correlation:
-                        #     data=np.mod(np.real(data), np.pi/2)
-                            
-                        shot_data=np.append(shot_data,
-                                            np.real(data))
-                    if key in ['Velocity radial COG', 'Velocity poloidal COG', 
-                               'Velocity radial centroid','Velocity poloidal centroid',
-                               'Velocity radial position','Velocity poloidal position',
-                               'Expansion fraction area', 'Expansion fraction axes',
-                               'Angular velocity angle', 'Angular velocity ALI']:
-                        shot_data=np.append(shot_data,shot_data[-1])
+                    if key in analyzed_keys:
+                        if replicate_old_read_blob_data:
+                            if key in diff_keys:
+                                str_key_data=np.append(structure[key], structure[key][-1])  #this is to match the same number of elements in the differential data
+                            else:
+                                str_key_data=structure[key]
+                        elif replicate_histogram2:
+                            if key in diff_keys:
+                                str_key_data=structure[key]
+                            else:
+                                str_key_data=structure[key][1:]
+                        else:   #New scheme
+                            pass
+                        key_string_add=''
                         
-                    if averaging == 'no':
-                        # curr_blob_data[key]=np.append(curr_blob_data[key],
-                        #                               shot_data[0:-1])
-                        curr_blob_data[key]=np.append(curr_blob_data[key],
-                                                      shot_data) 
-                        # print(shot_data.shape,key)
-                    else:
-                        shot_data=shot_data[~np.isnan(shot_data)]
-                        if averaging == 'shot':
-                            curr_blob_error[key]=np.append(curr_blob_error[key],
-                                                           np.sqrt(np.var(shot_data)))
-                        if average == 'avg':
-                            curr_blob_data[key]=np.append(curr_blob_data[key],
-                                                          np.mean(shot_data))
-                        elif average == 'std':
-                            curr_blob_data[key]=np.append(curr_blob_data[key],
-                                                          np.sqrt(np.var(shot_data)))
-                        elif average == 'max':
-                            curr_blob_data[key]=np.append(curr_blob_data[key],
-                                                          np.max(shot_data))
-                for key in additional_diff_keys:
-                    diff_data=[]
-                    for ind_data in range(len(structure[key])-1):
-                        # if (np.isreal(structure[key][ind_data+1]-structure[key][ind_data]) 
-                        #    #and
-                        #    #~np.isnan(structure[key][ind_data+1]-structure[key][ind_data])
-                        #    ):
-                        diff_data=np.append(diff_data,
-                                            np.real(structure[key][ind_data+1]-structure[key][ind_data]))
-                    diff_data=np.append(diff_data,diff_data[-1])
+                    elif key in additional_diff_keys:
+                        str_key_data=[]
+                        if difference_method == 'post':
+                            first_slice=slice(1,len(structure[key]))
+                            second_slice=slice(0,len(structure[key])-1)
+                            diff_multiplier=1
+                            
+                        elif difference_method == 'symmetric':                      #Implemented but unused. Would need to change the way the other diff keys are calculated.
+                            first_slice=slice(2,len(structure[key]))
+                            second_slice=slice(0,len(structure[key])-2)
+                            diff_multiplier=0.5
+                        
+                        str_key_data=np.real(structure[key][first_slice] - 
+                                             structure[key][second_slice]) * diff_multiplier
+                        if replicate_histogram2:
+                            pass
+                        elif replicate_old_read_blob_data:
+                            str_key_data=np.append(str_key_data,str_key_data[-1])
+                        else:   #New scheme
+                            pass
+                        
+                        key_string_add=' diff'
+                        
+                    """
+                    The idea with averaging is that if there is no averaging, just append the data to the previous.
+                    If there is either shot or blob averaging, then append the blob average first no matter which
+                    one is chosen. If shot average is chosen, then it's calculated as shot_averaged blob_averaged data
+                    and not shot_averaged no_average data. They are different, but this way the result is not biased
+                    towards long duraction structures but to the number of blobs which is more relevant.
+                    """
                     
-                    
                     if averaging == 'no':
-                        curr_blob_data[key+' diff']=np.append(curr_blob_data[key+' diff'],
-                                                      diff_data)
-                    else:
-                        diff_data=diff_data[~np.isnan(diff_data)]
+                        curr_shot_data[key + key_string_add]=np.append(curr_shot_data[key + key_string_add],
+                                                                       str_key_data) 
+                    elif averaging == 'shot' or averaging == 'blob':
+                        str_key_data=str_key_data[~np.isnan(str_key_data)]
                         if averaging == 'shot':
-                            curr_blob_error[key+' diff']=np.append(curr_blob_error[key+' diff'],
-                                                           np.sqrt(np.var(diff_data)))
+                            curr_shot_error[key + key_string_add]=np.append(curr_shot_error[key + key_string_add],
+                                                                            np.sqrt(np.var(str_key_data)))
+                        
                         if average == 'avg':
-                            curr_blob_data[key+' diff']=np.append(curr_blob_data[key+' diff'],
-                                                          np.mean(diff_data))
+                            curr_shot_data[key + key_string_add]=np.append(curr_shot_data[key + key_string_add],
+                                                                           np.mean(str_key_data))
                         elif average == 'std':
-                            curr_blob_data[key+' diff']=np.append(curr_blob_data[key+' diff'],
-                                                          np.sqrt(np.var(diff_data)))
+                            curr_shot_data[key + key_string_add]=np.append(curr_shot_data[key + key_string_add],
+                                                                           np.sqrt(np.var(str_key_data)))
                         elif average == 'max':
-                            curr_blob_data[key+' diff']=np.append(curr_blob_data[key+' diff'],
-                                                          np.max(diff_data))   
- 
-
+                            curr_shot_data[key + key_string_add]=np.append(curr_shot_data[key + key_string_add],
+                                                                           np.max(str_key_data))
                                    
-            for key in full_blob_data.keys():
+            for key in full_blob_db_data.keys():
                 if averaging == 'shot':
-                    full_blob_data[key]=np.append(full_blob_data[key],
-                                                  np.mean(curr_blob_data[key]))
+                    full_blob_db_data[key]=np.append(full_blob_db_data[key],
+                                                  np.mean(curr_shot_data[key]))
     
-                    full_blob_error[key]=np.append(full_blob_error[key],
-                                                   np.mean(curr_blob_error[key]) /
-                                                   np.sqrt(len(curr_blob_error[key])))
+                    full_blob_db_error[key]=np.append(full_blob_db_error[key],
+                                                      np.mean(curr_shot_error[key]) /
+                                                      np.sqrt(len(curr_shot_error[key])))
                 else:
-                    full_blob_data[key]=np.append(full_blob_data[key],
-                                                  {'shot':shot,
-                                                   'data':curr_blob_data[key]})
+                    full_blob_db_data[key]=np.append(full_blob_db_data[key],
+                                                     {'shot':shot,
+                                                      'data':curr_shot_data[key]})
+                    
+            remaining_time=(time_mod.time()-start_time)*(ncalc-ind-1)
+
+            hours = int(remaining_time // 3600)
+            minutes = int((remaining_time % 3600) // 60)
+            seconds = int(remaining_time % 60)
+
+            print('\rRemaining time from the calculation: '+f"{hours}h {minutes:02}min {seconds:02}sec", end="", flush=True)
+        print(f'Total number of structures: {n_str}')
+        
         if not read_h_mode_only and not read_l_mode_only:
-            pickle.dump(full_blob_data,open(pickle_filename,'wb'))
+            pickle.dump(full_blob_db_data,open(pickle_filename,'wb'))
     else:
-        full_blob_data=pickle.load(open(pickle_filename,'rb'))
+        full_blob_db_data=pickle.load(open(pickle_filename,'rb'))
 
-    return full_blob_data
+    return full_blob_db_data
 
 
+def read_blob_data(shot,
+                   time_range,
+                   calculate_only=False,
+                   nocalc=True,
+                   min_structure_lifetime=20,
+                   recalc_tracking=False,
+                   str_finding_method='watershed',
+                   max_gap=1,
+                   verbose=False,
+                   ):
+    """
+    Wrapper function for running analyze_gpi_structures with only the essential input
+    parameters.
 
-def read_all_plasma_data(time_range_around_peak=5e-3,
-                         nocalc=False,
-                         read_l_mode_only=False,
-                         read_h_mode_only=False,
-                         calculate_parameters_in_sol=False,
-                         ):
-    
-    pickle_filename_plasma_l_mode=wd+'/processed_data/plasma_vs_blob_plasma_data_l_mode'
-    pickle_filename_plasma_h_mode=wd+'/processed_data/plasma_vs_blob_plasma_data_h_mode'
-    
-    if read_l_mode_only:
-        pickle_filename=pickle_filename_plasma_l_mode
-    elif read_h_mode_only:
-        pickle_filename=pickle_filename_plasma_h_mode
-    else:
-        pickle_filename=wd+'/processed_data/plasma_vs_blob_plasma_data_full'
-    if calculate_parameters_in_sol:
-        pickle_filename+='_sol'
-        
-    pickle_filename+='.pickle'
-    
-    # pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_plasma.pickle'
-    if read_l_mode_only:
-        blob_database=read_blob_lh_mode_database(l_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
-    elif read_h_mode_only:
-        blob_database=read_blob_lh_mode_database(h_mode=True,
-                                                 time_range_around_peak=time_range_around_peak)
-    else:
-        blob_database=read_blob_database(time_range_around_peak=time_range_around_peak,)
+    Parameters
+    ----------
+    shot : float/int
+        shot number.
+    time_range : list
+        time range of the calculation.
+    calculate_only : boolean, optional
+        Calculation only, no plotting. The default is False.
+    nocalc : TYPE, optional
+        Switch for not recalculating already existing results. The default is True.
+    min_structure_lifetime : TYPE, optional
+        Minimum structures lifetime in frame number. Over this value, the identified structures will be dropped
+        The default is 20 (50us).
+    recalc_tracking : boolean, optional
+        Recalculate tracking but not the segmentation. The default is False.
+    str_finding_method : string, optional
+        Method for structure tracking. Either watershed or contour. The default is 'watershed'.
+    max_gap : integer, optional
+        The maximum frame number to go back during tracking calculation to fix segmentation errors. The default is 1.
+    verbose : TYPE, optional
+        Suppresses messages. Useful for long calculations. The default is False.
 
-    if (not os.path.exists(pickle_filename) or not nocalc):
-        # or read_l_mode_only or read_h_mode_only or calculate_parameters_in_sol):
-        
-    # if True:
-        ncalc=len(blob_database['shot'])
 
-        curr_plasma_data=read_plasma_parameters(exp_id=blob_database['shot'][0],
-                                                time=blob_database['time'][0],
-                                                calculate_parameters_in_sol=calculate_parameters_in_sol)
-        full_plasma_data={}
-        for key in curr_plasma_data:
-            full_plasma_data[key]=[]
+    Returns
+    -------
+    blob_results : dictionary
+        Same as from analyze_gpi_structures having {data,time,structures}.
 
-        for ind in range(ncalc):
-            blob_time=blob_database['time'][ind]
-            shot=blob_database['shot'][ind]
-
-            curr_plasma_data=read_plasma_parameters(exp_id=shot,
-                                                    time=blob_time,
-                                                    calculate_parameters_in_sol=calculate_parameters_in_sol)
-            for key in curr_plasma_data.keys():
-                full_plasma_data[key]=np.append(full_plasma_data[key],
-                                                curr_plasma_data[key])
-                
-        
-        pickle.dump(full_plasma_data,open(pickle_filename,'wb'))
-    else:
-        full_plasma_data=pickle.load(open(pickle_filename,'rb'))
-        
-    return full_plasma_data
-
-def read_blob_results(shot,
-                      time_range,
-                      calculate_only=False,
-                      nocalc=True,
-                      min_structure_lifetime=20,
-                      recalc_tracking=False,
-                      str_finding_method='watershed',
-                      ):
+    """
     try:
     # if True:
-        blob_results=analyze_gpi_structures(exp_id=shot,
-                                            time_range=time_range,
-                                            normalize='simple',
-                                            str_finding_method=str_finding_method,
-                                            threshold_bg_multiplier=2.,
-                                            ellipse_method='linalg',
-                                            fit_shape='ellipse',
-                                            smooth_contours=5,
-
-                                            tracking='weighted',
-                                            matrix_weight={'iou':1,'cccf':0},
-                                            ignore_side_structures=True,
-                                            remove_orphans=True,
-                                            min_structure_lifetime=min_structure_lifetime,
-                                            tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
-                                            score_threshold=0.7,
-
-                                            nocalc=nocalc,
-                                            recalc_tracking=recalc_tracking,
-                                            structure_pixel_calc=False,
-                                            fix_structure_angles=True,
-                                            
-                                            test_structures=False,
-                                            return_results=not calculate_only,
-
-                                            plot=False,
-                                            plot_str_by_str=True,
-                                            plot_scatter=True,
-                                            plot_tracking=True,
-                                            calculate_rough_diff_velocities=False,
-                                            plot_for_publication=True,
-                                            pdf=False,
-                                            structure_pdf_save=False,
-                                            structure_video_save=False,
-                                            test=False,
-                                            )
+        blob_results = analyze_gpi_structures(exp_id=shot,
+                                              time_range=time_range,
+                                              normalize='simple',
+                                              str_finding_method=str_finding_method,
+                                              threshold_bg_multiplier=2.,
+                                              ellipse_method='linalg',
+                                              fit_shape='ellipse',
+                                              smooth_contours=5,
+                                              
+                                              tracking='weighted',
+                                              matrix_weight={'iou':1,'cccf':0},
+                                              ignore_side_structures=True,
+                                              remove_orphans=True,
+                                              max_gap=max_gap,
+                                              min_structure_lifetime=min_structure_lifetime,
+                                              tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
+                                              score_threshold=0.7,
+                                              
+                                              nocalc=nocalc,
+                                              recalc_tracking=recalc_tracking,
+                                              structure_pixel_calc=False,
+                                              fix_structure_angles=True,
+                                              
+                                              test_structures=False,
+                                              return_results=not calculate_only,
+                                              
+                                              plot=False,
+                                              plot_str_by_str=True,
+                                              plot_scatter=True,
+                                              plot_tracking=True,
+                                              calculate_rough_diff_velocities=False,
+                                              plot_for_publication=True,
+                                              pdf=False,
+                                              structure_pdf_save=False,
+                                              structure_video_save=False,
+                                              test=False,
+                                              verbose=verbose,
+                                              )
         if not calculate_only:
             return blob_results
 
     except Exception as e:
        print('Exception in read_data_for_analyze_blob_database.py line 345.')
        print(e)
+       print(f"Couldn't calculate {shot}, at {time_range} seconds.")
+       
        if not calculate_only:
            return None
 
+#TODO:rename 
+def calculate_blob_parameter_histograms2(time_range_around_peak=5e-3,
+                                        calc_mean_distribution=False,
+                                        nocalc=True,
+                                        recalc_tracking=False,
+                                        min_structure_lifetime=20,
+                                        str_finding_method='watershed',
+                                        analyze_h_mode_only=False,
+                                        analyze_l_mode_only=False,
+                                        ):
+    """
+    Just for reading the data, should be merged with read data and the indices
+    of differential and normal data would need to be handled properly.
+    """
 
+    if calc_mean_distribution:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_mean_'+str_finding_method+'.pickle'
+    else:
+        pickle_filename=wd+'/processed_data/blob_database_full_data_nomean_'+str_finding_method+'.pickle'
 
+    if not analyze_h_mode_only and not analyze_l_mode_only:
+        blob_database=read_blob_database_file(time_range_around_peak=time_range_around_peak)
+    elif analyze_h_mode_only:
+        blob_database=read_blob_lh_mode_database_file(h_mode=True,
+                                                 time_range_around_peak=time_range_around_peak)
+    elif analyze_l_mode_only:
+        blob_database=read_blob_lh_mode_database_file(l_mode=True,
+                                                      time_range_around_peak=time_range_around_peak)
+        
+    analyzed_keys=read_analyzed_keys()
+    
+    additional_diff_keys=['Convexity', 'Solidity', 'Roundness', 'Total curvature',
+                          'Total bending energy','Area','Elongation']
 
-def read_blob_database(time_range_around_peak=5e-3,
-                       blob_db_file='/Users/mlampert/work/NSTX_workspace/db/2010.csv',
-                       elm_db_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv',
-                       nofilter=False
-                       ):
+    ncalc=len(blob_database['shot'])
+
+    full_data={}
+
+    for key in analyzed_keys:
+        full_data[key]=[]
+        
+    for key in additional_diff_keys:
+        full_data[key+' diff']=[]
+
+    if not os.path.exists(pickle_filename) or not nocalc or analyze_l_mode_only or analyze_h_mode_only:
+        n_str=0
+        for ind in range(ncalc):
+            blob_time=blob_database['time'][ind]
+            start_time=time_mod.time()
+            blob_results=read_blob_data(blob_database['shot'][ind],
+                                        [blob_time-time_range_around_peak,
+                                         blob_time+time_range_around_peak],
+                                        nocalc=True,
+                                        recalc_tracking=recalc_tracking,
+                                        min_structure_lifetime=min_structure_lifetime,
+                                        str_finding_method=str_finding_method,
+                                        )
+
+            flap.delete_data_object('*')
+            str_by_str=transform_frames_to_structures(blob_results)
+
+            for ind_str, structure in enumerate(str_by_str):
+                n_str+=1
+                for key in analyzed_keys:
+                    if key in          ['Velocity radial COG', 'Velocity poloidal COG',
+                                       'Velocity radial centroid', 'Velocity poloidal centroid',
+                                       'Velocity radial position', 'Velocity poloidal position',
+                                       'Expansion fraction area', 'Expansion fraction axes',
+                                       'Angular velocity angle', 'Angular velocity ALI']:
+                        full_data[key]=np.append(full_data[key],
+                                                 structure[key])
+                    else:
+                        full_data[key]=np.append(full_data[key],
+                                                 structure[key][1:])
+
+                for key in additional_diff_keys:
+                    diff=(np.asarray(structure[key])[1:] - np.asarray(structure[key])[0:-1])
+                    full_data[key+' diff']=np.append(full_data[key+' diff'],diff)
+            remaining_time=(time_mod.time()-start_time)*(ncalc-ind-1)
+
+            hours = int(remaining_time // 3600)
+            minutes = int((remaining_time % 3600) // 60)
+            seconds = int(remaining_time % 60)
+
+            print('\rRemaining time from the calculation: '+f"{hours}h {minutes:02}min {seconds:02}sec", end="", flush=True)
+        print(f'Total number of structures: {n_str}')
+        
+        if not analyze_h_mode_only and not analyze_l_mode_only:
+            pickle.dump(full_data,open(pickle_filename,'wb'))
+    else:
+        full_data=pickle.load(open(pickle_filename,'rb'))
+
+    return full_data
+
+def read_blob_database_file(time_range_around_peak=5e-3,
+                            blob_db_file='/Users/mlampert/work/NSTX_workspace/db/2010.csv',
+                            elm_db_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv',
+                            nofilter=False
+                            ):
+    """
+    Reads the blob database from db/2010.csv Same shots as in 2010_all.csv with
+    a different quality assessment (from S. Zweben). Filteres the database
+    with the nofilter=False switch based on the ELM database by M. Lampert in
+    db/ELM_findings_mlampert_velocity_good.csv'
+
+    Parameters
+    ----------
+    time_range_around_peak : float, optional
+        Finds elms in the time range around the peak and the database is filtered based on this range. The default is 5e-3.
+    blob_db_file : string, optional
+        Database of the blobs. The default is '/Users/mlampert/work/NSTX_workspace/db/2010.csv'.
+    elm_db_file : string, optional
+        Database of the ELMs. The default is '/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good.csv'.
+    nofilter : boolean, optional
+        Filters the database based on ELMs in elm_db_files. The default is False.
+
+    Returns
+    -------
+    blob_database : dictionary
+        {'shot':shot list,
+         'time':time list}.
+
+    """
 
     database=np.asarray(pandas.read_csv(blob_db_file))
     ind_shots=np.where(database[:,2]==0)
@@ -395,39 +551,44 @@ def read_blob_database(time_range_around_peak=5e-3,
     return blob_database
 
 
+def read_blob_lh_mode_database_file(l_mode=False,
+                                    h_mode=False,
+                                    filtered_blob_db=True, #filter the database to shots read by read_blob_database
+                                    time_range_around_peak=None,
+                                    filter_lh_transition=False,
+                                    filter_elms=False,
+                                    ):
+    """
+    Reads either the l-mode or the h-mode database from the db/2010_all.csv directory.
 
+    Parameters
+    ----------
+    l_mode : boolean, optional
+        Reads the L-mode database. The default is False.
+    h_mode : boolean, optional
+        Reads the H-mode database. The default is False.
+    filtered_blob_db : boolean, optional
+        Reads a filtered database based on the ELM database. It removes a lot of shots,
+        but then no post ELM processing is needed. The default is True.
+    time_range_around_peak : float or list, optional
+        if float:. The default is None.
+    filter_lh_transition : boolean, optional
+        filter the database for lh transitions in the database. The default is False.
+    filter_elms : boolean, optional
+        filter the database for elms in the database file. The default is False.
 
-def read_blob_elm_database(time_range_around_peak=5e-3,
-                           blob_db_file='/Users/mlampert/work/NSTX_workspace/db/2010.csv',
-                           elm_db_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good_ne.csv',
-                           nofilter=False
-                           ):
+    Raises
+    ------
+    ValueError
+        Raised of neither l_mode or h_mode are set.
 
-    database=np.asarray(pandas.read_csv(blob_db_file))
-    ind_shots=np.where(database[:,2]==0)
-    blob_shots=database[ind_shots,0][0,:]
-    peak_times=database[ind_shots,1][0,:]/1000.
-    blob_database={'shot':blob_shots,
-                   'time':peak_times}
+    Returns
+    -------
+    database : dictionary
+        {shot: list of shots
+         time: either list of times (for time_range_around_peak=float) or list of time ranges (for time_range_around_peak=[time_before, time_after])}
 
-    db=pandas.read_csv(elm_db_file, index_col=0)
-    elm_shots=np.asarray(db)[:,1]
-    elm_times=np.asarray(db)[:,3]
-    elm_database={'shot':elm_shots,
-                  'time':elm_times}
-    database={}
-    for key in ['shot','time']:
-        database[key]=np.append(blob_database[key],elm_database[key])
-
-    return database
-
-def read_blob_lh_mode_database(l_mode=False,
-                               h_mode=False,
-                               filtered_blob_db=True, #filter the database to shots read by read_blob_database
-                               time_range_around_peak=None,
-                               filter_lh_transition=False,
-                               filter_elms=False,
-                               ):
+    """
     
     all_db_file='/Users/mlampert/work/NSTX_workspace/db/2010_all.csv'
     
@@ -436,20 +597,20 @@ def read_blob_lh_mode_database(l_mode=False,
     elif h_mode:
         find_string='H-mode'
     else:
-        raise ValueError('EIther l_mode or h_mode needs to be set.')
+        raise ValueError('Either l_mode or h_mode needs to be set.')
     
     all_database=pandas.read_csv(all_db_file)
-    all_database['peak signal'] /= 1e3
+    all_database['peak GPI time (ms)'] /= 1e3
     lh_mode_shot_inds=[ind for ind,item in enumerate(list(all_database['comments by Ricky'])) if find_string in item]
     lh_mode_shots=all_database['shot'][np.asarray(lh_mode_shot_inds)]
     
     if filtered_blob_db:
         if time_range_around_peak is not None:
-            blob_shots=read_blob_database(time_range_around_peak=time_range_around_peak)['shot']
-            blob_times=read_blob_database(time_range_around_peak=time_range_around_peak)['time']
+            blob_shots=read_blob_database_file(time_range_around_peak=time_range_around_peak)['shot']
+            blob_times=read_blob_database_file(time_range_around_peak=time_range_around_peak)['time']
         else:
-            blob_shots=read_blob_database()['shot']
-            blob_times=read_blob_database()['time']
+            blob_shots=read_blob_database_file()['shot']
+            blob_times=read_blob_database_file()['time']
         lh_mode_shots_in_blob_db=([int(shot) for shot in blob_shots if shot in np.asarray(lh_mode_shots)])
         lh_mode_times_in_blob_db=np.asarray([time for time,shot in zip(blob_times, blob_shots) if shot in np.asarray(lh_mode_shots)])
         database={'shot':lh_mode_shots_in_blob_db,
@@ -467,8 +628,8 @@ def read_blob_lh_mode_database(l_mode=False,
         if time_range_around_peak is not None:
                     
             database={'shot':np.asarray(all_database['shot'][lh_mode_shot_inds]),
-                      'time':np.asarray([all_database['peak signal'][lh_mode_shot_inds]-time_range_around_peak[0],
-                                         all_database['peak signal'][lh_mode_shot_inds]+time_range_around_peak[1]])}
+                      'time':np.asarray([all_database['peak GPI time (ms)'][lh_mode_shot_inds]-time_range_around_peak[0],
+                                         all_database['peak GPI time (ms)'][lh_mode_shot_inds]+time_range_around_peak[1]])}
         
             if filter_lh_transition:
                 lh_mode_shot_inds=list(lh_mode_shot_inds)
@@ -480,8 +641,8 @@ def read_blob_lh_mode_database(l_mode=False,
                 
             if filter_elms:
                 for ind_index, ind in enumerate(lh_mode_shot_inds):
-                    if (all_database['ELM time'][ind] > all_database['peak signal'][ind]-[time_range_around_peak[0]] and 
-                        all_database['ELM time'][ind] < all_database['peak signal'][ind]+time_range_around_peak[1]):
+                    if (all_database['ELM time'][ind] > all_database['peak GPI time (ms)'][ind]-[time_range_around_peak[0]] and 
+                        all_database['ELM time'][ind] < all_database['peak GPI time (ms)'][ind]+time_range_around_peak[1]):
                         lh_mode_shot_inds.pop(ind_index)
                         # if (np.abs(all_database['ELM time'][ind]-(all_database['peak signal'][ind])-time_range_around_peak)<
                         #     (all_database['peak signal'][ind])+time_range_around_peak-np.abs(all_database['ELM time'][ind])):
@@ -490,16 +651,140 @@ def read_blob_lh_mode_database(l_mode=False,
                         #     database['time'][1,ind_index]=all_database['ELM time'][ind]
         else:   
             database={'shot':np.asarray(all_database['shot'][lh_mode_shot_inds]),
-                      'time':np.asarray(all_database['peak signal'][lh_mode_shot_inds])}
+                      'time':np.asarray(all_database['peak GPI time (ms)'][lh_mode_shot_inds])}
         
     return database
 
 
 
+def read_all_plasma_data(time_range_around_peak=5e-3,
+                         nocalc=False,
+                         read_l_mode_only=False,
+                         read_h_mode_only=False,
+                         calculate_parameters_in_sol=False,
+                         ):
+    """
+    Reads all plasma data from either read_blob_lh_mode_database or read_blob_database
+    shots.
+
+    Parameters
+    ----------
+    time_range_around_peak : float, optional
+        Filtering of the database for ELMs is based on this time range around the peak. The default is 5e-3.
+    nocalc : boolean, optional
+        If set, plasma parameters are read from the already saved dadtabase. The default is False.
+    read_l_mode_only : boolean, optional
+        Read only l-mode plasma data. The default is False.
+    read_h_mode_only : boolean, optional
+        Read only h-mode plasma data. The default is False.
+    calculate_parameters_in_sol : boolean, optional
+        Calculate parameters in the scrape-off layer. The default is False.
+
+    Returns
+    -------
+    full_plasma_data : list
+        List of dictionaries from read_plasma_parameters().
+
+    TODO: read_blob_lh_mode_database was modified. This code has to be modified
+    to accommodate the new database that can have time ranges in it instead of
+    a single time point.
+
+    """
+    
+    
+    
+    pickle_filename_plasma_l_mode=wd+'/processed_data/plasma_vs_blob_plasma_data_l_mode'
+    pickle_filename_plasma_h_mode=wd+'/processed_data/plasma_vs_blob_plasma_data_h_mode'
+    
+    if read_l_mode_only:
+        pickle_filename=pickle_filename_plasma_l_mode
+    elif read_h_mode_only:
+        pickle_filename=pickle_filename_plasma_h_mode
+    else:
+        pickle_filename=wd+'/processed_data/plasma_vs_blob_plasma_data_full'
+    if calculate_parameters_in_sol:
+        pickle_filename+='_sol'
+        
+    pickle_filename+='.pickle'
+    
+    # pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_plasma.pickle'
+    if read_l_mode_only:
+        blob_database=read_blob_lh_mode_database_file(l_mode=True,
+                                                 time_range_around_peak=time_range_around_peak)
+    elif read_h_mode_only:
+        blob_database=read_blob_lh_mode_database_file(h_mode=True,
+                                                 time_range_around_peak=time_range_around_peak)
+    else:
+        blob_database=read_blob_database_file(time_range_around_peak=time_range_around_peak,)
+
+    if (not os.path.exists(pickle_filename) or not nocalc):
+        # or read_l_mode_only or read_h_mode_only or calculate_parameters_in_sol):
+        
+    # if True:
+        ncalc=len(blob_database['shot'])
+
+        curr_plasma_data=read_plasma_parameters(exp_id=blob_database['shot'][0],
+                                                time=blob_database['time'][0],
+                                                calculate_parameters_in_sol=calculate_parameters_in_sol)
+        full_plasma_data={}
+        for key in curr_plasma_data:
+            full_plasma_data[key]=[]
+
+        for ind in range(ncalc):
+            blob_time=blob_database['time'][ind]
+            shot=blob_database['shot'][ind]
+
+            curr_plasma_data=read_plasma_parameters(exp_id=shot,
+                                                    time=blob_time,
+                                                    calculate_parameters_in_sol=calculate_parameters_in_sol)
+            for key in curr_plasma_data.keys():
+                full_plasma_data[key]=np.append(full_plasma_data[key],
+                                                curr_plasma_data[key])
+                
+        
+        pickle.dump(full_plasma_data,open(pickle_filename,'wb'))
+    else:
+        full_plasma_data=pickle.load(open(pickle_filename,'rb'))
+        
+    return full_plasma_data
+
+
 def read_plasma_parameters_for_table_in_paper(database=None,
                                               print_ranges=False):
+    """
+    Reads the plasma parameter ranges for an overview table in the paper. Uses
+    the code 
+    
+    read_plasma parameters()
+    
+    to read the parameters for each shot in the database read by read_blob_database()
+    or the database provided in the input parameters.
+
+    Parameters
+    ----------
+    database : TYPE, optional
+        Shot database input. The default is None.
+    print_ranges : TYPE, optional
+        Print the calculated ranges for the plasma parameters. The default is False.
+
+    Returns
+    -------
+    collisionality : list
+        A list of all the average collisionalities for shots in the database.
+    q95 : list
+        A list of all the average q95 for shots in the database.
+    greenwald : list
+        A list of all the average greenwald fractions for shots in the database.
+    current : list
+        A list of all the average currents for shots in the database.
+    btoroidal : list
+        A list of all the average btoroidal for shots in the database.
+    density : list
+        A list of all the average density for shots in the database.
+
+    """
     if database is None:
-        database=read_blob_database()
+        database=read_blob_database_file()
 
     density=[]
     current=[]
@@ -511,7 +796,7 @@ def read_plasma_parameters_for_table_in_paper(database=None,
     pdf_pages_temperature=PdfPages(wd+'/plots/blob_database_temperature_fits.pdf')
 
     for ind_shot in range(len(database['shot'])):
-        print(ind_shot/len(database['shot'])*100,'% done from the calculation.')
+        print(f"\r{ind_shot/len(database['shot'])*100} % done from the calculation.", flush=True, end='')
         time_curr=database['time'][ind_shot]
         shot=database['shot'][ind_shot]
 
@@ -552,6 +837,30 @@ def read_plasma_parameters(exp_id=None,
                            calculate_parameters_in_sol=False,
                            temperature_threshold=5e-3 #5eV threshold for SOL temperature, below plasma would be detached which it isn't
                            ):
+    """
+    Reads all important plasma parameters from the MDSplus database.
+
+    Parameters
+    ----------
+    exp_id : integer, optional
+        Shot number. The default is None.
+    time : float, optional
+        Time of the plasma parameter to be calculated. The default is None.
+    pdf_pages_density : PdfPages matplotlib object, optional
+        PDFpages matplotlib object for plotting the density profiles. The default is None.
+    pdf_pages_temperature : PdfPages matplotlib object, optional
+        PdfPages matplotlib object for plotting the density profiles. The default is None.
+    calculate_parameters_in_sol : boolean, optional
+        Switch for calculating parameters in the SOL. Here, uncertainty is high. The default is False.
+    temperature_threshold : TYPE, optional
+        #5eV threshold for SOL temperature, below plasma would be detached which it isn't. The default is 5e-3.
+
+    Returns
+    -------
+    dict
+        Dictionary with the plasma parameters.
+
+    """
 
     #THESE READ THE ENTIRE SHOT"S PROFILES AND FIT THEM
     ne_params=get_fit_nstx_thomson_profiles(exp_id=exp_id,
@@ -1006,19 +1315,23 @@ def read_plasma_parameters(exp_id=None,
             }
 
 def return_interesting(with_plasma_frequency=False):
-    # interesting_key_pairs=np.asarray([['Axes length minor','Line integrated density'],
-    #                                   ['Angle of least inertia','Line integrated density'],
-    #                                   ['Angle of least inertia','Sound speed'],
-    #                                   ['Angle of least inertia','Plasma frequency'],
-    #                                   ['Angle of least inertia','Pressure at max'],
-    #                                   ['Velocity poloidal centroid','Temperature pedestal width'],
-    #                                   ['Velocity poloidal centroid','Collisionality'],
-    #                                   ['Velocity poloidal centroid','Plasma frequency'],
-    #                                   ['Velocity poloidal centroid','Density at max'],
-    #                                   ['Angular velocity ALI','Line integrated density'],
-    #                                   ['Angular velocity ALI','Collisionality'],
-    #                                   ['Angular velocity ALI','Plasma frequency'],
-    #                                   ])
+    """
+    Returns the interesting key paramaters for plotting data for publications.
+
+    Parameters
+    ----------
+    with_plasma_frequency : boolean, optional
+        DESCRIPTION. The default is False.
+
+    Returns
+    -------
+    interesting_key_pairs : array
+        Returns an array with interesting key pairs for plotting. One can set whether the key pairs with plasma frequency are returned.
+    units :                 dictionary
+        Returns the axis labels for the interesting key pairs as [label, unit, multiplier for data to get it into "unit" units].
+
+    """
+    
     if not with_plasma_frequency:
         interesting_key_pairs=np.asarray([['Axes length minor','Line integrated density'], #
                                           ['Angle of least inertia','Line integrated density'],
@@ -1069,3 +1382,47 @@ def return_interesting(with_plasma_frequency=False):
            }
     
     return (interesting_key_pairs,units)
+
+def read_blob_elm_database(time_range_around_peak=5e-3,
+                           blob_db_file='/Users/mlampert/work/NSTX_workspace/db/2010.csv',
+                           elm_db_file='/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good_ne.csv',
+                           nofilter=False
+                           ):
+    """
+    Obsolete.
+
+    Parameters
+    ----------
+    time_range_around_peak : TYPE, optional
+        DESCRIPTION. The default is 5e-3.
+    blob_db_file : TYPE, optional
+        DESCRIPTION. The default is '/Users/mlampert/work/NSTX_workspace/db/2010.csv'.
+    elm_db_file : TYPE, optional
+        DESCRIPTION. The default is '/Users/mlampert/work/NSTX_workspace/db/ELM_findings_mlampert_velocity_good_ne.csv'.
+    nofilter : TYPE, optional
+        DESCRIPTION. The default is False.
+
+    Returns
+    -------
+    database : TYPE
+        DESCRIPTION.
+
+    """
+
+    database=np.asarray(pandas.read_csv(blob_db_file))
+    ind_shots=np.where(database[:,2]==0)
+    blob_shots=database[ind_shots,0][0,:]
+    peak_times=database[ind_shots,1][0,:]/1000.
+    blob_database={'shot':blob_shots,
+                   'time':peak_times}
+
+    db=pandas.read_csv(elm_db_file, index_col=0)
+    elm_shots=np.asarray(db)[:,1]
+    elm_times=np.asarray(db)[:,3]
+    elm_database={'shot':elm_shots,
+                  'time':elm_times}
+    database={}
+    for key in ['shot','time']:
+        database[key]=np.append(blob_database[key],elm_database[key])
+
+    return database

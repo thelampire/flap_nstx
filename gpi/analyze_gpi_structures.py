@@ -487,7 +487,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
             for i_frames in range(n_frames):
 
-                print(str(int(i_frames/(n_frames-1)*100.))+"% done from the calculation.")
+                print(f"\r{i_frames/(n_frames-1)*100.}% done from the calculation.", end="", flush=True)
 
                 slicing_frame={'Sample':sample_0+i_frames}
 
@@ -550,7 +550,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       surface_data_obj=surface_data_obj,
                                                       plot_separatrix=plot_separatrix,
                                                       separatrix_data=separatrix_data,
-                                                      save_data_for_publication=save_data_for_publication)
+                                                      save_data_for_publication=save_data_for_publication,
+                                                      verbose=verbose)
 
                 if plot_watershed_steps and i_frames == plot_watershed_steps:
                     plt.tight_layout(pad=0.1)
@@ -1931,8 +1932,6 @@ def frame_properties_dict(exp_id, time, time_unit, distance_unit):
     frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
 
     return frame_properties
-
-
 
 def read_analyzed_keys():
 
