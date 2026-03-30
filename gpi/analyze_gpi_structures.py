@@ -22,7 +22,6 @@ flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.gpi import normalize_gpi, identify_structures, track_structures
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
-from flap_nstx.tools import fringe_jump_correction
 
 import flap_mdsplus
 
@@ -148,18 +147,164 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            verbose=False,
                            skip_mdsplus=False,
                            ):
+    
+    """
+    Analyzes Gas Puff Imaging (GPI) structures in plasma physics data.
+
+    (Gemini generated docstring)
+
+    This function performs comprehensive structure identification, size processing,
+    tracking, and velocity calculation on GPI data. It handles data normalization,
+    contour/watershed segmentation, tracking structures over time, and generating 
+    various diagnostic plots and video outputs.
+
+    Args:
+        --- General Inputs ---
+        exp_id (int, optional): Shot number for the experiment.
+        time_range (list or tuple, optional): The time range [start, end] for the calculation.
+        data_object (object, optional): Input data object if available from outside 
+            (e.g., generated synthetic signal).
+        x_range (list or tuple, optional): X-axis spatial range for the calculation.
+        y_range (list or tuple, optional): Y-axis spatial range for the calculation.
+
+        --- Normalizer Inputs ---
+        normalize (str, optional): Normalization options. 
+            Options include: None (no normalization), 'roundtrip' (zero phase LPF IIR filter), 
+            'halved' (different normalization for before and after the ELM), or 
+            'simple' (simple low-pass filtered normalization). Defaults to 'simple'.
+        normalize_f_kernel (str, optional): The kernel type for filtering the gas cloud. 
+            Defaults to 'Elliptic'.
+        normalize_f_high (float, optional): High-pass frequency for the normalizer data. 
+            Defaults to 1e3.
+
+        --- Structure Pre-processing ---
+        str_finding_method (str, optional): 'contour' or 'watershed' based structure finding. 
+            Defaults to 'watershed'.
+        ignore_side_structures (bool, optional): If True, ignores structures touching the edges.
+        ellipse_method (str, optional): Method for fitting ellipses. Defaults to 'linalg'.
+        fit_shape (str, optional): Shape to fit to the structures. Defaults to 'ellipse'.
+        subtraction_order (int, optional): Polynomial subtraction order.
+        remove_interlaced_structures (bool, optional): Merge found structures which contain 
+            each other. Defaults to True.
+
+        --- Structure Processing ---
+        nlevel (int, optional): Number of contour levels for structure size and velocity 
+            calculation. Defaults to 51.
+        filter_level (int, optional): Number of embedded paths to be identified as an 
+            individual structure. Defaults to 5.
+        global_levels (bool, optional): Set to True for structure identification based on a 
+            global intensity level. Defaults to False.
+        levels (list, optional): Contour levels for the entire dataset. If None, it dynamically 
+            calculates based on data min/max divided into `nlevel` intervals.
+        threshold_method (str, optional): Method ('variance' or 'background') for size 
+            calculation. Defaults to 'variance'.
+        threshold_coeff (float, optional): Variance multiplier threshold for size determination. 
+            Defaults to 1.0.
+        threshold_bg_range (dict, optional): ROI where background intensity is calculated 
+            for background subtraction. Defaults to {'x':[54,65], 'y':[0,79]}.
+        threshold_bg_multiplier (float, optional): Background multiplier for thresholding. 
+            Defaults to 2.0.
+        weighting (str, optional): Weighting of results ('number', 'intensity', or 'area' 
+            of structures). Defaults to 'intensity'.
+        maxing (str, optional): Return properties of structures with the largest 'area' 
+            or 'intensity'. Defaults to 'intensity'.
+        prev_str_weighting (str, optional): Weighting for differential quantities like angular 
+            and linear velocity. Defaults to 'intensity'.
+        str_size_lower_thres (float, optional): Minimum size threshold; structures below this 
+            are filtered out. Defaults to 0.015 (4 pixels for radial/poloidal).
+        elongation_threshold (float, optional): Structures with major/minor_axis-1 lower than 
+            this have angle set to np.nan. Defaults to 0.1.
+
+        --- Tracking ---
+        tracking (str, optional): Tracking method ('overlap' or 'weighted'). Defaults to 'weighted'.
+        tracking_assignment (str, optional): Correspondence assignment method ('hungarian' 
+            or 'max_score'). Defaults to 'max_score'.
+        max_gap (int, optional): Maximum frame gap allowed for tracking a single structure. 
+            Defaults to 1.
+        smooth_contours (int, optional): Number of times to smooth contours using the corner 
+            cutting technique. Defaults to 5.
+        remove_orphans (bool, optional): Remove structures living shorter than 
+            `min_structure_lifetime`. Defaults to True.
+        min_structure_lifetime (int, optional): Minimum frames a structure must exist to be kept. 
+            Defaults to 10.
+        calculate_rough_diff_velocities (bool, optional): (Deprecated) Calculate velocities 
+            from average or maximum structures. Defaults to False.
+        structure_pixel_calc (bool, optional): Calculate/plot structure sizes in pixels. 
+            Defaults to False.
+        score_threshold (float, optional): Threshold for weighted tracking. Defaults to 0.7.
+        matrix_weight (dict, optional): Tracking matrix weights for IoU (intersection over union) 
+            and CCCF (cross-correlation coefficient function). Defaults to {'iou': 1, 'cccf': 0}.
+        fix_structure_angles (bool, optional): Toggles fixing of incorrect angle calculations. 
+            Defaults to False.
+
+        --- Plotting Options ---
+        plot (bool, optional): Toggles main results plotting. Defaults to True.
+        pdf (bool, optional): Print results to a PDF. Defaults to False.
+        plot_error (bool, optional): Plot velocity calculation error bars (based on line fitting 
+            and RMS error). Defaults to False.
+        error_window (float, optional): Plot average signal with error bars from normalized variance. 
+            Defaults to 4.0.
+        overplot_average (bool, optional): Toggles overplotting the average. Defaults to True.
+        plot_tracking (bool, optional): Plot tracked structures with lines. Defaults to True.
+        plot_scatter (bool, optional): Add scatter points to line plots. Defaults to False.
+        structure_video_save (bool, optional): Save video of overplotted ellipses. Defaults to False.
+        video_start_frame (int, optional): Starting frame for saved video. Defaults to 0.
+        video_resolution (tuple, optional): Resolution for saved video. Defaults to (1024, 1024).
+        video_framerate (int, optional): Framerate for saved video. Defaults to 24.
+        nocolorbar (bool, optional): Suppress colorbars on plots. Defaults to False.
+        structure_pdf_save (bool, optional): Save structural finding algorithm output to PDF. 
+            Warning: can generate very large files. Defaults to False.
+        plot_separatrix (bool, optional): Overplot the separatrix. Defaults to True.
+        plot_flux_surfaces (bool, optional): Overplot flux surfaces. Defaults to True.
+        plot_time_range (list, optional): Specific time range for plotting, if different from 
+            read data.
+        plot_for_publication (bool, optional): Format plots to single-column sizes and 
+            golden ratio dimensions. Defaults to False.
+        plot_vertical_line_at (float, optional): X-axis value to draw a vertical reference line.
+        plot_str_by_str (bool, optional): Plot individual structures step-by-step.
+        plot_watershed_steps (int, optional): Frame/sample number to plot watershed segmentation steps.
+        plot_example_structure_frames (int, optional): Sample number to plot 10 example frames.
+        plot_example_frames_results (bool, optional): Plot example Area, Angle, Elongation, 
+            and Roundness for one shot. Defaults to False.
+        plot_nframe (int, optional): Number of frames to plot.
+        plot_ncol (int, optional): Number of columns for subplots.
+        linewidth (float, optional): Line width for plot elements.
+
+        --- File I/O & Output Options ---
+        filename (str, optional): Base filename for restoring/saving data.
+        save_results (bool, optional): Save results to a .pickle file (filename + .pickle). 
+            Defaults to True.
+        nocalc (bool, optional): Skip calculation and restore results from the .pickle file. 
+            Defaults to True.
+        recalc_tracking (bool, optional): Force recalculation of tracking. Defaults to False.
+        return_results (bool, optional): Return the calculated results dictionary/object. 
+            Defaults to False.
+        return_pixel_displacement (bool, optional): Return displacement in pixels instead of 
+            physical units. Defaults to False.
+        cache_data (bool, optional): Cache data or attempt to read from cache. Defaults to True.
+        save_data_for_publication (bool, optional): Export data formats optimized for publication. 
+            Defaults to False.
+        verbose (bool, optional): Enable detailed logging output. Defaults to False.
+        skip_mdsplus (bool, optional): Skip reading data from the MDSplus tree. Defaults to False.
+
+        --- Testing Options ---
+        test (bool, optional): Run general tests on results. Defaults to False.
+        test_structures (bool, optional): Test the structure size calculation. Defaults to False.
+        test_histogram (bool, optional): Plot the poloidal velocity histogram for debugging. 
+            Defaults to False.
+
+    Returns:
+        Varies based on flags. If `return_results` is True, it returns the processed 
+        structure tracking and analysis data (a dict). Otherwise, 
+        returns None and saves output to files/plots.
+    """
+
+
 
     """
-    Calculate frame by frame average frame velocity of the NSTX GPI signal. The
-    code takes subsequent frames, calculates the 2D correlation function between
-    the two and finds the maximum. Based on the pixel shift and the sampling
-    time of the signal, the radial and poloidal velocity is calculated.
-    The code assumes that the structures present in the subsequent frames are
-    propagating with the same velocity. If there are multiple structures
-    propagating in e.g. different direction or with different velocities, their
-    effects are averaged over.
+    SETTING UP THE FILENAME FOR DATA SAVING
     """
-
+    
     #Input error handling
     if exp_id is None and data_object is None:
         raise ValueError('Either exp_id or data_object needs to be set for the calculation.')
@@ -168,7 +313,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         if time_range is None and filename is None:
             raise ValueError('It takes too much time to calculate the entire shot, please set a time_range.')
         else:
-            if type(time_range) is not list and filename is None:
+            if not isinstance(time_range, (list,np.ndarray)) and filename is None:
                 raise TypeError('time_range is not a list.')
             if filename is None and len(time_range) != 2:
                 raise ValueError('time_range should be a list of two elements.')
@@ -178,12 +323,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     if maxing not in ['area', 'intensity']:
         raise ValueError("Maxing can only be by the 'area' or 'intensity' of the structures.")
 
-    """
-    SETTING UP THE FILENAME FOR DATA SAVING
-    """
 
     if filename is None:
         comment=''
+        
         if normalize is not None:
             comment+=normalize
 
@@ -223,17 +366,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
     pickle_filename=filename+'.pickle'
     
-    if os.path.exists(pickle_filename) and nocalc:
-        try:
-            print('Loading '+pickle_filename)
-            pickle.load(open(pickle_filename, 'rb'))
-        except:
-            print('The pickle file cannot be loaded. Recalculating the results.')
-            nocalc=False
-            
-    elif nocalc:
+    if not os.path.exists(pickle_filename) and nocalc:
         print(pickle_filename)
-        print('The pickle file cannot be loaded. Recalculating the results.')
+        print('The pickle file does not exist. Recalculating the results.')
         nocalc=False
 
     if ((not test and not test_structures) or
@@ -242,35 +377,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         matplotlib.use('agg')
 
     if not nocalc or structure_video_save or plot_example_structure_frames:
-        if plot_flux_surfaces or plot_separatrix:
-            try:
-                if plot_separatrix:
-                    d_sep_x=flap.get_data('NSTX_MDSPlus',
-                                          name='\EFIT02::\RBDRY',
-                                          exp_id=exp_id,
-                                          object_name='SEP X OBJ'
-                                          )
 
-                    d_sep_y=flap.get_data('NSTX_MDSPlus',
-                                          name='\EFIT02::\ZBDRY',
-                                          exp_id=exp_id,
-                                          object_name='SEP Y OBJ'
-                                          )
-                else:
-                    d_sep_x=None
-                    d_sep_y=None
-
-                if plot_flux_surfaces:
-                    d_flux=flap.get_data('NSTX_MDSPlus',
-                                         name='\EFIT02::\PSIRZ',
-                                         exp_id=exp_id,
-                                         object_name='PSI RZ OBJ'
-                                         )
-                else:
-                    d_flux=None
-            except Exception as e:
-                print('Exception occurred in analyze_gpi_structures.py at line 272.')
-                print(e)
 
         if structure_pdf_save:
             filename=flap_nstx.tools.filename(exp_id=exp_id,
@@ -280,75 +387,77 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                               comment=comment,
                                               extension='pdf')
             pdf_structures=PdfPages(filename)
+            
         """
-        READING THE DATA
+        # READING THE DATA
         """
+        
         #Read data
         if data_object is None:
             print("\n------- Reading NSTX GPI data --------")
             if cache_data:
                 try:
-                    d=flap.get_data_object('GPI',exp_id=exp_id)
+                    data=flap.get_data_object('GPI',exp_id=exp_id)
                 except:
                     print('Data is not cached, it needs to be read.')
-                    d=flap.get_data('NSTX_GPI',exp_id=exp_id,
+                    data=flap.get_data('NSTX_GPI',exp_id=exp_id,
                                     name='',
                                     object_name='GPI')
             else:
-                d=flap.get_data('NSTX_GPI',exp_id=exp_id,
+                data=flap.get_data('NSTX_GPI',exp_id=exp_id,
                                 name='',
                                 object_name='GPI')
             if x_range is None or y_range is None:
-                x_range=[0, d.data.shape[1]-1]
-                y_range=[0, d.data.shape[2]-1]
+                x_range=[0, data.data.shape[1]-1]
+                y_range=[0, data.data.shape[2]-1]
 
             slicing={'Time':flap.Intervals(time_range[0],time_range[1]),
                      'Image x':flap.Intervals(x_range[0],x_range[1]),
                      'Image y':flap.Intervals(y_range[0],y_range[1])}
 
-            d=flap.slice_data('GPI',
+            data=flap.slice_data('GPI',
                               exp_id=exp_id,
                               slicing=slicing,
                               output_name='GPI_SLICED_FULL')
 
-        elif type(data_object) == str:
+        elif isinstance(data_object, str):
             if exp_id is None:
                 exp_id='*'
 
-            d=flap.get_data_object(data_object,
+            data=flap.get_data_object(data_object,
                                    exp_id=exp_id)
-            time_range=[d.coordinate('Time')[0][0,0,0],
-                        d.coordinate('Time')[0][-1,0,0]]
-            exp_id=d.exp_id
+            time_range=[data.coordinate('Time')[0][0,0,0],
+                        data.coordinate('Time')[0][-1,0,0]]
+            exp_id=data.exp_id
             object_name='GPI_SLICED_FULL'
-            flap.add_data_object(d, object_name)
+            flap.add_data_object(data, object_name)
 
             if x_range is None:
-                x_range=[0, d.data.shape[1]-1]
+                x_range=[0, data.data.shape[1]-1]
 
             if y_range is None:
-                y_range=[0, d.data.shape[2]-1]
+                y_range=[0, data.data.shape[2]-1]
 
 
-        elif type(data_object) == type(flap.DataObject()):
-            d=copy.deepcopy(data_object)
+        elif isinstance(data_object, flap.DataObject):
+            data=copy.deepcopy(data_object)
             object_name='GPI'
-            flap.add_data_object(d, object_name)
+            flap.add_data_object(data, object_name)
 
             if x_range is None:
-                x_range=[0, d.data.shape[1]-1]
+                x_range=[0, data.data.shape[1]-1]
 
             if y_range is None:
-                y_range=[0, d.data.shape[2]-1]
+                y_range=[0, data.data.shape[2]-1]
 
             if time_range is None:
-                time_range=[d.coordinate('Time')[0][:,0,0].min(),
-                            d.coordinate('Time')[0][:,0,0].max()]
+                time_range=[data.coordinate('Time')[0][:,0,0].min(),
+                            data.coordinate('Time')[0][:,0,0].max()]
         else:
-            raise TypeError('Data object should be of type str or flap.DataObject and not '+str(type(data_object)))
+            raise TypeError(f"Invalid data_object type: {type(data_object)}")
 
         """
-        NORMALIZATION PROCESS
+        # NORMALIZATION PROCESS
         """
 
         if normalize is not None and data_object is None:
@@ -386,20 +495,20 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
         if subtraction_order is not None:
             if verbose: print("*** Subtracting the trend of the data ***")
-            d=detrend_multidim(object_name,
-                               exp_id=exp_id,
-                               order=subtraction_order,
-                               coordinates=['Image x',
-                                            'Image y'],
-                               output_name='GPI_DETREND_STR_SIZE')
+            data=detrend_multidim(object_name,
+                                  exp_id=exp_id,
+                                  order=subtraction_order,
+                                  coordinates=['Image x',
+                                               'Image y'],
+                                  output_name='GPI_DETREND_STR_SIZE')
 
             object_name='GPI_DETREND_STR_SIZE'
 
         if global_levels:
             if levels is None:
-                d=flap.get_data_object_ref(object_name)
-                min_data=d.data.min()
-                max_data=d.data.max()
+                data=flap.get_data_object_ref(object_name)
+                min_data=data.data.min()
+                max_data=data.data.max()
                 levels=np.arange(nlevel)/(nlevel-1)*(max_data-min_data)+min_data
 
         if threshold_method == 'variance':
@@ -417,28 +526,63 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                                                            'Image y':flap.Intervals(threshold_bg_range['y'][0],
                                                                                                                     threshold_bg_range['y'][1])}).data)
         """
-            VARIABLE DEFINITION
+        #     VARIABLE DEFINITION
         """
+        
         #Calculate correlation between subsequent frames in the data
         #Setting the variables for the calculation
-        time_dim=d.get_coordinate_object('Time').dimension_list[0]
-        n_frames=d.data.shape[time_dim]
-        time=d.coordinate('Time')[0][:,0,0]
+        time_dim=data.get_coordinate_object('Time').dimension_list[0]
+        n_frames=data.data.shape[time_dim]
+        time=data.coordinate('Time')[0][:,0,0]
         sample_time=time[1]-time[0]
         sample_0=flap.get_data_object_ref('GPI_SLICED_FULL',
                                           exp_id=exp_id).coordinate('Sample')[0][0,0,0]
+        
+        if plot_flux_surfaces or plot_separatrix:
+            try:
+                if plot_separatrix:
+                    d_sep_x=flap.get_data('NSTX_MDSPlus',
+                                          name=r'\EFIT02::\RBDRY',
+                                          exp_id=exp_id,
+                                          object_name='SEP X OBJ'
+                                          )
 
+                    d_sep_y=flap.get_data('NSTX_MDSPlus',
+                                          name=r'\EFIT02::\ZBDRY',
+                                          exp_id=exp_id,
+                                          object_name='SEP Y OBJ'
+                                          )
+                else:
+                    d_sep_x=None
+                    d_sep_y=None
+
+                if plot_flux_surfaces:
+                    d_flux=flap.get_data('NSTX_MDSPlus',
+                                         name=r'\EFIT02::\PSIRZ',
+                                         exp_id=exp_id,
+                                         object_name='PSI RZ OBJ'
+                                         )
+                else:
+                    d_flux=None
+            except Exception as e:
+                print('Exception occurred in analyze_gpi_structures.py at line 568.')
+                print(e)
+                
+                d_sep_x=None
+                d_sep_y=None
+                d_flux=None
+        
         if not ((structure_video_save or plot_example_structure_frames) and nocalc):
-            coordinate_names=[d.coordinates[i].unit.name for i in range(len(d.coordinates))]
+            coordinate_names=[data.coordinates[i].unit.name for i in range(len(data.coordinates))]
             distance_unit='pix'
             time_unit='sample'
             for ind in range(len(coordinate_names)):
                 if coordinate_names[ind] == 'Time':
-                    time_unit=d.coordinates[ind].unit.unit
+                    time_unit=data.coordinates[ind].unit.unit
                 if coordinate_names[ind] == 'Device R':
-                    distance_unit=d.coordinates[ind].unit.unit
+                    distance_unit=data.coordinates[ind].unit.unit
 
-            frame_properties=frame_properties_dict(exp_id,time, time_unit,distance_unit)
+            frame_properties=frame_properties_dict(exp_id, time, time_unit, distance_unit)
 
             #Inicializing for frame handling
             frame=None
@@ -450,40 +594,54 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
             if not skip_mdsplus and data_object is None:
                 elm_time=(frame_properties['Time'][-1]+frame_properties['Time'][0])/2
+                try:
+                    R_sep=flap.get_data('NSTX_MDSPlus',
+                                        name='\EFIT02::\RBDRY',
+                                        exp_id=exp_id,
+                                        object_name='SEP R OBJ').slice_data(slicing={'Time':elm_time}).data
+    
+                    z_sep=flap.get_data('NSTX_MDSPlus',
+                                        name='\EFIT02::\ZBDRY',
+                                        exp_id=exp_id,
+                                        object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
+                    
+                    
 
-                R_sep=flap.get_data('NSTX_MDSPlus',
-                                    name='\EFIT02::\RBDRY',
-                                    exp_id=exp_id,
-                                    object_name='SEP R OBJ').slice_data(slicing={'Time':elm_time}).data
-
-                z_sep=flap.get_data('NSTX_MDSPlus',
-                                    name='\EFIT02::\ZBDRY',
-                                    exp_id=exp_id,
-                                    object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
-
-                #Constants for the calculation
-                #Using the spatial calibration to find the actual velocities.
-                coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
-                coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+                    #Constants for the calculation
+                    #Using the spatial calibration to find the actual velocities.
+                    coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
+                    coeff_z=np.asarray([0,    3.75, 70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+                    
+                    # Originally used coordinates for reference. (Vertical, radial geometrical coordinates)
+                    # coeff_r=np.asarray([3.7183594,-0.77821046,1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
+                    # coeff_z=np.asarray([0.18090118,3.0657776,70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+    
+                    # Extract the upper boundary calculation for readability
+                    z_bound_upper = coeff_z[2] + 79*coeff_z[0] + 64*coeff_z[1]
+                    
+                    # Apply the mask
+                    sep_GPI_ind = np.where((R_sep > coeff_r[2]) & (z_sep > coeff_z[2]) & (z_sep < z_bound_upper))
+                    
+                    sep_GPI_ind=np.asarray(sep_GPI_ind[0])
+                    sep_GPI_ind=np.insert(sep_GPI_ind,0,sep_GPI_ind[0]-1)
+                    sep_GPI_ind=np.insert(sep_GPI_ind,len(sep_GPI_ind),sep_GPI_ind[-1]+1)
+    
+                    z_sep_GPI=z_sep[(sep_GPI_ind)]
+                    R_sep_GPI=R_sep[sep_GPI_ind]
+                    GPI_z_vert=coeff_z[0]*np.arange(80)/80*64+coeff_z[1]*np.arange(80)+coeff_z[2]
+                    R_sep_GPI_interp=np.interp(GPI_z_vert,
+                                               np.flip(z_sep_GPI),
+                                               np.flip(R_sep_GPI))
+                    z_sep_GPI_interp=GPI_z_vert
                 
-                # Originally used coordinates for reference. (Vertical, radial geometrical coordinates)
-                # coeff_r=np.asarray([3.7183594,-0.77821046,1402.8097])/1000. #The coordinates are in meters, the coefficients are in mm
-                # coeff_z=np.asarray([0.18090118,3.0657776,70.544312])/1000.  #The coordinates are in meters, the coefficients are in mm
+                except Exception as e:
+                    print(e)
+                    print('\n Could not read EFIT data. Setting separatrix data to None')
+                    z_sep_GPI=None
+                    R_sep_GPI=None
+                    R_sep_GPI_interp=None
+                    z_sep_GPI_interp=None
 
-                sep_GPI_ind=np.where(np.logical_and(R_sep > coeff_r[2],
-                                                    np.logical_and(z_sep > coeff_z[2],
-                                                                   z_sep < coeff_z[2]+79*coeff_z[0]+64*coeff_z[1])))
-                sep_GPI_ind=np.asarray(sep_GPI_ind[0])
-                sep_GPI_ind=np.insert(sep_GPI_ind,0,sep_GPI_ind[0]-1)
-                sep_GPI_ind=np.insert(sep_GPI_ind,len(sep_GPI_ind),sep_GPI_ind[-1]+1)
-
-                z_sep_GPI=z_sep[(sep_GPI_ind)]
-                R_sep_GPI=R_sep[sep_GPI_ind]
-                GPI_z_vert=coeff_z[0]*np.arange(80)/80*64+coeff_z[1]*np.arange(80)+coeff_z[2]
-                R_sep_GPI_interp=np.interp(GPI_z_vert,
-                                           np.flip(z_sep_GPI),
-                                           np.flip(R_sep_GPI))
-                z_sep_GPI_interp=GPI_z_vert
 
             for i_frames in range(n_frames):
 
@@ -538,6 +696,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                       pixel=structure_pixel_calc,
                                                       remove_interlaced_structures=remove_interlaced_structures,
                                                       ellipse_method=ellipse_method,
+                                                      fit_shape=fit_shape,
                                                       str_size_lower_thres=str_size_lower_thres,
                                                       elongation_threshold=elongation_threshold,
                                                       test=test,
@@ -565,9 +724,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     plt.show()
                     pdf_structures.savefig()
 
-                """
-                Structure size calculation based on the contours
-                """
+
+                # Structure size calculation based on the contours
+
 
                 #Crude average size calculation
                 if structures_dict:
@@ -595,21 +754,23 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             #Saving results into a pickle file
             if fix_structure_angles:
                 frame_properties=_fix_structure_angles(frame_properties)
-                
-            pickle.dump(frame_properties,open(pickle_filename, 'wb'))
+            with open(pickle_filename, 'wb') as f:
+                pickle.dump(frame_properties,f)
             if test:
                 plt.close()
         else:
-            print('--- Loading data from the pickle file ---')
-            frame_properties=pickle.load(open(pickle_filename, 'rb'))
+            print('\n\n--- Loading data from the pickle file ---')
+            with open(pickle_filename, 'rb') as f:
+                frame_properties=pickle.load(f)
     else:
-        print('--- Loading data from the pickle file ---')
-        frame_properties=pickle.load(open(pickle_filename, 'rb'))
+        print('\n\n--- Loading data from the pickle file ---')
+        with open(pickle_filename, 'rb') as f:
+            frame_properties=pickle.load(f)
         #labels= 'label,born,died'
         
-    """***************
-    Structure tracking
-    ***************"""
+    """
+        Structure tracking
+    """
     
     frame_properties = track_structures(frame_properties=frame_properties,
                                         max_gap=max_gap,
@@ -633,9 +794,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                         #fix_structure_angles=fix_structure_angles,
                                         )
 
-    """*****************
-    PLOTTING THE RESULTS
-    *****************"""
+    """
+    #PLOTTING THE RESULTS
+    """
 
     import matplotlib.colors as mcolors
     colortable=list(mcolors.TABLEAU_COLORS.keys())
@@ -741,142 +902,209 @@ def calculate_average_frame_properties(frame_properties,
                                        R_sep_GPI_interp=None,
                                        z_sep_GPI_interp=None,
                                        ):
-    
+    """
+    Calculates weighted averages and peak properties for all structures in a single frame.
+
+    This function processes a list of structures identified in a specific frame. It 
+    calculates the weighted average of their geometric and kinematic properties, 
+    identifies the "dominant" (maximum) structure based on area or intensity, 
+    calculates the global Center of Gravity (COG) for the entire frame, and 
+    computes the radial distance of these structures from the magnetic separatrix.
+
+    Args:
+        frame_properties (dict): The master dictionary containing pre-allocated 
+            data arrays (initialized by `frame_properties_dict`).
+        i_frames (int): The current frame index being processed.
+        valid_structure_size (bool, optional): If False, indicates no valid structures 
+            were found in the frame, filling the current index with NaNs. Defaults to True.
+        structures_dict (list of dict, optional): List of dictionaries containing 
+            properties for each individual structure in the frame.
+        weighting (str, optional): Metric used to weight the averages ('area', 
+            'intensity', or 'number'). Defaults to 'area'.
+        fit_shape (str, optional): Geometric model used ('ellipse' or 'gaussian'). 
+            Defaults to 'ellipse'.
+        maxing (str, optional): Metric to define the "maximum" structure ('area' 
+            or 'intensity'). Defaults to 'intensity'.
+        structure_pixel_calc (bool, optional): If True, frame COG is calculated in 
+            pixel coordinates rather than real spatial coordinates. Defaults to False.
+        frame (flap.DataObject, optional): The raw 2D data object for the current frame.
+        skip_mdsplus (bool, optional): If True, skips separatrix distance calculations. 
+            Defaults to False.
+        R_sep_GPI, z_sep_GPI (np.ndarray, optional): Raw separatrix coordinates.
+        R_sep_GPI_interp, z_sep_GPI_interp (np.ndarray, optional): Interpolated 
+            separatrix coordinates for distance calculations.
+
+    Returns:
+        dict: The updated `frame_properties` dictionary.
+    """
+
+    # --- 1. Early Exit for Invalid Frames ---
     if not valid_structure_size:
-         #Setting np.nan if no structure is available
-         for key in frame_properties['data'].keys():
-             frame_properties['data'][key]['avg'][i_frames]=np.nan
-             frame_properties['data'][key]['max'][i_frames]=np.nan
-             frame_properties['data'][key]['stddev'][i_frames]=np.nan
+        for key in frame_properties['data'].keys():
+            frame_properties['data'][key]['avg'][i_frames] = np.nan
+            frame_properties['data'][key]['max'][i_frames] = np.nan
+            frame_properties['data'][key]['stddev'][i_frames] = np.nan
 
-         frame_properties['data']['Str number']['max'][i_frames]=0.
-         frame_properties['data']['Frame COG radial']['max'][i_frames]=np.nan
-         frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.nan
-         # frame_properties['Structures'][i_frames]=None
-         return frame_properties
-    
-    #Calculating the average properties of the structures present in one frame
-    n_str=len(structures_dict)
-    areas=np.zeros(len(structures_dict))
-    intensities=np.zeros(len(structures_dict))
+        frame_properties['data']['Str number']['max'][i_frames] = 0.
+        frame_properties['data']['Str number']['avg'][i_frames] = 0.
+        return frame_properties
 
-    for i_str in range(n_str):
-        #Average size calculation based on the number of structures
-        areas[i_str]=structures_dict[i_str]['Area']
-        intensities[i_str]=structures_dict[i_str]['Intensity']
+    # --- 2. Calculate Weights ---
+    n_str = len(structures_dict)
+    areas = np.array([s['Area'] for s in structures_dict])
+    intensities = np.array([s['Intensity'] for s in structures_dict])
 
-    #Calculating the averages based on the input setting
     if weighting == 'number':
-        weight=np.zeros(n_str)
-        weight[:]=1./n_str
+        weight = np.ones(n_str) / n_str
     elif weighting == 'intensity':
-        weight=intensities/np.sum(intensities)
+        weight = intensities / np.sum(intensities)
     elif weighting == 'area':
-        weight=areas/np.sum(areas)
-
-    for i_str in range(n_str):
-        #Quantities from Ellipse fitting
-        fit_obj_cur=structures_dict[i_str][fit_shape]
-        frame_properties['data']['Size radial']['avg'][i_frames]+=fit_obj_cur.size[0]*weight[i_str]
-        frame_properties['data']['Size poloidal']['avg'][i_frames]+=fit_obj_cur.size[1]*weight[i_str]
-        frame_properties['data']['Position radial']['avg'][i_frames]+=fit_obj_cur.center[0]*weight[i_str]
-        frame_properties['data']['Position poloidal']['avg'][i_frames]+=fit_obj_cur.center[1]*weight[i_str]
-        frame_properties['data']['Angle']['avg'][i_frames]+=fit_obj_cur.angle*weight[i_str]
-        frame_properties['data']['Elongation']['avg'][i_frames]+=fit_obj_cur.elongation*weight[i_str]
-        frame_properties['data']['Axes length minor']['avg'][i_frames]+=np.min(fit_obj_cur.axes_length)*weight[i_str]
-        frame_properties['data']['Axes length major']['avg'][i_frames]+=np.max(fit_obj_cur.axes_length)*weight[i_str]
-
-        #Quantities from polygons
-        polygon_cur=structures_dict[i_str]['Polygon']
-        frame_properties['data']['Centroid radial']['avg'][i_frames]+=polygon_cur.centroid[0]*weight[i_str]
-        frame_properties['data']['Centroid poloidal']['avg'][i_frames]+=polygon_cur.centroid[1]*weight[i_str]
-        frame_properties['data']['Center of gravity radial']['avg'][i_frames]+=polygon_cur.center_of_gravity[0]*weight[i_str]
-        frame_properties['data']['Center of gravity poloidal']['avg'][i_frames]+=polygon_cur.center_of_gravity[1]*weight[i_str]
-        frame_properties['data']['Area']['avg'][i_frames]+=polygon_cur.area*weight[i_str]
-        frame_properties['data']['Angle of least inertia']['avg'][i_frames]+=polygon_cur.principal_axes_angle*weight[i_str]
-        frame_properties['data']['Roundness']['avg'][i_frames]+=polygon_cur.roundness*weight[i_str]
-        frame_properties['data']['Solidity']['avg'][i_frames]+=polygon_cur.solidity*weight[i_str]
-        frame_properties['data']['Convexity']['avg'][i_frames]+=polygon_cur.convexity*weight[i_str]
-        frame_properties['data']['Total curvature']['avg'][i_frames]+=polygon_cur.total_curvature*weight[i_str]
-        frame_properties['data']['Total bending energy']['avg'][i_frames]+=polygon_cur.total_bending_energy*weight[i_str]
-
-    #Calculating the properties of the structure having the maximum area or intensity
-    if maxing == 'area':
-        ind_max=np.argmax(areas)
-    elif maxing == 'intensity':
-        ind_max=np.argmax(intensities)
-
-    #Properties of the max structure:
-    fit_obj_cur=structures_dict[ind_max][fit_shape]
-    frame_properties['data']['Size radial']['max'][i_frames]=fit_obj_cur.size[0]
-    frame_properties['data']['Size poloidal']['max'][i_frames]=fit_obj_cur.size[1]
-    frame_properties['data']['Position radial']['max'][i_frames]=fit_obj_cur.center[0]
-    frame_properties['data']['Position poloidal']['max'][i_frames]=fit_obj_cur.center[1]
-    frame_properties['data']['Angle']['max'][i_frames]=fit_obj_cur.angle
-    frame_properties['data']['Elongation']['max'][i_frames]=fit_obj_cur.elongation
-    frame_properties['data']['Axes length minor']['max'][i_frames]=np.min(fit_obj_cur.axes_length)
-    frame_properties['data']['Axes length major']['max'][i_frames]=np.max(fit_obj_cur.axes_length)
-
-    polygon_cur=structures_dict[ind_max]['Polygon']
-    frame_properties['data']['Centroid radial']['max'][i_frames]=polygon_cur.centroid[0]
-    frame_properties['data']['Centroid poloidal']['max'][i_frames]=polygon_cur.centroid[1]
-    frame_properties['data']['Center of gravity radial']['max'][i_frames]=polygon_cur.center_of_gravity[0]
-    frame_properties['data']['Center of gravity poloidal']['max'][i_frames]=polygon_cur.center_of_gravity[1]
-    frame_properties['data']['Area']['max'][i_frames]=polygon_cur.area
-    frame_properties['data']['Angle of least inertia']['max'][i_frames]=polygon_cur.principal_axes_angle
-    frame_properties['data']['Roundness']['max'][i_frames]=polygon_cur.roundness
-    frame_properties['data']['Solidity']['max'][i_frames]=polygon_cur.solidity
-    frame_properties['data']['Convexity']['max'][i_frames]=polygon_cur.convexity
-    frame_properties['data']['Total curvature']['max'][i_frames]=polygon_cur.total_curvature
-    frame_properties['data']['Total bending energy']['max'][i_frames]=polygon_cur.total_bending_energy
-
-    #The center of gravity for the entire frame
-    if structure_pixel_calc:
-        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image x')[0]*frame.data)/np.sum(frame.data)
+        weight = areas / np.sum(areas)
     else:
-        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Device R')[0]*frame.data)/np.sum(frame.data)
-    frame_properties['data']['Frame COG radial']['avg'][i_frames]=frame_properties['data']['Frame COG radial']['max'][i_frames]
+        weight = np.ones(n_str) / n_str # Fallback
 
-    if structure_pixel_calc:
-        frame_properties['data']['Frame COG radial']['max'][i_frames]=np.sum(frame.coordinate('Image y')[0]*frame.data)/np.sum(frame.data)
-    else:
-        frame_properties['data']['Frame COG poloidal']['max'][i_frames]=np.sum(frame.coordinate('Device z')[0]*frame.data)/np.sum(frame.data)
-    frame_properties['data']['Frame COG poloidal']['avg'][i_frames]=frame_properties['data']['Frame COG poloidal']['max'][i_frames]
-
-    #The number of structures in a frame
-    frame_properties['data']['Str number']['max'][i_frames]=n_str
-    frame_properties['data']['Str number']['avg'][i_frames]=n_str
-
-    #Calculate the distance from the separatrix
-    try:
-    # if True:
-        for key in ['max','avg']:
-            if not skip_mdsplus:
-                frame_properties['data']['Separatrix dist'][key][i_frames]=np.min(np.sqrt((frame_properties['data']['Position radial'][key][i_frames]-R_sep_GPI_interp)**2 +
-                                                                                          (frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI_interp)**2))
-            else:
-                frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
-            ind_z_min=np.argmin(np.abs(z_sep_GPI-frame_properties['data']['Position poloidal'][key][i_frames]))
-            if z_sep_GPI[ind_z_min] >= frame_properties['data']['Position poloidal'][key][i_frames]:
-                ind1=ind_z_min
-                ind2=ind_z_min+1
-            else:
-                ind1=ind_z_min-1
-                ind2=ind_z_min
-
-            radial_distance=frame_properties['data']['Position radial'][key][i_frames]- \
-                ((frame_properties['data']['Position poloidal'][key][i_frames]-z_sep_GPI[ind2])/ \
-                 (z_sep_GPI[ind1]-z_sep_GPI[ind2])*(R_sep_GPI[ind1]-R_sep_GPI[ind2])+R_sep_GPI[ind2])
-            if radial_distance < 0:
-                frame_properties['data']['Separatrix dist'][key][i_frames]*=-1
-    except:
-        frame_properties['data']['Separatrix dist'][key][i_frames]=np.nan
+    # --- 3. Property Extraction Mapping ---
+    # Defines how to extract properties from the fit objects and polygons
+    # Format: Frame Property Key -> lambda function to extract value
+    fit_mappings = {
+        'Size radial':       lambda obj: obj.size[0],
+        'Size poloidal':     lambda obj: obj.size[1],
+        'Position radial':   lambda obj: obj.center[0],
+        'Position poloidal': lambda obj: obj.center[1],
+        'Angle':             lambda obj: obj.angle,
+        'Elongation':        lambda obj: obj.elongation,
+        'Axes length minor': lambda obj: np.min(obj.axes_length),
+        'Axes length major': lambda obj: np.max(obj.axes_length)
+    }
     
+    poly_mappings = {
+        'Centroid radial':            lambda poly: poly.centroid[0],
+        'Centroid poloidal':          lambda poly: poly.centroid[1],
+        'Center of gravity radial':   lambda poly: poly.center_of_gravity[0],
+        'Center of gravity poloidal': lambda poly: poly.center_of_gravity[1],
+        'Area':                       lambda poly: poly.area,
+        'Angle of least inertia':     lambda poly: poly.principal_axes_angle,
+        'Roundness':                  lambda poly: poly.roundness,
+        'Solidity':                   lambda poly: poly.solidity,
+        'Convexity':                  lambda poly: poly.convexity,
+        'Total curvature':            lambda poly: poly.total_curvature,
+        'Total bending energy':       lambda poly: poly.total_bending_energy
+    }
+
+    # --- 4. Calculate Weighted Averages ---
+    for i_str in range(n_str):
+        fit_obj = structures_dict[i_str][fit_shape]
+        poly_obj = structures_dict[i_str]['Polygon']
+        w = weight[i_str]
+
+        for key, func in fit_mappings.items():
+            frame_properties['data'][key]['avg'][i_frames] += func(fit_obj) * w
+            
+        for key, func in poly_mappings.items():
+            frame_properties['data'][key]['avg'][i_frames] += func(poly_obj) * w
+
+    # --- 5. Calculate "Maximum" Structure Properties ---
+    ind_max = np.argmax(areas if maxing == 'area' else intensities)
+    max_fit_obj = structures_dict[ind_max][fit_shape]
+    max_poly_obj = structures_dict[ind_max]['Polygon']
+
+    for key, func in fit_mappings.items():
+        frame_properties['data'][key]['max'][i_frames] = func(max_fit_obj)
+        
+    for key, func in poly_mappings.items():
+        frame_properties['data'][key]['max'][i_frames] = func(max_poly_obj)
+
+    # --- 6. Global Frame Properties ---
+    # Frame COG Radial
+    x_coord = 'Image x' if structure_pixel_calc else 'Device R'
+    cog_rad = np.sum(frame.coordinate(x_coord)[0] * frame.data) / np.sum(frame.data)
+    frame_properties['data']['Frame COG radial']['max'][i_frames] = cog_rad
+    frame_properties['data']['Frame COG radial']['avg'][i_frames] = cog_rad
+
+    # Frame COG Poloidal
+    y_coord = 'Image y' if structure_pixel_calc else 'Device z'
+    cog_pol = np.sum(frame.coordinate(y_coord)[0] * frame.data) / np.sum(frame.data)
+    frame_properties['data']['Frame COG poloidal']['max'][i_frames] = cog_pol
+    frame_properties['data']['Frame COG poloidal']['avg'][i_frames] = cog_pol
+
+    # Structure count
+    frame_properties['data']['Str number']['max'][i_frames] = n_str
+    frame_properties['data']['Str number']['avg'][i_frames] = n_str
+
+    # --- 7. Separatrix Distances ---
+    for key in ['max', 'avg']:
+        if (R_sep_GPI is not None and z_sep_GPI is not None and 
+            R_sep_GPI_interp is not None and z_sep_GPI_interp is not None):
+            try:
+                if skip_mdsplus or R_sep_GPI_interp is None:
+                    frame_properties['data']['Separatrix dist'][key][i_frames] = np.nan
+                    continue
+    
+                r_pos = frame_properties['data']['Position radial'][key][i_frames]
+                z_pos = frame_properties['data']['Position poloidal'][key][i_frames]
+    
+                # Minimum Euclidean distance to interpolated separatrix
+                min_dist = np.min(np.sqrt((r_pos - R_sep_GPI_interp)**2 + (z_pos - z_sep_GPI_interp)**2))
+                frame_properties['data']['Separatrix dist'][key][i_frames] = min_dist
+    
+                # Calculate sign based on position relative to local separatrix tangent
+                ind_z_min = np.argmin(np.abs(z_sep_GPI - z_pos))
+                ind1, ind2 = (ind_z_min, ind_z_min + 1) if z_sep_GPI[ind_z_min] >= z_pos else (ind_z_min - 1, ind_z_min)
+    
+                # Linear interpolation for radial position of separatrix at z_pos
+                z_diff = z_sep_GPI[ind1] - z_sep_GPI[ind2]
+                if z_diff != 0:
+                    r_sep_at_z = ((z_pos - z_sep_GPI[ind2]) / z_diff) * (R_sep_GPI[ind1] - R_sep_GPI[ind2]) + R_sep_GPI[ind2]
+                    radial_distance = r_pos - r_sep_at_z
+                    
+                    # Assign sign
+                    if radial_distance < 0:
+                        frame_properties['data']['Separatrix dist'][key][i_frames] *= -1
+    
+            except Exception as e:
+                print('Exception occurred in analyze_gpi_structures.py at line 1046')
+                print(e)
+                frame_properties['data']['Separatrix dist'][key][i_frames] = np.nan
+        else:
+            frame_properties['data']['Separatrix dist'][key][i_frames] = np.nan
+
     return frame_properties
 
 
-
 def transform_frames_to_structures(frame_properties):
+    """
+    Transforms structure data from a frame-centric format to a structure-centric format.
+
+    
+
+    This function iterates through frame-by-frame structure data, identifies all unique
+    tracked structures based on their 'Label', and pivots the data so that the time 
+    evolution of each individual structure's properties is grouped together.
+
+    Note: 
+        - The function relies on an external `read_analyzed_keys()` function to 
+          determine which properties to extract.
+        - Property values exactly equal to 0 are converted to `np.nan`.
+
+    Args:
+        frame_properties (dict): A dictionary containing the frame-by-frame data. 
+            Expected to have at least the following structure:
+            - 'structures': A list (frames) of lists (structures within the frame), 
+              where each structure is a dictionary containing a 'Label' key (int) 
+              and other property keys.
+            - 'Time': A list of time values corresponding to each frame.
+
+    Returns:
+        list of dict: A list representing individual structures, where the index 
+            corresponds to the structure's 'Label'. Each element is a dictionary 
+            containing lists of property values over time (e.g., 'Time', 'Area', 
+            'Intensity', etc., depending on `read_analyzed_keys()`). 
+            Example output format:
+            [
+                {'Time': [0.1, 0.2], 'Intensity': [10.5, 11.2]},  # Structure Label 0
+                {'Time': [0.2, 0.3], 'Intensity': [5.0, np.nan]}  # Structure Label 1
+            ]
+    """
     max_str_label=0
     for i_frames in range(len(frame_properties['structures'])):
         if frame_properties['structures'][i_frames] is not None:
@@ -921,6 +1149,31 @@ def transform_frames_to_structures(frame_properties):
 
 
 def _fix_structure_angles(frame_properties):
+
+    """
+    Normalizes structure angles and recalculates the Angle of Least Inertia (ALI).
+
+    
+
+    This internal utility iterates through all structures in the provided frames. 
+    It performs two main corrections:
+    1. Normalizes the primary 'Angle' to strictly fall within the range [-pi, pi].
+    2. Recalculates the 'Angle of least inertia' from scratch using the structure's 
+       spatial moments and center of gravity to fix a known bug with previous 
+       trigonometric calculations.
+
+    Args:
+        frame_properties (dict): A dictionary containing frame-by-frame tracked 
+            structure data. Expected to contain:
+            - 'structures': A list of lists representing frames and their structures. 
+              Each structure must be a dictionary with keys: 'Angle', 'Center of gravity', 
+              'Data' (intensity), 'X coord', and 'Y coord'.
+
+    Returns:
+        dict: The updated `frame_properties` dictionary with corrected 'Angle' and 
+            'Angle of least inertia' values updated in place.
+    """    
+
     for i_frames in range(len(frame_properties['structures'])):
         if frame_properties['structures'][i_frames] is not None:
             for j_str in range(len(frame_properties['structures'][i_frames])):
@@ -928,11 +1181,9 @@ def _fix_structure_angles(frame_properties):
                 #frame_properties['structures'][i_frames][j_str]['Angle of least inertia']
                 
                 #THis fixes the angles and puts them between -np.pi and np.pi
-                while (angle > np.pi or angle < -np.pi):
-                    if angle > np.pi:
-                        angle -= 2*np.pi
-                    if angle < -np.pi:
-                        angle += 2*np.pi
+                    
+                angle = (angle + np.pi) % (2 * np.pi) - np.pi
+                        
                 #ALI needs to be recalculated due to the bug with arcsin(sin)
 
                 mu=np.zeros([2,2])
@@ -958,9 +1209,12 @@ def _fix_structure_angles(frame_properties):
                     
                 except:
                     angle_ali=np.nan
+                    
                 frame_properties['structures'][i_frames][j_str]['Angle of least inertia']=angle_ali
                 frame_properties['structures'][i_frames][j_str]['Angle']=angle
     return frame_properties
+
+
 
 def _plot_results(pdf=False,
                   plot_results=False,
@@ -978,6 +1232,58 @@ def _plot_results(pdf=False,
                   n_color=None,
                   colortable=None,
                   ):
+    
+    """
+    Manages the plotting and saving of structure analysis results.
+
+    This internal function configures the matplotlib backend based on whether 
+    the plots are meant to be displayed interactively or just saved. It also 
+    handles time range validation, sets up figure dimensions (including 
+    publication-ready sizing), manages PDF export, and delegates the rendering
+    to either average or structure-by-structure plotting routines.
+
+    Args:
+        pdf (bool, optional): If True, saves the generated plots to a multipage 
+            PDF file in the working directory. Defaults to False.
+        plot_results (bool, optional): If True, uses the 'QT5Agg' backend for 
+            interactive plotting. If False, uses the 'agg' backend for background 
+            rendering. Defaults to False.
+        plot_time_range (list or tuple, optional): The specific [start, end] time 
+            range to plot. Must be within `time_range`. Defaults to None.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            of the calculated data. Defaults to None.
+        plot_str_by_str (bool, optional): If True, plots individual structures 
+            step-by-step. If False, plots average results. Defaults to False.
+        comment (str, optional): A string to append to the generated PDF filename 
+            for identification. Defaults to None.
+        exp_id (int or str, optional): The experiment or shot ID, used for 
+            generating the file path and name. Defaults to None.
+        frame_properties (dict, optional): The main data dictionary containing 
+            the 'structures' and 'derived' calculation keys. Defaults to None.
+        plot_for_publication (bool, optional): If True, forces the figure size to 
+            single-column width (8.5 cm) and a golden ratio height for publication. 
+            Defaults to False.
+        plot_vertical_line_at (float, optional): X-coordinate at which to draw a 
+            vertical reference line. Defaults to None.
+        overplot_average (bool, optional): If True, overplots the average value 
+            on the graphs. Defaults to False.
+        plot_scatter (bool, optional): If True, uses scatter plots instead of or 
+            in addition to lines. Defaults to False.
+        plot_tracking (bool, optional): If True, plots the tracked structures 
+            with lines (passed to `_plot_str_by_str`). Defaults to False.
+        n_color (int, optional): The number of distinct colors to use in the 
+            color table. Defaults to None.
+        colortable (list or object, optional): A specific color table or colormap 
+            to use for rendering structures. Defaults to None.
+
+    Raises:
+        ValueError: If `plot_time_range` falls outside the bounds of the original 
+            `time_range`.
+
+    Returns:
+        None
+    """
+    
 
     differential_keys=list(frame_properties['derived'].keys())
     
@@ -1000,7 +1306,6 @@ def _plot_results(pdf=False,
 
     #Plotting the radial velocity
     if pdf:
-        wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
         if plot_str_by_str:
             comment+='_sbs'
         filename=flap_nstx.tools.filename(exp_id=exp_id,
@@ -1052,7 +1357,7 @@ def _plot_results(pdf=False,
     if plot_for_publication:
         import matplotlib.style as pltstyle
         pltstyle.use('default')
-
+    return
 
 
 def _plot_example_structure_frames(exp_id=None,
@@ -1073,6 +1378,61 @@ def _plot_example_structure_frames(exp_id=None,
                                    separatrix_coordinates=None,
                                    linewidth=None,
                                    ):
+    
+    """
+    Plots a grid of example GPI frames with overlaid tracked structures.
+    
+    
+
+    This internal function creates a multi-panel figure showing the chronological 
+    progression of structures across consecutive frames. It applies a median filter 
+    to the raw data, plots it as a contour map, and overlays the identified 
+    structures (as boundary polygons and parametric ellipses) colored by their 
+    unique tracking labels. The resulting figure is saved as a multi-page PDF.
+
+    Args:
+        --- General Inputs ---
+        exp_id (int or str, optional): The experiment or shot ID.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            of the calculated data.
+        plot_time_range (list or tuple, optional): Specific [start, end] time range 
+            to plot. Must be within `time_range`.
+        sample_0 (int, optional): The reference starting sample index for the data slice.
+        wd (str, optional): The working directory path where the PDF will be saved.
+        object_name (str, optional): The name of the data object as registered in 
+            the `flap` framework.
+
+        --- Plot Formatting ---
+        plot_nframe (int, optional): Total number of frames to plot. Defaults to 15.
+        plot_ncol (int, optional): Number of columns in the subplot grid. Defaults to 5.
+        levels (int or array-like, optional): Contour levels for the background data 
+            plot. If None, defaults to 51.
+        linewidth (dict, optional): Custom line widths for structure outlines. Expected 
+            keys: 'polygon', 'ellipse', 'semiaxis'. Defaults to None.
+        
+        --- Data Inputs ---
+        frame_properties (dict, optional): Dictionary containing the tracked 'structures' 
+            data for each frame.
+        time (float, optional): Reference time (unused in current implementation).
+        plot_example_structure_frames (int, optional): An integer offset added to 
+            `sample_0` to determine the exact starting frame for the visualization.
+        
+        --- Overlays & Exports ---
+        save_data_for_publication (bool, optional): Flag intended to trigger saving 
+            raw plot data to text files.
+        plot_separatrix (bool, optional): If True, plots the magnetic separatrix 
+            over the frames.
+        separatrix_coordinates (tuple, optional): A tuple of `(d_sep_x, d_sep_y)` 
+            data objects representing the separatrix coordinates.
+
+    Raises:
+        ValueError: If `plot_time_range` falls outside the bounds of the original 
+            `time_range`.
+
+    Returns:
+        None: The function saves a PDF to the working directory and closes the figure.
+    """
+
     
     (d_sep_x,d_sep_y)=separatrix_coordinates
     
@@ -1161,15 +1521,14 @@ def _plot_example_structure_frames(exp_id=None,
                         separatrix_data[:,1],
                         linewidth=1,
                         color='red')
-                # if save_data_for_publication:
-                #     exp_id=data_object.exp_id
-                #     time=frame.coordinate('Time')[0][0,0]
-                #     wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
-                #     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_separatrix.txt'
-                #     file1=open(filename, 'w+')
-                #     for i in range(len(separatrix_data[:,0])):
-                #         file1.write(str(separatrix_data[i,0])+'\t'+str(separatrix_data[i,1])+'\n')
-                #     file1.close()
+                if save_data_for_publication:
+                    exp_id=data_object.exp_id
+                    time=frame.coordinate('Time')[0][0,0]
+                    wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+                    filename=wd+'/'+str(exp_id)+'_'+str(time)+'_separatrix.txt'
+                    with open(filename, 'w+') as file1:
+                        for i in range(len(separatrix_data[:,0])):
+                            file1.write(str(separatrix_data[i,0])+'\t'+str(separatrix_data[i,1])+'\n')
 
         ax.set_aspect(1.0)
         structures=frame_properties['structures'][frame_sample_0+i_frames+plot_example_structure_frames]
@@ -1218,35 +1577,32 @@ def _plot_example_structure_frames(exp_id=None,
                                 color=colortable[int(np.mod(structures[i_str]['Label']+1,n_color))],
                                 linewidth=1
                                 )
-        #         if save_data_for_publication:
-        #             exp_id=data_object.exp_id
-        #             time=frame.coordinate('Time')[0][0,0]
-        #             wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
-        #             filename=wd+'/'+str(exp_id)+'_'+str(time)+'_half_path_no.'+str(i_str)+'.txt'
-        #             file1=open(filename, 'w+')
-        #             for i in range(len(x_polygon)):
-        #                 file1.write(str(x_polygon[i])+'\t'+str(y_polygon[i])+'\n')
-        #             file1.close()
+                if save_data_for_publication:
+                    exp_id=data_object.exp_id
+                    time=frame.coordinate('Time')[0][0,0]
+                    wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+                    filename=wd+'/'+str(exp_id)+'_'+str(time)+'_half_path_no.'+str(i_str)+'.txt'
+                    with open(filename, 'w+') as file1:
+                        for i in range(len(x_polygon)):
+                            file1.write(str(x_polygon[i])+'\t'+str(y_polygon[i])+'\n')
 
-        #             filename=wd+'/'+str(exp_id)+'_'+str(time)+'_fit_ellipse_no.'+str(i_str)+'.txt'
-        #             file1=open(filename, 'w+')
-        #             for i in range(len(x_ellipse)):
-        #                 file1.write(str(x_ellipse[i])+'\t'+str(y_ellipse[i])+'\n')
-        #             file1.close()
+                    filename=wd+'/'+str(exp_id)+'_'+str(time)+'_fit_ellipse_no.'+str(i_str)+'.txt'
+                    with open(filename, 'w+') as file1:
+                        for i in range(len(x_ellipse)):
+                            file1.write(str(x_ellipse[i])+'\t'+str(y_ellipse[i])+'\n')
                     
-        # if save_data_for_publication:
-        #     time=frame.coordinate('Time')[0][0,0]
-        #     wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
-        #     filename=wd+'/'+str(exp_id)+'_'+str(time)+'_raw_data.txt'
-        #     file1=open(filename, 'w+')
-        #     data=frame.data
-        #     for i in range(len(data[0,:])):
-        #         string=''
-        #         for j in range(len(data[:,0])):
-        #             string+=str(data[j,i])+'\t'
-        #         string+='\n'
-        #         file1.write(string)
-        #     file1.close()
+        if save_data_for_publication:
+            time=frame.coordinate('Time')[0][0,0]
+            wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
+            filename=wd+'/'+str(exp_id)+'_'+str(time)+'_raw_data.txt'
+            with open(filename, 'w+') as file1:
+                data=frame.data
+                for i in range(len(data[0,:])):
+                    string=''
+                    for j in range(len(data[:,0])):
+                        string+=str(data[j,i])+'\t'
+                    string+='\n'
+                    file1.write(string)
                         
                         
         ax.set_xlabel('R' + ' '+ x_unit_name)
@@ -1274,9 +1630,6 @@ def _plot_example_structure_frames(exp_id=None,
     pdf_pages.close()
 
 
-
-
-
 def _plot_example_frames_results(exp_id=None,
                                  time_range=None,
                                  plot_time_range=None,
@@ -1286,8 +1639,47 @@ def _plot_example_frames_results(exp_id=None,
                                  colortable=None,
                                  pdf=None,
                                  markersize=0.5,
-                                 save_data_for_publication=False,
+                                 save_data_for_publication=False
                                  ):
+    
+    """
+    Plots the time evolution of specific structure properties in a multi-panel figure.
+
+    
+
+    This internal function generates a 6-row by 1-column figure displaying the time 
+    traces of individual tracked structures. It plots the following properties 
+    top-to-bottom: Radial position, Poloidal position, Area, Angle, Roundness, 
+    and Total curvature. It handles both standard and differential properties 
+    (which have a one-frame offset) and optionally exports the raw plot data to text files.
+
+    Args:
+        exp_id (int or str, optional): The experiment or shot ID.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            of the calculated data. Used as the default x-axis limits.
+        plot_time_range (list or tuple, optional): Specific [start, end] time range 
+            to plot, overriding `time_range` for the x-axis limits if provided.
+        frame_properties (dict, optional): Dictionary containing the analysis data. 
+            Must include 'structures' (tracked data), 'data' (metadata/units for 
+            standard properties), and 'derived' (metadata/units for differential properties).
+        wd (str, optional): The working directory path where output files (PDFs and 
+            data text files) will be saved.
+        n_color (int, optional): The total number of distinct colors available in 
+            the colortable.
+        colortable (list or object, optional): A color sequence used to consistently 
+            color distinct structures across all subplots.
+        pdf (bool, optional): If True, saves the generated multi-panel figure to 
+            a PDF file in the working directory.
+        markersize (float, optional): The size of the markers on the line plots. 
+            Defaults to 0.5.
+        save_data_for_publication (bool, optional): If True, exports the time and 
+            property value data for each tracked structure to individual `.txt` files 
+            for external plotting. Defaults to False.
+
+    Returns:
+        None: The function generates plots, optionally saves files, and closes the 
+        matplotlib figures.
+    """
 
     set_matplotlib_for_publication(labelsize=8,
                                     linewidth=0.2,
@@ -1402,8 +1794,9 @@ def _plot_example_frames_results(exp_id=None,
             ax.set_ylim([0.07,0.35])
         # ax.set_title(str(key)+ ' vs. time', fontsize=8)
         fig.tight_layout(pad=0.1)
-    if save_data_for_publication:
-        file1.close()
+        
+        if save_data_for_publication:
+            file1.close()
         
     if pdf:
        pdf_pages.savefig()
@@ -1430,6 +1823,63 @@ def _structure_video_save(sample_0=None,
                          n_color=None,
                          video_start_frame=0,
                          ):
+    
+    """
+    Generates and saves a video animation of tracked GPI structures over time.
+
+    
+
+    This internal function renders a sequence of frames showing the raw Gas Puff 
+    Imaging (GPI) data (median-filtered and contoured), overlaid with the magnetic 
+    separatrix, flux surfaces, and identified structures (polygons and fitted ellipses). 
+    It captures the matplotlib figure canvas for each frame and encodes them into an 
+    MP4 video file using OpenCV.
+
+    Args:
+        --- General Inputs ---
+        sample_0 (int, optional): The reference starting sample index for the data slice.
+        object_name (str, optional): The name of the data object as registered in 
+            the `flap` framework.
+        exp_id (int or str, optional): The experiment or shot ID, used for the title 
+            and the output filename.
+        wd (str, optional): The working directory path where the video will be saved 
+            (specifically in the `/plots` subdirectory).
+
+        --- Data Inputs ---
+        n_frames (int, optional): The total number of frames to iterate through.
+        d_sep_x (object, optional): Data object containing separatrix R-coordinates.
+        d_sep_y (object, optional): Data object containing separatrix Z-coordinates.
+        d_flux (object, optional): Data object containing flux surface data.
+        time (array-like, optional): Array of time values corresponding to each frame, 
+            used for timestamping the video and the filename.
+        frame_properties (dict, optional): Dictionary containing the tracked 
+            'structures' data for each frame.
+
+        --- Plot Formatting ---
+        levels (int or array-like, optional): Contour levels for the background 
+            data plot. If None, defaults to 51.
+        nocolorbar (bool, optional): If True, suppresses the colorbar on the plot.
+        plot_flux_surfaces (bool, optional): If True, overlays the flux surfaces 
+            onto the frames.
+        plot_separatrix (bool, optional): If True, overlays the magnetic separatrix.
+        str_finding_method (str, optional): The name of the structure finding method 
+            used (e.g., 'watershed'), appended to the output video filename.
+        colortable (list or object, optional): A color sequence used to color distinct 
+            structures based on their tracking label.
+        n_color (int, optional): The total number of distinct colors in the colortable.
+
+        --- Video Settings ---
+        video_resolution (tuple or list, optional): The (width, height) resolution of 
+            the output figure.
+        video_framerate (int or float, optional): The frames per second (FPS) for the 
+            encoded MP4 video.
+        video_start_frame (int, optional): The frame offset to begin the video 
+            rendering. Defaults to 0.
+
+    Returns:
+        None: The function saves an '.mp4' file to the working directory and 
+        releases the video writer resources.
+    """
 
     from flap_nstx.gpi import _plot_ellipses_centers
     import scipy
@@ -1582,6 +2032,8 @@ def _structure_video_save(sample_0=None,
             video.write(buf)
         except:
             print('Video frame cannot be saved. Passing...')
+        
+        plt.close(fig)
 
     cv2.destroyAllWindows()
     video.release()
@@ -1591,7 +2043,6 @@ def _plot_str_by_str(frame_properties=None,
                      plot_scatter=True,
                      figsize=None,
                      differential_keys=None,
-                     plot_tracking=None,
                      colortable=None,
                      n_color=None,
                      time_range=None,
@@ -1599,6 +2050,49 @@ def _plot_str_by_str(frame_properties=None,
                      pdf=False,
                      pdf_pages=None,
                      ):
+
+    """
+    Generates and saves individual time-series plots for each tracked property.
+
+    
+
+    This internal function creates a separate plot for every property defined in 
+    the analyzed keys (e.g., Area, Angle, Position). For each property, it plots 
+    the time evolution of every tracked structure on the same axes, differentiating 
+    them by color. It handles both standard properties and differential properties 
+    (which have one less time step) and can append the figures to an open PDF object.
+
+    Args:
+        frame_properties (dict, optional): The main data dictionary containing 
+            tracked 'structures', 'data' (metadata for standard properties), and 
+            'derived' (metadata for differential properties).
+        plot_scatter (bool, optional): If True, plots lines with scatter markers 
+            ('-o'). If False, plots solid lines ('-'). Defaults to True.
+        figsize (tuple, optional): The (width, height) dimensions for the generated 
+            matplotlib figures.
+        differential_keys (list, optional): A list of property string names that 
+            represent frame-to-frame changes (e.g., velocity). These are plotted 
+            against a shifted time array (`Time[1:]`).
+        colortable (list or object, optional): A sequence of colors used to assign 
+            consistent colors to individual structures based on their index.
+        n_color (int, optional): The total number of unique colors available in 
+            the `colortable`.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            used to set the x-axis limits (in seconds, converted to ms for plotting).
+        plot_for_publication (bool, optional): If True, enforces a golden ratio 
+            aspect ratio on the plot axes for publication-ready formatting. 
+            Defaults to False.
+        pdf (bool, optional): If True, saves each generated figure to the provided 
+            `pdf_pages` object. Defaults to False.
+        pdf_pages (matplotlib.backends.backend_pdf.PdfPages, optional): An open 
+            PDF multi-page object where the plots will be saved.
+
+    Returns:
+        None: The function modifies the `pdf_pages` object in place or displays 
+        figures interactively.
+    """
+    
+    
     
 #            frame_properties['structures'][i_frames]
     struct_by_struct=transform_frames_to_structures(frame_properties)
@@ -1655,7 +2149,7 @@ def _plot_str_by_str(frame_properties=None,
 
         if pdf:
             pdf_pages.savefig()
-            plt.cla()
+        plt.close(fig)
 
 
 def _plot_avg_results(frame_properties=None,
@@ -1668,6 +2162,43 @@ def _plot_avg_results(frame_properties=None,
                       pdf_pages=None,
                       plot_scatter=True,
                       ):
+    
+    """
+    Plots the aggregate maximum and average values of structure properties over time.
+
+    This internal function iterates through all standard ('data') and differential 
+    ('derived') properties. For each property, it generates a time-series plot 
+    showing the maximum value across all structures in a given frame. It can 
+    optionally overlay the average value for that frame. It filters out invalid 
+    time steps (where elongation is NaN) and bounds the plots to the specified time range.
+
+    Args:
+        frame_properties (dict, optional): The main data dictionary containing:
+            - 'data': Dictionary of standard properties containing 'max', 'avg', 
+              'label', and 'unit' keys.
+            - 'derived': Dictionary of differential properties with the same structure.
+            - 'Time': Array of time values for each frame.
+        time_range (list or tuple, optional): The [start, end] time boundaries used 
+            to filter the data and set the x-axis limits.
+        figsize (tuple, optional): The (width, height) dimensions for the generated 
+            matplotlib figures.
+        plot_vertical_line_at (float, optional): An exact x-coordinate (time) where 
+            a vertical red reference line should be drawn. Defaults to None.
+        overplot_average (bool, optional): If True, plots the average property value 
+            (as a thin red line) on top of the maximum values. Defaults to False.
+        plot_for_publication (bool, optional): If True, forces the plot's aspect 
+            ratio to the golden ratio for publication formatting. Defaults to False.
+        pdf (bool, optional): If True, saves each generated figure to the provided 
+            `pdf_pages` object. Defaults to False.
+        pdf_pages (matplotlib.backends.backend_pdf.PdfPages, optional): An open 
+            PDF multi-page object where the plots will be appended.
+        plot_scatter (bool, optional): If True, adds scatter markers ('o') to the 
+            line plots for the 'derived' properties. Defaults to True.
+
+    Returns:
+        None: The function modifies the `pdf_pages` object in place or displays 
+        figures interactively.
+    """
 
     keys=list(frame_properties['data'].keys())
     plot_index_structure=np.logical_and(np.logical_not(np.isnan(frame_properties['data']['Elongation']['avg'])),
@@ -1702,7 +2233,7 @@ def _plot_avg_results(frame_properties=None,
 
         if pdf:
             pdf_pages.savefig()
-
+        plt.close(fig)
     keys=list(frame_properties['derived'].keys())
 
     for i in range(len(keys)):
@@ -1737,203 +2268,133 @@ def _plot_avg_results(frame_properties=None,
 
         if pdf:
             pdf_pages.savefig()
-
+        plt.close(fig)
 
 
 def frame_properties_dict(exp_id, time, time_unit, distance_unit):
 
-    data_dict={'max':np.zeros([len(time)]),
-               'avg':np.zeros([len(time)]),
-               'stddev':np.zeros([len(time)]),
-               'raw':np.zeros([len(time)]),
-
-               'unit':None,
-               'label':None,
-               }
-
-    frame_properties={'shot':exp_id,
-                      'Time':time,
-                      'data':{},
-                      'derived':{},
-                      'structures':[],
-                      }
-
     """
-    Frame characterizing parameters
-    """
+    Initializes the primary data structure for storing structure properties.
+    
+    
+    
+    This function pre-allocates a comprehensive, nested dictionary containing 
+    NumPy arrays of zeros sized to match the input `time` array. It organizes 
+    properties into two main categories: static 'data' (e.g., Area, Position, 
+    Angle) and 'derived' kinematics (e.g., Velocity, Expansion fraction). 
+    It also assigns appropriate plotting labels (using LaTeX formatting) and 
+    dynamic physical units based on the provided time and distance units.
 
-    key='Angle'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$\phi$'
-    frame_properties['data'][key]['unit']='rad'
+    Args:
+        exp_id (int or str): The experiment or shot ID.
+        time (array-like): An array of time values corresponding to the frames. 
+            The length of this array determines the size of the pre-allocated 
+            data arrays.
+        time_unit (str): The physical unit of time (e.g., 's', 'ms', '\mu s') 
+            to be appended to the derived property units.
+        distance_unit (str): The physical unit of distance (e.g., 'm', 'mm', 
+            'pixels') to be used for spatial properties.
 
-    key='Angle of least inertia'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$\phi_{ALI}$'
-    frame_properties['data'][key]['unit']='rad'
+    Returns:
+        dict: A nested dictionary (`frame_properties`) containing:
+            - 'shot': The experiment ID.
+            - 'Time': The input time array.
+            - 'data': A dictionary of static physical properties. Each property 
+              key contains a sub-dictionary with pre-allocated arrays ('max', 
+              'avg', 'stddev', 'raw') and string metadata ('label', 'unit').
+            - 'derived': A dictionary of differential/kinematic properties 
+              structured identically to 'data'.
+            - 'structures': An initialized empty list to hold individual 
+              frame-by-frame tracked structures.
+    """    
 
-    key='Area'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Area'
-    frame_properties['data'][key]['unit']='$'+distance_unit+'^2$'
 
-    key='Axes length minor'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='a'
-    frame_properties['data'][key]['unit']=distance_unit
+    data_dict = {
+        'max': np.zeros([len(time)]),
+        'avg': np.zeros([len(time)]),
+        'stddev': np.zeros([len(time)]),
+        'raw': np.zeros([len(time)]),
+        'unit': None,
+        'label': None,
+    }
 
-    key='Axes length major'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='a'
-    frame_properties['data'][key]['unit']=distance_unit
+    frame_properties = {
+        'shot': exp_id,
+        'Time': time,
+        'data': {},
+        'derived': {},
+        'structures': [],
+    }
 
-    key='Center of gravity radial'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$COG_{rad}$'
-    frame_properties['data'][key]['unit']=distance_unit
+    # --- Static Parameters Configuration ---
+    # Format: (Key, Label, Unit)
+    static_configs = [
+        ('Angle',                      '$\phi$',             'rad'),
+        ('Angle of least inertia',     '$\phi_{ALI}$',       'rad'),
+        ('Area',                       'Area',               f'${distance_unit}^2$'),
+        ('Axes length minor',          'a',                  distance_unit),
+        ('Axes length major',          'b',                  distance_unit),
+        ('Center of gravity radial',   '$COG_{rad}$',        distance_unit),
+        ('Center of gravity poloidal', '$COG_{pol}$',        distance_unit),
+        ('Centroid radial',            'Centr. rad.',        distance_unit),
+        ('Centroid poloidal',          'Centr. pol.',        distance_unit),
+        ('Convexity',                  'Convexity',          ''),
+        ('Elongation',                 'Elong.',             ''),
+        ('Frame COG radial',           '$COG_{frame,rad}$',  distance_unit),
+        ('Frame COG poloidal',         '$COG_{frame,pol}$',  distance_unit), 
+        ('Position radial',            'R',                  distance_unit),
+        ('Position poloidal',          'z',                  distance_unit),
+        ('Roundness',                  'Roundness',          ''),
+        ('Separatrix dist',            '$r-r_{sep}$',        distance_unit),
+        ('Size radial',                '$d_{rad}$',          distance_unit),
+        ('Size poloidal',              '$d_{pol}$',          distance_unit),
+        ('Solidity',                   'Solidity',           ''),
+        ('Str number',                 'N',                  ''),
+        ('Total bending energy',       '$E_{bend}$',         ''),
+        ('Total curvature',            '$\kappa_{tot}$',     ''),
+    ]
 
-    key='Center of gravity poloidal'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$COG_{pol}$'
-    frame_properties['data'][key]['unit']=distance_unit
+    for key, label, unit in static_configs:
+        frame_properties['data'][key] = copy.deepcopy(data_dict)
+        frame_properties['data'][key]['label'] = label
+        frame_properties['data'][key]['unit'] = unit
 
-    key='Centroid radial'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Centr. rad.'
-    frame_properties['data'][key]['unit']=distance_unit
+    # --- Differential Parameters Configuration ---
+    # Format: (Key, Label, Unit)
+    derived_configs = [
+        ('Angular velocity angle',      '',                     f'rad/{time_unit}'),
+        ('Angular velocity ALI',        '',                     f'rad/{time_unit}'),
+        ('Expansion fraction area',     '$f_E$',                f'1/{time_unit}'),
+        ('Expansion fraction axes',     '$f_{E,area}$',         f'1/{time_unit}'),
+        ('Velocity radial position',    '$v_{rad,pos}$',        f'{distance_unit}/{time_unit}'),
+        ('Velocity poloidal position',  '$v_{pol,pos}$',        f'{distance_unit}/{time_unit}'),
+        ('Velocity radial COG',         '$v_{rad,COG}$',        f'{distance_unit}/{time_unit}'),
+        ('Velocity poloidal COG',       '$v_{pol,COG}$',        f'{distance_unit}/{time_unit}'),
+        ('Velocity radial centroid',    '$v_{rad,centroid}$',   f'{distance_unit}/{time_unit}'),
+        ('Velocity poloidal centroid',  '$v_{pol,centroid}$',   f'{distance_unit}/{time_unit}'),
+    ]
 
-    key='Centroid poloidal'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Centr. pol.'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Convexity'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Convexity'
-    frame_properties['data'][key]['unit']=''
-
-    key='Elongation'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Elong.'
-    frame_properties['data'][key]['unit']=''
-
-    key='Frame COG radial'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Frame COG poloidal'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$COG_{frame,rad}$'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Position radial'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='R'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Position poloidal'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='z'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Roundness'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Roundness'
-    frame_properties['data'][key]['unit']=''
-
-    key='Separatrix dist'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$r-r_{sep}$'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Size radial'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$d_{rad}$'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Size poloidal'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$d_{pol}$'
-    frame_properties['data'][key]['unit']=distance_unit
-
-    key='Solidity'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='Solidity'
-    frame_properties['data'][key]['unit']=''
-
-    key='Str number'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='N'
-    frame_properties['data'][key]['unit']=''
-
-    key='Total bending energy'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$E_{bend}$'
-    frame_properties['data'][key]['unit']=''
-
-    key='Total curvature'
-    frame_properties['data'][key]=copy.deepcopy(data_dict)
-    frame_properties['data'][key]['label']='$\kappa_{tot}$'
-    frame_properties['data'][key]['unit']=''
-
-    """
-    Differential parameters
-    """
-
-    key='Angular velocity angle'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']=''
-    frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-    key='Angular velocity ALI'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']=''
-    frame_properties['derived'][key]['unit']='rad/'+time_unit
-
-    key='Expansion fraction area'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$f_E$'
-    frame_properties['derived'][key]['unit']='1/'+time_unit
-
-    key='Expansion fraction axes'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$f_{E,area}$'
-    frame_properties['derived'][key]['unit']='1/'+time_unit
-
-    key='Velocity radial position'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{rad,pos}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-    key='Velocity poloidal position'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{pol,pos}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-    key='Velocity radial COG'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{rad,COG}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-    key='Velocity poloidal COG'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{pol,COG}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-    key='Velocity radial centroid'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{rad,centroid}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
-
-    key='Velocity poloidal centroid'
-    frame_properties['derived'][key]=copy.deepcopy(data_dict)
-    frame_properties['derived'][key]['label']='$v_{pol,centroid}$'
-    frame_properties['derived'][key]['unit']=distance_unit+'/'+time_unit
+    for key, label, unit in derived_configs:
+        frame_properties['derived'][key] = copy.deepcopy(data_dict)
+        frame_properties['derived'][key]['label'] = label
+        frame_properties['derived'][key]['unit'] = unit
 
     return frame_properties
 
 def read_analyzed_keys():
+    """
+    Provides a standardized list of property keys to be analyzed and plotted.
+
+    This function serves as a central configuration registry for the structure 
+    tracking analysis. It defines exactly which physical and kinematic properties 
+    (e.g., position, size, velocity, shape metrics) should be processed and 
+    visualized by downstream routines.
+
+    Returns:
+        list of str: A list of string keys corresponding to the structure properties 
+            (found in the 'data' and 'derived' dictionaries) that are designated 
+            for active analysis.
+    """
 
     analyzed_keys=[#'Centroid radial', 'Centroid poloidal',
                    'Position radial', 'Position poloidal',

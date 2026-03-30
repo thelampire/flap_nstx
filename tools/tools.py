@@ -376,101 +376,115 @@ def detrend_multidim(data_object=None,
                      return_trend=False,
                      output_name=None,
                      ):
+    """
+    Performs 2D or 3D polynomial detrending (background subtraction) on a multidimensional FLAP data object.
 
+    This function generates a polynomial basis matrix of the specified order, fits it 
+    to the data using a least-squares pseudo-inverse, and subtracts the resulting 
+    trend. It supports processing high-dimensional data (e.g., detrending 2D spatial 
+    frames across a 3D time-series) via vectorized matrix multiplication.
+
+    Args:
+        data_object (flap.DataObject or str): The FLAP data object or its registry name.
+        exp_id (int, optional): The experiment ID, if loading by name. Defaults to None.
+        coordinates (list of str): A list of 2 or 3 coordinate names to detrend along 
+            (e.g., ['Image x', 'Image y']).
+        order (int): The maximum polynomial order for the detrending surface.
+        test (bool, optional): If True and detrending a pure 2D dataset, plots the 
+            original, trend, and detrended data using matplotlib. Defaults to False.
+        return_trend (bool, optional): If True, returns the raw numpy array of the 
+            calculated trend instead of the detrended FLAP object. Defaults to False.
+        output_name (str, optional): If provided, registers the detrended FLAP object 
+            under this name. Defaults to None.
+
+    Returns:
+        flap.DataObject or numpy.ndarray: The detrended FLAP data object, or the 
+        calculated trend array if `return_trend` is True.
+    """
+
+    # --- 1. Object Loading & Dimensionality Checks ---
     if exp_id is not None:
-        d=copy.deepcopy(flap.get_data_object(data_object,
-                                             exp_id=exp_id))
+        d = copy.deepcopy(flap.get_data_object(data_object, exp_id=exp_id))
     else:
-        d=copy.deepcopy(flap.get_data_object(data_object))
+        d = copy.deepcopy(flap.get_data_object(data_object))
 
-    total_dim=len(d.data.shape)
+    total_dim = len(d.data.shape)
     if total_dim > 4:
-        raise TypeError('Dataset over 4 dimensions is not supported.')
-    ndim=len(coordinates)
-    if ndim > 3:
-        raise ValueError('Detrend is not supported above 3D.')
+        raise TypeError('Datasets over 4 dimensions are not supported.')
+
+    ndim = len(coordinates)
+    if ndim not in [2, 3]:
+        raise ValueError('Detrend is only supported for 2D and 3D coordinates.')
+
+    # Aggregate the target dimensions to detrend along
+    detrend_dims = np.unique(np.concatenate([d.get_coordinate_object(c).dimension_list for c in coordinates]))
+    shape = d.data.shape
+    d_shape = [shape[i] for i in detrend_dims]
+
+    # --- 2. Build Polynomial Basis Matrix ---
     if ndim == 2:
-        coord_obj_1=d.get_coordinate_object(coordinates[0])
-        coord_obj_2=d.get_coordinate_object(coordinates[1])
-        dim1=coord_obj_1.dimension_list
-        dim2=coord_obj_2.dimension_list
-        dim=np.unique(np.append(dim1,dim2))
+        nx, ny = d_shape
+        points = np.array([
+            [i**k * j**l for k in range(order + 1) for l in range(order - k + 1)]
+            for i in range(nx) for j in range(ny)
+        ])
+    elif ndim == 3:
+        nx, ny, nz = d_shape
+        points = np.array([
+            [i**l * j**m * k**n for l in range(order + 1) 
+                                for m in range(order - l + 1) 
+                                for n in range(order - l - m + 1)]
+            for i in range(nx) for j in range(ny) for k in range(nz)
+        ])
 
-        #[1,j,j2,j3,i,ij,ij2,i2,i2j,i3]
-        points=np.asarray([[i**k * j**l for k in range(order+1) for l in range(order-k+1)] for i in range(d.data.shape[dim[0]]) for j in range(d.data.shape[dim[1]])]) #The actual polynomial calculation
-        c_matrix=np.linalg.inv(np.dot(points.T,points))
-        if ndim == total_dim:
-            b_matrix=d.data
-            b_vector=np.reshape(b_matrix,b_matrix.shape[dim[0]]*b_matrix.shape[dim[1]]) #Reshapes to the same order as the points are aranged
-            coeff=np.dot(np.dot(c_matrix,points.T),b_vector)#This performs the linear regression
-            trend=np.dot(points,coeff)
-            trend=np.reshape(trend,[d.data.shape[dim[0]],d.data.shape[dim[1]]])
-            d.data=d.data-trend
-            if test:
-                import matplotlib.pyplot as plt
-                plt.figure()
-                plt.contourf(trend.T,levels=51)
-                plt.figure()
-                plt.contourf(d.data,levels=51)
-                plt.figure()
-                plt.contourf(d.data-trend,levels=51)
-        else:
-            alldim=np.arange(ndim)
-            non_detrend_dim=np.where(np.logical_and(alldim != dim1,alldim != dim2))[0][0]
-            n_fit=d.data.shape[non_detrend_dim]
+    # --- 3. Vectorized Least Squares Fit ---
+    # pseudo_inv maps the data to the polynomial coefficients safely: (X^T * X)^-1 * X^T
+    pseudo_inv = np.linalg.pinv(points)
 
-            for i in range(n_fit):
-                index=[slice(None)] * total_dim
-                index[non_detrend_dim]=i
-                values=np.reshape(d.data[tuple(index)],d.data.shape[dim[0]]*d.data.shape[dim[1]])
-                coeff=np.dot(np.dot(np.linalg.inv(np.dot(points.T,points)),points.T),values)#This performs the linear regression
-                trend=np.dot(points,coeff)
-                trend=np.reshape(trend,[d.data.shape[dim[0]],d.data.shape[dim[1]]])
-                d.data[tuple(index)]=d.data[tuple(index)]-trend
+    # To vectorize over non-detrended dimensions (like Time), we permute the array 
+    # to push the detrended dimensions to the front, then flatten.
+    other_dims = [i for i in range(total_dim) if i not in detrend_dims]
+    perm = list(detrend_dims) + other_dims
+    
+    data_permuted = np.transpose(d.data, perm)
+    
+    n_pixels = np.prod(d_shape)
+    n_other = np.prod([shape[i] for i in other_dims]) if other_dims else 1
+    
+    # Flatten into 2D: (pixels, slices)
+    data_flat = data_permuted.reshape((n_pixels, n_other))
 
-    if ndim == 3:
-        coord_obj_1=d.get_coordinate_object(coordinates[0])
-        coord_obj_2=d.get_coordinate_object(coordinates[1])
-        coord_obj_3=d.get_coordinate_object(coordinates[2])
-        dim1=coord_obj_1.dimension_list
-        dim2=coord_obj_2.dimension_list
-        dim3=coord_obj_3.dimension_list
-        dim=np.unique(np.append(np.append(dim1,dim2),dim3))
-        points=np.asarray([[i**l * j**m * k**n for l in range(order+1)
-                                               for m in range(order-l+1)
-                                               for n in range(order-l-m+1)]
-                           for i in range(d.data.shape[dim[0]])
-                           for j in range(d.data.shape[dim[1]])
-                           for k in range(d.data.shape[dim[2]])])
+    # Bulk matrix multiplication fits all slices simultaneously!
+    coeffs = pseudo_inv @ data_flat      # Shape: (n_polynomial_terms, n_slices)
+    trend_flat = points @ coeffs         # Shape: (n_pixels, n_slices)
 
-        if ndim == total_dim:
-            values=np.reshape(d.data,d.data.shape[dim[0]]*d.data.shape[dim[1]]*d.data.shape[dim[2]])
-            coeff=np.dot(np.dot(np.linalg.inv(np.dot(points.T,points)),points.T),values)#This performs the linear regression
-            trend=np.dot(points,coeff)
-            trend=np.reshape(trend,[d.data.shape[dim[0]],d.data.shape[dim[1]],d.data.shape[dim[2]]])
-            d.data=d.data-trend
-        else:
-            alldim=np.arange(ndim)
-            non_detrend_dim=np.where(np.logical_and(alldim != dim1,alldim != dim2))[0][0]
-            n_fit=d.data.shape[non_detrend_dim]
-            for i in range(n_fit):
-                index=[slice(None)] * total_dim
-                index[non_detrend_dim]=i
-                values=np.reshape(d.data[tuple(index)],d.data.shape[dim[0]]*d.data.shape[dim[1]])
-                coeff=np.dot(np.dot(np.linalg.inv(np.dot(points.T,points)),points.T),values)#This performs the linear regression
-                trend=np.dot(points,coeff)
-                trend=np.reshape(trend,[d.data.shape[dim[0]],d.data.shape[dim[1]],d.data.shape[dim[2]]])
-                d.data[tuple(index)]=d.data[tuple(index)]-trend
+    # Reshape the trend back to the permuted state, then reverse the permutation
+    trend_permuted = trend_flat.reshape([shape[i] for i in perm])
+    inv_perm = np.argsort(perm)
+    trend = np.transpose(trend_permuted, inv_perm)
+
+    # --- 4. Subtraction & Output ---
+    d.data = d.data - trend
+
+    if test and total_dim == 2 and ndim == 2:
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        
+        axes[0].contourf(trend.T, levels=51)
+        axes[0].set_title('Trend')
+        axes[1].contourf((d.data + trend).T, levels=51)
+        axes[1].set_title('Original Data')
+        axes[2].contourf(d.data.T, levels=51)
+        axes[2].set_title('Detrended Data')
+        plt.show()
 
     if output_name is not None:
-        try:
-            flap.add_data_object(d,output_name)
-        except Exception as e:
-            raise e
-    if not return_trend:
-        return d
-    else:
+        flap.add_data_object(d, output_name)
+        
+    if return_trend:
         return trend
+        
+    return d
 
 def filename(exp_id=None,
              time_range=None,
@@ -479,49 +493,87 @@ def filename(exp_id=None,
              frange=None,
              comment=None,
              extension=None):
+    """
+    Generates a standardized, formatted filename for NSTX data analysis outputs.
+
+    Constructs a filename by concatenating the provided experiment parameters 
+    separated by underscores. It ensures consistent naming conventions across 
+    the module and safely handles directory path joining and extension appending.
+
+    Args:
+        exp_id (int or str): The experiment shot number. Required.
+        time_range (list or tuple of float, optional): A 2-element list specifying 
+            the start and end times. If None, appends 'whole'. Defaults to None.
+        working_directory (str, optional): The base directory path. If provided, 
+            the returned string will be a full absolute/relative path. Defaults to None.
+        purpose (str, optional): A short description of the file's purpose. Spaces 
+            will be automatically replaced with underscores. Defaults to None.
+        frange (list or tuple of float, optional): A 2-element list specifying 
+            the frequency range [f_min, f_max]. Defaults to None.
+        comment (str, optional): Additional text to append to the filename. Spaces 
+            will be replaced with underscores. Defaults to None.
+        extension (str, optional): File extension (e.g., 'pdf', 'pickle'). 
+            Can be provided with or without a leading dot. Defaults to None.
+
+    Raises:
+        ValueError: If `exp_id` is missing, or if `time_range`/`frange` are invalid lengths.
+        TypeError: If `purpose`, `comment`, or `extension` are not strings.
+
+    Returns:
+        str: The fully constructed filename (or absolute path if a working directory was given).
+    """
 
     if exp_id is None:
         raise ValueError('The exp_id needs to be set for the filename.')
-    filename='NSTX_'+str(exp_id)
 
+    # Collect filename components in a list
+    parts = [f"NSTX_{exp_id}"]
+
+    # --- Time Range ---
     if time_range is None:
-        filename+='_whole'
-    elif len(time_range) == 2 and type(time_range) == list:
-
-        filename+='_'+f"{time_range[0]:.6f}"+'_'+f"{time_range[1]:.6f}"
+        parts.append('whole')
+    elif isinstance(time_range, (list, tuple, np.ndarray)) and len(time_range) == 2:
+        parts.append(f"{time_range[0]:.6f}_{time_range[1]:.6f}")
     else:
-        raise ValueError('Time range should be a two element list.')
+        raise ValueError('Time range should be a two-element list or tuple.')
 
-    if working_directory is not None:
-        if working_directory[-1] != '/':
-            working_directory+='/'
-        filename=working_directory+filename
-
+    # --- Purpose ---
     if purpose is not None:
-        if type(purpose) is str:
-            filename+='_'+purpose.replace(' ','_')
+        if isinstance(purpose, str):
+            parts.append(purpose.replace(' ', '_'))
         else:
             raise TypeError('Purpose should be a string.')
 
+    # --- Frequency Range ---
     if frange is not None:
-        if len(frange) == 2 and type(frange) == list:
-            filename+='_freq_'+str(frange[0])+'_'+str(frange[1])
+        if isinstance(frange, (list, tuple)) and len(frange) == 2:
+            parts.append(f"freq_{frange[0]}_{frange[1]}")
         else:
-            raise ValueError('Frequency range should be a two element list if not None.')
+            raise ValueError('Frequency range should be a two-element list or tuple if not None.')
 
+    # --- Comment ---
     if comment is not None:
-        if type(comment) is str:
-            filename+='_'+comment.replace(' ','_')
+        if isinstance(comment, str):
+            parts.append(comment.replace(' ', '_'))
         else:
-            raise TypeError('Purpose should be a string.')
+            raise TypeError('Comment should be a string.')
 
+    # --- Join Base Filename ---
+    base_filename = "_".join(parts)
+
+    # --- Extension ---
     if extension is not None:
-        if type(extension) is str:
-            filename+='.'+extension
+        if isinstance(extension, str):
+            # .lstrip('.') ensures it works whether the user passes "pdf" or ".pdf"
+            base_filename += f".{extension.lstrip('.')}"
         else:
             raise TypeError('Extension should be a string.')
 
-    return filename
+    # --- Path Construction ---
+    if working_directory is not None:
+        return os.path.join(working_directory, base_filename)
+        
+    return base_filename
 
 
 
@@ -533,54 +585,94 @@ def polyfit_2D(x=None,
                irregular=False,
                return_covariance=False,
                return_fit=False):
+    """
+    Fits a 2D polynomial surface to regular grid or irregular scatter data.
 
-    if sigma is None:
-        sigma=np.zeros(values.shape)
-        sigma[:]=1.
-    else:
-        if sigma.shape != values.shape:
-            raise ValueError('The shape of the errors do not match the shape of the values!')
+    Uses Weighted Least Squares (WLS) to fit a 2D polynomial of a specified order 
+    to the given data. Capable of handling both 2D image matrices and 1D arrays 
+    of scattered (irregular) coordinate points.
+
+    Args:
+        x (np.ndarray, optional): X-coordinates. Defaults to array indices if None.
+        y (np.ndarray, optional): Y-coordinates. Defaults to array indices if None.
+        values (np.ndarray): The Z-values to fit the surface to.
+        sigma (np.ndarray, optional): 1-sigma uncertainties for WLS weighting. 
+            Defaults to uniform weighting of 1.0.
+        order (int): The maximum order of the 2D polynomial.
+        irregular (bool, optional): If True, treats x, y, and values as 1D arrays 
+            of scattered points. Defaults to False.
+        return_covariance (bool, optional): If True, returns a tuple of 
+            (coefficients, covariance_matrix). Defaults to False.
+        return_fit (bool, optional): If True, evaluates the polynomial on the 
+            input coordinates and returns the fitted surface array. Defaults to False.
+
+    Returns:
+        np.ndarray or tuple: The calculated polynomial coefficients. Can optionally 
+        return the covariance matrix and/or the fitted data array.
+    """
+    
+    if order is None:
+        raise ValueError('The polynomial order must be set.')
+    if values is None:
+        raise ValueError('Values must be provided.')
+
+    # --- 1. Validate, Unify, and Flatten Inputs ---
+    original_shape = values.shape
+
     if not irregular:
-        if len(values.shape) != 2:
-            raise ValueError('Values are not 2D')
-        if x is not None and y is not None:
-            if x.shape != values.shape or y.shape != values.shape:
-                raise ValueError('There should be as many points as values and their shape should match.')
-        if order is None:
-            raise ValueError('The order is not set.')
-        if (x is None and y is not None) or (x is not None and y is None):
-            raise ValueError('Either both or neither x and y need to be set.')
+        if len(original_shape) != 2:
+            raise ValueError('Values must be 2D when irregular=False.')
+
         if x is None and y is None:
-            polynom=np.asarray([[i**k * j**l / sigma[i,j] for k in range(order+1) for l in range(order-k+1)] for i in range(values.shape[0]) for j in range(values.shape[1])]) #The actual polynomial calculation
-        else:
-            polynom=np.asarray([[x[i,j]**k * y[i,j]**l / sigma[i,j] for k in range(order+1) for l in range(order-k+1)] for i in range(values.shape[0]) for j in range(values.shape[1])]) #The actual polynomial calculation
+            # Equivalent to the original `for i... for j...` indexing
+            x, y = np.indices(original_shape)
+        elif x is None or y is None:
+            raise ValueError('Either both or neither x and y must be set.')
+        elif x.shape != original_shape or y.shape != original_shape:
+            raise ValueError('x and y shapes must match values shape.')
 
-        original_shape=values.shape
-        values_reshape=np.reshape(values/sigma, values.shape[0]*values.shape[1])
-
-        covariance_matrix=np.linalg.inv(np.dot(polynom.T,polynom))
-
-        coefficients=np.dot(np.dot(covariance_matrix,polynom.T),values_reshape) #This performs the linear regression
-
-        if not return_fit:
-            if return_covariance:
-                return (coefficients, covariance_matrix)
-            else:
-                return coefficients
-        else:
-            return np.reshape(np.dot(polynom,coefficients),original_shape)
+        # Flatten arrays for generalized linear algebra
+        x_flat, y_flat, v_flat = x.flatten(), y.flatten(), values.flatten()
     else:
-        if x.shape != y.shape or x.shape != values.shape:
-            raise ValueError('The points should be an [n,2] vector.')
-        if len(x.shape) != 1 or len(y.shape) != 1 or len(values_reshape.shape) != 1:
-            raise ValueError('x,y,values should be a 1D vector when irregular is set.')
-        if order is None:
-            raise ValueError('The order is not set.')
-        polynom=np.asarray([[x[i]**k * y[i]**l for k in range(order+1) for l in range(order-k+1)] for i in range(values.shape[0])]) #The actual polynomial calculation
-        if not return_fit:
-            return np.dot(np.dot(np.linalg.inv(np.dot(polynom.T,polynom)),polynom.T),values) #This performs the linear regression
-        else:
-            return np.dot(polynom,np.dot(np.dot(np.linalg.inv(np.dot(polynom.T,polynom)),polynom.T),values))
+        if len(original_shape) != 1 or x.shape != original_shape or y.shape != original_shape:
+            raise ValueError('x, y, and values must be 1D arrays of the same length when irregular=True.')
+        
+        x_flat, y_flat, v_flat = x, y, values
+
+    # Handle uncertainties (weights)
+    if sigma is None:
+        s_flat = np.ones_like(v_flat)
+    else:
+        if sigma.shape != original_shape:
+            raise ValueError('The shape of sigma must match the shape of values.')
+        s_flat = sigma.flatten()
+
+    # --- 2. Build Polynomial Basis Matrices ---
+    # Generate exponent pairs (k, l) such that k + l <= order
+    powers = [(k, l) for k in range(order + 1) for l in range(order - k + 1)]
+
+    # Phi is the unweighted basis matrix (Vandermonde matrix)
+    Phi = np.column_stack([(x_flat**k) * (y_flat**l) for k, l in powers])
+
+    # V is the weighted basis matrix for solving
+    V = Phi / s_flat[:, np.newaxis]
+    v_weighted = v_flat / s_flat
+
+    # --- 3. Solve Weighted Least Squares ---
+    # Pseudo-inverse is numerically safer than standard inverse for polynomials
+    covariance_matrix = np.linalg.pinv(V.T @ V)
+    coefficients = covariance_matrix @ V.T @ v_weighted
+
+    # --- 4. Handle Returns ---
+    if return_fit:
+        # Evaluate the fit on the unweighted coordinates
+        fit_flat = Phi @ coefficients
+        return fit_flat.reshape(original_shape)
+
+    if return_covariance:
+        return coefficients, covariance_matrix
+
+    return coefficients
 
 
 

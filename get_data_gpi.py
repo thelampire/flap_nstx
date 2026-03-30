@@ -130,8 +130,16 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
 
     images=pims.Cine(local_file_folder+file_name)
     #print(np.asarray(images[:], dtype=np.int16).shape)
-    data_arr=np.flip(np.asarray(images[:], dtype=np.int16),2) #The original data is 80x64, this line converts it to 64x80
-    
+    try:
+        data_arr=np.flip(np.asarray(images[:], dtype=np.int16),2) #The original data is 80x64, this line converts it to 64x80
+    except Exception as e:
+        if "cannot reshape" in str(e):
+            print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            print('The data file is corrupt and does not have all data stored.')
+            print('The corresponding shot should be removed from the database.')
+            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+        raise ValueError
+        
     #The header dict contains the capture information along with the entire image number and the first_image_no (when the recording started)
     #The frame_rate corresponds with the one from IDL.
     trigger_time=images.header_dict['first_image_no']/images.frame_rate

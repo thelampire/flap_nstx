@@ -9,6 +9,8 @@ Created on Thu Aug 19 14:44:36 2021
 import numpy as np
 import scipy
 
+from shapely.geometry import Polygon as PolygonShapely
+from shapely import concave_hull
 
 class Polygon:
 
@@ -65,15 +67,10 @@ class Polygon:
         self.remove_self_intersection()
 
     def remove_self_intersection(self):
-        from shapely.geometry import Polygon as PolygonShapely
-        from shapely import concave_hull
 
         polygon=PolygonShapely(zip(self.x,self.y))
         polygon.is_valid
-        if False:   #This
-            polygon=concave_hull(polygon.buffer(0)) #Prevents self-intersection
-        else:
-            polygon=polygon.buffer(0)
+        polygon=polygon.buffer(0)
 
         self._shapely_polygon=polygon
         try:

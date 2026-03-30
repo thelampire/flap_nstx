@@ -88,27 +88,49 @@ def identify_structures(#General inputs
                         ):
 
     """
-    The method calculates the radial and poloidal sizes of the structures
-    present in one from of the GPI image. It gathers the isosurface contour
-    coordinates and determines the structures based on certain criteria. In
-    principle no user input is necessary, the code provides a robust solution.
-    The sizes are determined by fitting an ellipse onto the contour at
-    half-height. The code returns the following list:
-        a[structure_index]={'Paths':     [list of the paths, type: matplotlib.path.Path],
-                            'Half path': [path at the half level of the structure]
-                            'Levels':    [levels of the paths, type: list],
-                            'Center':    [center of the ellipse in px,py or R,z coordinates, type: numpy.ndarray of two elements],
-                            'Size':      [size of the ellipse in x and y direction or R,z direction, type: ]numpy.ndarray of two elements,
-                            'Angle':      [angle of the ellipse compared to horizontal in radians, type: numpy.float64],
-                            'Area':      [area of the polygon at the half level],
-                            ('Ellipse':  [the entire ellipse object, returned if test_result is True, type: flap_nstx.tools.FitEllipse])
-                            }
-    """
+    Identifies, segments, and parametrizes plasma structures within a single 2D GPI frame.
 
-    """
-    ----------------
-    READING THE DATA
-    ----------------
+    This core engine isolates turbulent structures (blobs) using either intensity 
+    contour mapping or watershed segmentation. It extracts the topology of the 
+    structures at their Full Width at Half Maximum (FWHM), filters out artifacts, 
+    and fits geometric models (ellipses or 2D Gaussians) to quantify their kinematics.
+
+    Args:
+        data_object (flap.DataObject, str, np.ndarray, optional): The 2D frame data.
+        exp_id (int or str, optional): Shot number if loading data directly. Defaults to '*'.
+        time (float, optional): Exact time step to analyze.
+        sample (int, optional): Exact sample index to analyze.
+        spatial (bool, optional): If True, coordinates are returned in real space [m].
+        pixel (bool, optional): If True, coordinates are returned in pixels.
+        mfilter_range (int, optional): Kernel size for the initial median filter.
+        ignore_side_structure (bool, optional): Drops structures touching the frame boundaries.
+        ignore_large_structure (bool, optional): Drops structures exceeding frame dimensions.
+        smooth_contours (int, optional): Number of refinement iterations for polygon smoothing.
+        ellipse_method (str, optional): Math method for ellipse fitting ('linalg' or 'skimage').
+        fit_shape (str, optional): Geometric model to fit ('ellipse' or 'gaussian').
+        str_size_lower_thres (float, optional): Minimum absolute size for a valid structure.
+        str_size_upper_thres (float, optional): Maximum absolute size for a valid structure.
+        elongation_threshold (float, optional): Axis ratio threshold below which angle is undefined.
+        str_finding_method (str, optional): Segmentation algorithm ('contour' or 'watershed').
+        nlevel (int, optional): Number of contours used in 'contour' segmentation.
+        levels (list, optional): Explicit contour intensity levels.
+        threshold_level (float, optional): Absolute intensity cutoff for background subtraction.
+        filter_struct (bool, optional): If True, filters structures with too few contours.
+        filter_level (int, optional): The minimum contour count threshold.
+        remove_interlaced_structures (bool, optional): Removes internal sub-peaks if True.
+        threshold_method (str, optional): Method for watershed binary cutoff ('otsu').
+        plot_full (bool, optional): Plots the full segmentation pipeline.
+        plot_result (bool, optional): Plots the final fitted structures.
+        save_data_for_publication (bool, optional): Exports step-by-step arrays to .txt files.
+        (Other standard plotting args passed automatically...)
+
+    Returns:
+        list of dict: A list representing identified structures, where each dict contains:
+            - 'Polygon', 'Half path', 'Vertices', 'X coord', 'Y coord', 'Data'
+            - 'Area', 'Intensity', 'Convexity', 'Solidity', 'Roundness'
+            - 'Center', 'Centroid', 'Center of gravity' (both radial and poloidal)
+            - 'Size', 'Axes length', 'Angle', 'Elongation'
+            - 'Ellipse' or 'Gaussian' (The raw fit object)
     """
 
     if type(data_object) is str:
@@ -420,7 +442,7 @@ def identify_structures(#General inputs
             structures[-1]['Half path']=prelim_structures[i_str]['Paths'][ind_at_half]
             structures[-1]['Polygon']=half_polygon
 
-    if str_finding_method == 'watershed':
+    elif str_finding_method == 'watershed':
 
         thresh = threshold_otsu(data_thresholded)
         binary = np.asarray(data_thresholded > thresh, dtype='uint8')
@@ -517,125 +539,92 @@ def identify_structures(#General inputs
 
 
     #Calculate the ellipse and its properties for the half level contours
+# --- 5. Geometric Extraction & Fitting ---
+    fitted_structures = []
+    for struct in structures:
+        poly = struct['Polygon']
+        
+        struct.update({
+            'Vertices': poly.vertices, 
+            'X coord': poly.x_data, 
+            'Y coord': poly.y_data, 
+            'Data': poly.data,
+            
+            'Centroid': poly.centroid, 
+            'Centroid radial': poly.centroid[0], 
+            'Centroid poloidal': poly.centroid[1],
+            
+            'Area': poly.area, 
+            'Intensity': poly.intensity, 
+            
+            'Center of gravity': poly.center_of_gravity,
+            'Center of gravity radial': poly.center_of_gravity[0], 
+            'Center of gravity poloidal': poly.center_of_gravity[1],
+            
+            'Convexity': poly.convexity, 
+            'Solidity': poly.solidity, 
+            'Roundness': poly.roundness,
+            'Total bending energy': poly.total_bending_energy, 
+            'Total curvature': poly.convexity,
+            'Angle of least inertia': poly.principal_axes_angle
+        })
 
-    for i_str in range(len(structures)):
+        if fit_shape == 'ellipse':
+            fit_struct = FitEllipse(x=poly.x, y=poly.y, method=ellipse_method, verbose=verbose)
+            struct['Ellipse'] = fit_struct
+            
+        elif fit_shape == 'gaussian':
+            fit_struct = FitGaussian(x=poly.x_data, y=poly.y_data, data=poly.data, verbose=verbose)
+            struct['Gaussian'] = fit_struct
 
-        polygon=structures[i_str]['Polygon']
+        struct.update({
+            'Axes length': fit_struct.axes_length,
+            'Axes length minor': fit_struct.axes_length[0], 
+            'Axes length major': fit_struct.axes_length[1],
+            
+            'Center': fit_struct.center, 
+            'Center radial': fit_struct.center[0], 
+            'Center poloidal': fit_struct.center[1],
+            
+            'Position': fit_struct.center, 
+            'Position radial': fit_struct.center[0], 
+            'Position poloidal': fit_struct.center[1],
+            
+            'Size': fit_struct.size, 
+            'Size radial': fit_struct.size[0], 
+            'Size poloidal': fit_struct.size[1],
+            
+            'Angle': fit_struct.angle, 
+            'Elongation': fit_struct.elongation
+        })
 
-        structures[i_str]['Vertices']=polygon.vertices
-        structures[i_str]['X coord']=polygon.x_data
-        structures[i_str]['Y coord']=polygon.y_data
-        structures[i_str]['Data']=polygon.data
+        if struct['Axes length'][1] / struct['Axes length'][0] < elongation_threshold:
+            struct['Angle'] = np.nan
 
-        structures[i_str]['Centroid']=polygon.centroid
-        structures[i_str]['Centroid radial']=polygon.centroid[0]
-        structures[i_str]['Centroid poloidal']=polygon.centroid[1]
-
-        structures[i_str]['Area']=polygon.area
-        structures[i_str]['Intensity']=polygon.intensity
-
-        structures[i_str]['Center of gravity']=polygon.center_of_gravity
-        structures[i_str]['Center of gravity radial']=polygon.center_of_gravity[0]
-        structures[i_str]['Center of gravity poloidal']=polygon.center_of_gravity[1]
-
-        structures[i_str]['Convexity']=polygon.convexity
-        structures[i_str]['Solidity']=polygon.solidity
-        structures[i_str]['Roundness']=polygon.roundness
-        structures[i_str]['Total bending energy']=polygon.total_bending_energy
-        structures[i_str]['Total curvature']=polygon.convexity
-
-        structures[i_str]['Angle of least inertia']=polygon.principal_axes_angle
-
-        if fit_shape=='ellipse':
-            ellipse=FitEllipse(x=polygon.x,
-                               y=polygon.y,
-                               method=ellipse_method,
-                               verbose=verbose)
-
-            structures[i_str]['Ellipse']=ellipse
-            fit_struct=ellipse
-
-        elif fit_shape=='gaussian':
-            gaussian=FitGaussian(x=polygon.x_data,
-                                 y=polygon.y_data,
-                                 data=polygon.data,
-                                 verbose=verbose)
-            structures[i_str]['Gaussian']=gaussian
-            fit_struct=gaussian
-
-        structures[i_str]['Axes length']=fit_struct.axes_length
-        structures[i_str]['Axes length minor']=fit_struct.axes_length[0]
-        structures[i_str]['Axes length major']=fit_struct.axes_length[1]
-
-        structures[i_str]['Center']=fit_struct.center
-        structures[i_str]['Center radial']=fit_struct.center[0]
-        structures[i_str]['Center poloidal']=fit_struct.center[1]
-
-        structures[i_str]['Position']=fit_struct.center
-        structures[i_str]['Position radial']=fit_struct.center[0]
-        structures[i_str]['Position poloidal']=fit_struct.center[1]
-
-        structures[i_str]['Size']=fit_struct.size
-        structures[i_str]['Size radial']=fit_struct.size[0]
-        structures[i_str]['Size poloidal']=fit_struct.size[1]
-
-        structures[i_str]['Angle']=fit_struct.angle
-        structures[i_str]['Elongation']=fit_struct.elongation
-
-        if structures[i_str]['Axes length'][1]/structures[i_str]['Axes length'][0] < elongation_threshold:
-            structures[i_str]['Angle']=np.nan
-
-        size=fit_struct.size
-        if np.iscomplex(size[0]) or np.iscomplex(size[1]):
-            if verbose: print('Size is complex')
+        if np.iscomplex(fit_struct.size[0]) or np.iscomplex(fit_struct.size[1]):
             fit_struct.set_invalid()
 
-        if ignore_large_structure:
-            if (size[0] > x_coord.max()-x_coord.min() or
-                size[1] > y_coord.max()-y_coord.min()):
-                if verbose: print('Size is larger than the frame size.')
-                fit_struct.set_invalid()
+        if ignore_large_structure and (fit_struct.size[0] > (x_coord.max() - x_coord.min()) or 
+                                       fit_struct.size[1] > (y_coord.max() - y_coord.min())):
+            fit_struct.set_invalid()
 
-    if test: print('N before size thres:',len(structures))
-    n_str=len(structures)
+        # --- Validation & Filtering ---
+        if str_size_lower_thres is not None and struct['Size'] is not None:
+            if (struct['Size'][0] < str_size_lower_thres or struct['Size'][1] < str_size_lower_thres or
+                struct['Size'][0] > str_size_upper_thres or struct['Size'][1] > str_size_upper_thres):
+                continue # Skip this structure
+                
+            if ignore_side_structure and (np.any(struct['X coord'] == x_coord.min()) or np.any(struct['X coord'] == x_coord.max()) or
+                                          np.any(struct['Y coord'] == y_coord.min()) or np.any(struct['Y coord'] == y_coord.max()) or
+                                          fit_struct.center[0] < x_coord.min() or fit_struct.center[0] > x_coord.max() or
+                                          fit_struct.center[1] < y_coord.min() or fit_struct.center[1] > y_coord.max()):
+                continue # Skip this structure
 
-    for i_str in range(n_str-1,-1,-1):
-        if (str_size_lower_thres is not None and
-            structures[i_str]['Size'] is not None):
+        fitted_structures.append(struct)
 
-            if (structures[i_str]['Size'][0] < str_size_lower_thres or
-                structures[i_str]['Size'][1] < str_size_lower_thres or
-                structures[i_str]['Size'][0] > str_size_upper_thres or
-                structures[i_str]['Size'][1] > str_size_upper_thres or
-                (ignore_side_structure and
-                 (np.sum(structures[i_str]['X coord'] == x_coord.min()) != 0 or
-                  np.sum(structures[i_str]['X coord'] == x_coord.max()) != 0 or
-                  np.sum(structures[i_str]['Y coord'] == y_coord.min()) != 0 or
-                  np.sum(structures[i_str]['Y coord'] == y_coord.max()) != 0 or
-                  fit_struct.center[0] < x_coord.min() or
-                  fit_struct.center[0] > x_coord.max() or
-                  fit_struct.center[1] < y_coord.min() or
-                  fit_struct.center[1] > y_coord.max()
-                 )
-                )
-               ):
-                if test:
-                    print('sx',structures[i_str]['Size'][0])
-                    print('sy',structures[i_str]['Size'][1])
-                    print('thres',str_size_lower_thres)
-                if verbose: print('Structure is popped.')
-                structures.pop(i_str)
-
-
-    if test: print('N after size thres:',len(structures))
-
-    fitted_structures=[]
-    for i_str in range(len(structures)):
-        if structures[i_str]['Size'] is not None:
-            fitted_structures.append(structures[i_str])
-
-    structures=fitted_structures
-    if test: print('N after fitting:',len(structures))
+    structures = fitted_structures
+    
+    if test: print('Number of structures after fitting:',len(structures))
 
     if plot_result:
         if structure_video_save:
@@ -726,9 +715,8 @@ def identify_structures(#General inputs
             ax.text(xpos, ypos, '(a)', transform=ax.transAxes, size=9)
          
             if save_data_for_publication:
-                file1=open(wd+'/a_preproc_frame.txt','w+')
-                file1.write(str(data))
-                file1.close()
+                with open(f"{wd}+'/a_preproc_frame.txt", 'w+') as f:
+                    f.write(str(data))
                 
             ax=axes[0,1]
             ax.contourf(x_coord,
@@ -744,9 +732,8 @@ def identify_structures(#General inputs
             ax.text(xpos, ypos, '(b)', transform=ax.transAxes, size=9)
 
             if save_data_for_publication:
-                file1=open(wd+'/b_thresholded.txt','w+')
-                file1.write(str(data_thresholded))
-                file1.close()
+                with open(wd+'/b_thresholded.txt','w+') as file1:
+                    file1.write(str(data_thresholded))
 
             ax=axes[1,0]
             ax.contourf(x_coord,
@@ -762,9 +749,8 @@ def identify_structures(#General inputs
             ax.text(xpos, ypos, '(c)', transform=ax.transAxes, size=9)
 
             if save_data_for_publication:
-                file1=open(wd+'/c_binary.txt','w+')
-                file1.write(str(binary))
-                file1.close()
+                with open(wd+'/c_binary.txt','w+') as file1:
+                    file1.write(str(binary))
 
             ax=axes[1,1]
             ax.contourf(x_coord,
@@ -780,9 +766,8 @@ def identify_structures(#General inputs
             ax.text(xpos, ypos, '(d)', transform=ax.transAxes, size=9)
 
             if save_data_for_publication:
-                file1=open(wd+'/d_segmented.txt','w+')
-                file1.write(str(labels))
-                file1.close()
+                with open(wd+'/d_segmented.txt','w+') as file1:
+                    file1.write(str(labels))
 
             # plt.tight_layout(pad=0.1)
 
@@ -870,55 +855,32 @@ def identify_structures(#General inputs
     return structures
 
 def _plot_ellipses_centers(ax_cur,
-                           x_polygon,
-                           y_polygon,
-                           x_ellipse,
-                           y_ellipse,
+                           x_polygon, y_polygon,
+                           x_ellipse, y_ellipse,
                            structure,
                            polygon_color=None,
                            ellipse_color=None,
                            polygon_linewidth=1,
                            ellipse_linewidth=1,
                            semiaxis_linewidth=1,
-                           plot_structure_mid=False,
-                           ):
-
-    #Plot the half path polygon
-    if polygon_color is not None:
-        ax_cur.plot(x_polygon,
-                    y_polygon,
-                    color=polygon_color,
-                    linewidth=polygon_linewidth
-                    )
-    else:
-        ax_cur.plot(x_polygon,
-                    y_polygon)
-
-    #Plot the ellipse
-    if ellipse_color is not None:
-        ax_cur.plot(x_ellipse,
-                    y_ellipse,
-                    color=ellipse_color,
-                    linewidth=ellipse_linewidth,
-                    )
-    else:
-        ax_cur.plot(x_ellipse,
-                    y_ellipse,
-                    )
-
-    ax_cur.plot([structure['Center'][0]-structure['Axes length'][0]*np.cos(structure['Angle']),
-                 structure['Center'][0]+structure['Axes length'][0]*np.cos(structure['Angle'])],
-                [structure['Center'][1]-structure['Axes length'][0]*np.sin(structure['Angle']),
-                 structure['Center'][1]+structure['Axes length'][0]*np.sin(structure['Angle'])],
-                color='magenta',
-                linewidth=semiaxis_linewidth,
-                )
+                           plot_structure_mid=False):
+    """Internal helper to overlay geometric fits on frame axes."""
     
-    if plot_structure_mid:
-        ax_cur.scatter(structure['Centroid'][0],
-                       structure['Centroid'][1],
-                       color='yellow')
+    # Plot bounds and fit
+    poly_args = {'color': polygon_color} if polygon_color else {}
+    el_args = {'color': ellipse_color} if ellipse_color else {}
+    
+    ax_cur.plot(x_polygon, y_polygon, linewidth=polygon_linewidth, **poly_args)
+    ax_cur.plot(x_ellipse, y_ellipse, linewidth=ellipse_linewidth, **el_args)
 
-        ax_cur.scatter(structure['Center of gravity'][0],
-                       structure['Center of gravity'][1],
-                       color='red')
+    # Plot Semi-axis
+    cx, cy = structure['Center']
+    a, angle = structure['Axes length'][0], structure['Angle']
+    ax_cur.plot([cx - a*np.cos(angle), cx + a*np.cos(angle)],
+                [cy - a*np.sin(angle), cy + a*np.sin(angle)],
+                color='magenta', linewidth=semiaxis_linewidth)
+    
+    # Plot Centers
+    if plot_structure_mid:
+        ax_cur.scatter(*structure['Centroid'], color='yellow')
+        ax_cur.scatter(*structure['Center of gravity'], color='red')
