@@ -7,10 +7,15 @@ Created on Thu Aug 19 14:44:36 2021
 """
 
 import numpy as np
-import scipy
+from scipy.spatial import ConvexHull
+
+from functools import cached_property
 
 from shapely.geometry import Polygon as PolygonShapely
 from shapely import concave_hull
+
+from dataclasses import dataclass
+from typing import Any
 
 class Polygon:
 
@@ -31,12 +36,20 @@ class Polygon:
                  test=False,                                                    #Run test procedures
                  ):
 
-        if ((x is not None and y is not None) and  (len(x) == len(y))):
-            self.x=np.asarray(x)
-            self.y=np.asarray(y)
-        else:
+        if (x is None or y is None) or len(x) != len(y):
             raise ValueError('The input x and y has to be defined and must have the same length.')
 
+        self.x = np.asarray(x)
+        self.y = np.asarray(y)
+        
+        self.x_data = None
+        self.y_data = None
+        self.x_data_pix = None
+        self.y_data_pix = None
+        
+        self.data = None
+        self.polygon_with_data=False
+        
         if (x_data is not None and
             y_data is not None and
             data is not None):
@@ -44,60 +57,148 @@ class Polygon:
                x_data.shape != data.shape):
                 raise ValueError('The shapes of the input data do not match.')
 
-            self.x_data=x_data
-            self.y_data=y_data
+            self.x_data = x_data
+            self.y_data = y_data
 
-            self.x_data_pix=x_data_pix
-            self.y_data_pix=y_data_pix
+            self.x_data_pix = x_data_pix
+            self.y_data_pix = y_data_pix
 
-            self.data=data
-            self.polygon_with_data=True
+            self.data = data
+            self.polygon_with_data = True
+
+
+        self._path = None
+        self.path_order = path_order
+        self.test = test
+        self._create_valid_polygon()
+        self._calculate_curvature_vector()
+        
+    def _create_valid_polygon(self):
+        
+        poly = PolygonShapely(zip(self.x, self.y))
+        
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+            
+            # If buffer(0) splits a pinched figure-8 polygon into multiple pieces, 
+            # we grab the largest continuous piece to be our main polygon.
+            if poly.geom_type == 'MultiPolygon':
+                poly = max(poly.geoms, key=lambda p: p.area)
+            elif poly.geom_type != 'Polygon':
+                raise ValueError(f"Geometry resolution failed, returned {poly.geom_type}")
+
+        self._shapely_polygon = poly
+        
+        # Shapely's exterior.coords automatically closes the loop (first point == last point).
+        # We can extract them directly without manually rebuilding the array!
+        coords = np.array(poly.exterior.coords)
+
+        self.x = coords[:, 0]
+        self.y = coords[:, 1]
+
+    def _calculate_curvature_vector(self):
+        """
+        Returns the magnitude of the curvature vector for each vertex
+
+        Returns
+        -------
+        ndarray
+            DESCRIPTION.
+
+        """
+        # dsx = np.diff(self.x)
+        # dsy = np.diff(self.y)
+        # ds = np.sqrt(dsx**2+dsy**2)
+        
+        # # SAFETY NET: Replace exact zeros with a tiny number to prevent NaN crashes
+        # # ds = np.where(ds == 0, 1e-10, ds)
+
+        # Tx = dsx/ds
+        # Ty = dsy/ds
+        #TODO: this dies unfortunately, needs to be fixed.
+        if self.x[0] == self.x[-1] and self.y[0] == self.y[-1]:
+            x_looped=self.x
+            y_looped=self.y
+        
         else:
-            self.x_data=None
-            self.y_data=None
+            x_looped=np.append(self.x,self.x[0])
+            y_looped=np.append(self.y,self.y[0])
+        
+        dsx=np.diff(x_looped)
+        dsy=np.diff(y_looped)
+        ds=np.sqrt(dsx**2+dsy**2)
+        Tx=dsx/ds
+        Ty=dsy/ds
+        ds2=0.5*(np.append(ds[-1],ds[:-1])+ds)
 
-            self.data=None
-            self.polygon_with_data=False
-            self.x_data_pix=None
-            self.y_data_pix=None
+        ds2 = 0.5*(np.append(ds[-1],ds[:-1])+ds)
 
-        self._path=None
-        self.path_order=path_order
-        self.test=test
-        self.remove_self_intersection()
+        Hx = np.diff(np.append(Tx[-1],Tx))/ds2
+        Hy = np.diff(np.append(Ty[-1],Ty))/ds2
+        
+        self._curvature_vector  =  np.asarray([Hx,Hy]).T
+    
+    @property
+    def shapely_polygon(self):  #initialized by remove_self_intersection
+        return self._shapely_polygon
+    
+    @cached_property
+    def oriented_envelope(self):    #return oriented envelope normalized in a way that the enveloping rectangle is starting with the lower left point.
+        return self._shapely_polygon.oriented_envelope.normalize()
+    
+    @cached_property
+    def axes_length(self):
+        
+        bbox = np.asarray(self.oriented_envelope.exterior.coords)
+        axis1 = np.linalg.norm(bbox[0] - bbox[3])
+        axis2 = np.linalg.norm(bbox[0] - bbox[1])
+    
+        if axis1 <= axis2: #Ellipse is also [minor, major]
+            return np.array([axis1, axis2])
+        else:
+            return np.array([axis2, axis1])
+        
+    @cached_property
+    def size(self):
+        # Calculate the horizontal and vertical spans of the rotated rectangular envelope        
+        alfa=self.envelope_angle
+        a=self.axes_length[0]
+        b=self.axes_length[1]
 
-    def remove_self_intersection(self):
+        xsize = (a * np.abs(np.cos(alfa)) + b * np.abs(np.sin(alfa)))
+        ysize = (a * np.abs(np.sin(alfa)) + b * np.abs(np.cos(alfa)))
 
-        polygon=PolygonShapely(zip(self.x,self.y))
-        polygon.is_valid
-        polygon=polygon.buffer(0)
-
-        self._shapely_polygon=polygon
-        try:
-            points = []
-            try:
-                for poly in polygon:
-                    points.extend(poly.exterior.coords[:-1])
-            except:
-                points.extend(polygon.exterior.coords[:-1])
-
-            points=np.asarray(points)
-
-            self.x = points[:,0]
-            self.y = points[:,1]
-
-            xy_looped=np.zeros([len(self.x)+1,2])
-            xy_looped[0:-1,:]=np.asarray([self.x, self.y]).T
-            xy_looped[-1,:]=[self.x[0], self.y[0]]
-
-            self.x=xy_looped[:,0]
-            self.y=xy_looped[:,1]
-
-        except Exception as e:
-            raise e
+        return np.array([xsize,ysize])
+    
+    @cached_property
+    def envelope_angle(self):
+        def _azimuth(point1, point2):
+            """azimuth between 2 points (interval 0 - 180)"""
+            angle = np.arctan2(point2[1] - point1[1], point2[0] - point1[0])
+            return np.degrees(angle) if angle > 0 else np.degrees(angle) + 180
+        
+        def azimuth_angle(mrr): #angle of the longer side of the rectangle w.r.t. horizontal
+            """azimuth of minimum_rotated_rectangle"""
+            bbox = np.asarray(mrr.exterior.coords)
+            axis1 = np.linalg.norm(bbox[0] - bbox[3])
+            axis2 = np.linalg.norm(bbox[0] - bbox[1])
+        
+            if axis1 <= axis2:
+                az = _azimuth(bbox[0], bbox[1])
+            else:
+                az = _azimuth(bbox[0], bbox[3])
+        
+            return az/180.*np.pi
+        
+        return azimuth_angle(self.oriented_envelope)
+    
+    @cached_property
+    def concave_hull(self):
+        return concave_hull(self.shapely_polygon)
+    
 
     def smooth(self, refinements=5): #chaikins_corner_cutting
-
+        #This does not really mooothes the polygon.
         coords = np.array([self.x,self.y]).T
 
         for _ in range(refinements):
@@ -112,7 +213,8 @@ class Polygon:
         self.x=coords[:,0].copy()
         self.y=coords[:,1].copy()
 
-    @property
+
+    @cached_property
     def intensity(self):
         if self.polygon_with_data:
             return np.sum(self.data)
@@ -122,7 +224,7 @@ class Polygon:
     def vertices(self):
         return np.asarray([self.x,self.y]).transpose()
 
-    @property
+    @cached_property
     def path(self):
         """
         Returns
@@ -156,15 +258,7 @@ class Polygon:
 
         return Path(xy_looped,codes)
 
-    @property
-    def shapely_polygon(self):
-        try:
-            return self._shapely_polygon
-        except:
-            self.remove_self_intersection()
-            return self._shapely_polygon
-
-    @property
+    @cached_property
     def area(self):
         """
         Returns the area of the polygon based on the so called shoelace formula.
@@ -175,12 +269,12 @@ class Polygon:
         return 0.5*np.abs(np.dot(self.x,np.roll(self.y,1)) -
                           np.dot(self.y,np.roll(self.x,1)))
 
-    @property
+    @cached_property
     def signed_area(self):
         return 0.5*(np.dot(self.x,np.roll(self.y,1)) -
                     np.dot(self.y,np.roll(self.x,1)))
 
-    @property
+    @cached_property
     def centroid(self):
         """
         Source: https://en.wikipedia.org/wiki/Polygon
@@ -208,7 +302,7 @@ class Polygon:
 
         return np.asarray([x_center,y_center])
 
-    @property
+    @cached_property
     def convex_hull(self):
         '''
         Returns the convex hull of the polygon as [n_point,2] ndarray
@@ -222,7 +316,7 @@ class Polygon:
         coordinates=np.asarray([self.x,self.y]).transpose()
 
         try:
-            hull = scipy.spatial.ConvexHull(coordinates)
+            hull = ConvexHull(coordinates)
             x_hull = coordinates[hull.vertices,0]
             y_hull = coordinates[hull.vertices,1]
         except:
@@ -231,43 +325,23 @@ class Polygon:
 
         return Polygon(x=x_hull,
                        y=y_hull)
-    @property
-    def concave_hull(self):
-        raise NotImplementedError('Do your thing...')
+    
 
-    @property
+    @cached_property
     def perimeter(self):
-        '''
-        Returns the perimeter of the polygon calculated from the
-        Eucledian distance between the vertices. Assumes that the polygon's
-        coordinates are in order.'
+        return np.sum(np.sqrt(np.diff(self.x)**2 + np.diff(self.y)**2))
 
-        Returns
-        -------
-        float
-            perimeter of the polygon
 
-        '''
-        perimeter=0
-        for i_dist in range(-1,len(self.x)-1):
-            perimeter+=np.sqrt((self.x[i_dist]-self.x[i_dist+1])**2+
-                               (self.y[i_dist]-self.y[i_dist+1])**2)
+    @cached_property
+    def center_of_gravity(self):
+        if not self.polygon_with_data:
+            raise ValueError('The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
 
-        return perimeter
+        x_cog=np.sum(self.x_data*self.data)/np.sum(self.data)
+        y_cog=np.sum(self.y_data*self.data)/np.sum(self.data)
+        return np.asarray([x_cog,y_cog]).transpose()
 
-    @property
-    def roundness(self):
-        return 4*np.pi*self.area/(self.convex_hull.perimeter)**2
-
-    @property
-    def convexity(self):
-        return self.convex_hull.perimeter/self.perimeter
-
-    @property
-    def solidity(self):
-        return self.area/self.convex_hull.area
-
-    @property
+    @cached_property
     def second_central_moment(self):
         if not self.polygon_with_data:
             raise ValueError('The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
@@ -292,7 +366,7 @@ class Polygon:
         return mu
 
 
-    @property
+    @cached_property
     def principal_axes_angle(self):
         if not self.polygon_with_data:
             raise ValueError('The polygon doesn\'t have data within, please add data and x_data,y_data coordinates. Returning...')
@@ -306,8 +380,10 @@ class Polygon:
                 mu=self.second_central_moment
                 eigvalues,eigvectors=np.linalg.eig(mu)
                 eig_ind=np.argmax(eigvalues)
-                angle=np.arctan(eigvectors[1,eig_ind]/
-                                eigvectors[0,eig_ind])
+                
+                
+                angle=np.arctan2(eigvectors[1,eig_ind]/
+                                 eigvectors[0,eig_ind])
                 return np.arcsin(np.sin(angle))
             
             #   return np.arctan2(eigvectors[1,eig_ind],
@@ -318,54 +394,10 @@ class Polygon:
         else:
             return np.nan
 
-    @property
-    def center_of_gravity(self):
-        if not self.polygon_with_data:
-            raise ValueError('The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
-
-        x_cog=np.sum(self.x_data*self.data)/np.sum(self.data)
-        y_cog=np.sum(self.y_data*self.data)/np.sum(self.data)
-        return np.asarray([x_cog,y_cog]).transpose()
-
-    @property
+    @cached_property
     def curvature(self):
-        """
-        Returns the magnitude of the curvature vector for each vertex
-
-        Returns
-        -------
-        ndarray
-            DESCRIPTION.
-
-        """
-        if self.x[0] == self.x[-1] and self.y[0] == self.y[-1]:
-            x_looped=self.x
-            y_looped=self.y
-
-        else:
-            x_looped=np.append(self.x,self.x[0])
-            y_looped=np.append(self.y,self.y[0])
-
-        dsx=np.diff(x_looped)
-        dsy=np.diff(y_looped)
-        ds=np.sqrt(dsx**2+dsy**2)
-        Tx=dsx/ds
-        Ty=dsy/ds
-        ds2=0.5*(np.append(ds[-1],ds[:-1])+ds)
-
-        if self.test:
-            print('x_looped', x_looped)
-            print('y_looped', y_looped)
-            print('dsx', dsx)
-            print('dsy', dsy)
-            print('ds', ds)
-            print('ds2', ds2)
-
-        Hx=np.diff(np.append(Tx[-1],Tx))/ds2
-        Hy=np.diff(np.append(Ty[-1],Ty))/ds2
-        
-        self._curvature_vector = np.asarray([Hx,Hy]).transpose()
-        curvature=np.sqrt(Hx**2+Hy**2)
+        Hx,Hy = self._curvature_vector.T
+        curvature=np.sqrt(Hx**2 + Hy**2)
 
         if self.test:
             print('curvature', curvature)
@@ -374,11 +406,21 @@ class Polygon:
 
     @property
     def curvature_vector(self):
-        try:
-            return self._curvature_vector
-        except:
-            self.curvature
-            return self._curvature_vector
+        return self._curvature_vector
+
+    #Shape descriptors
+
+    @property
+    def convexity(self):
+        return self.convex_hull.perimeter/self.perimeter
+
+    @property
+    def roundness(self):
+        return 4*np.pi*self.area/(self.convex_hull.perimeter)**2
+
+    @property
+    def solidity(self):
+        return self.area/self.convex_hull.area
 
     @property
     def total_curvature(self):

@@ -15,6 +15,7 @@ import flap
 import flap_nstx
 flap_nstx.register('NSTX_GPI')
 from flap_nstx.gpi import nstx_gpi_contour_structure_finder, nstx_gpi_watershed_structure_finder, normalize_gpi
+
 from flap_nstx.tools import detrend_multidim
 
 import flap_mdsplus
