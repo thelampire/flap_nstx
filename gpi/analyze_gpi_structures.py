@@ -736,17 +736,17 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             # if fix_structure_angles:
             #     frame_properties=_fix_structure_angles(frame_properties)
             with open(pickle_filename, 'wb') as f:
-                pickle.dump(structures_dict,f)
+                pickle.dump(raw_dataset,f)
             if test:
                 plt.close()
         else:
             print('\n\n--- Loading data from the pickle file ---')
             with open(pickle_filename, 'rb') as f:
-                structures_dict=pickle.load(f)
+                raw_dataset=pickle.load(f)
     else:
         print('\n\n--- Loading data from the pickle file ---')
         with open(pickle_filename, 'rb') as f:
-            structures_dict=pickle.load(f)
+            raw_dataset=pickle.load(f)
         #labels= 'label,born,died'
         
     """
@@ -754,22 +754,22 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     """
     
     tracked_dataset = track_structures(dataset=raw_dataset,
-                                           max_gap=max_gap,
-                                           time_range=time_range,
-                                           tracking=tracking,
-                                           tracking_assignment=tracking_assignment,
-                                           matrix_weight=matrix_weight,
-                                           test=test,
-                                           prev_str_weighting=prev_str_weighting,
-                                           calculate_rough_diff_velocities=calculate_rough_diff_velocities,
-                                           weighting=weighting,
-                                           maxing=maxing,
-                                           remove_orphans=remove_orphans,
-                                           min_structure_lifetime=min_structure_lifetime,
-                                           nocalc=nocalc,
-                                           recalc_tracking=recalc_tracking,
-                                           smooth_contours=smooth_contours,
-                                           comment=comment)
+                                        max_gap=max_gap,
+                                        time_range=time_range,
+                                        tracking=tracking,
+                                        tracking_assignment=tracking_assignment,
+                                        matrix_weight=matrix_weight,
+                                        test=test,
+                                        prev_str_weighting=prev_str_weighting,
+                                        calculate_rough_diff_velocities=calculate_rough_diff_velocities,
+                                        weighting=weighting,
+                                        maxing=maxing,
+                                        remove_orphans=remove_orphans,
+                                        min_structure_lifetime=min_structure_lifetime,
+                                        nocalc=nocalc,
+                                        recalc_tracking=recalc_tracking,
+                                        smooth_contours=smooth_contours,
+                                        comment=comment)
 
     """
     #PLOTTING THE RESULTS
@@ -809,7 +809,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                               n_color=n_color,
                               video_start_frame=video_start_frame,
                               )
-
+    
     if plot_example_structure_frames:
         _plot_example_structure_frames(exp_id=exp_id,
                                        time_range=time_range,
@@ -820,8 +820,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                        plot_nframe=plot_nframe,
                                        plot_ncol=plot_ncol,
                                        levels=levels,
-                                       dataset=tracked_dataset,
-                                       time=time,
+                                       dataset=raw_dataset,
                                        plot_example_structure_frames=plot_example_structure_frames,
                                        plot_separatrix=plot_separatrix,
                                        separatrix_coordinates=(d_sep_x,d_sep_y),
@@ -1206,6 +1205,7 @@ def _plot_example_structure_frames(exp_id=None,
         
         # --- OOP STRUCTURE EXTRACTION ---
         target_idx = frame_sample_0 + i_frames + plot_example_structure_frames
+
         structures = dataset.frames[target_idx]
 
         if structures is not None and len(structures) > 0:

@@ -175,7 +175,7 @@ class Metric:
         if other_label == self.plot_label:
             new_label = ''
             new_dict_label = f"{self.dict_label} per {self._get_dict_label(other)}"
-        elif other_label != '':
+        elif other_label != '' and self.plot_label != '':
             new_label = f"${self.plot_label.replace('$', '')}/{other_label.replace('$', '')}$"
             new_dict_label = f"{self.dict_label} per {self._get_dict_label(other)}"
         else:
@@ -185,8 +185,10 @@ class Metric:
         other_unit = self._get_unit(other)
         if other_unit == self.unit:
             new_unit = ''
-        elif other_unit != '':
+        elif other_unit != '' and self.unit != '':
             new_unit = f"${self.unit.replace('$', '')}/{other_unit.replace('$', '')}$"
+        elif other_unit != '' and self.unit == '':
+            new_unit = f"${other_unit.replace('$', '')}^"+r"{-1}$"
         else:
             new_unit = self.unit
             
@@ -216,7 +218,7 @@ class Metric:
         elif other_unit != '':
             new_unit = f"${other_unit.replace('$', '')}/{self.unit.replace('$', '')}$"
         else:
-            new_unit = f"1/{self.unit.replace('$', '')}" if self.unit else ''
+            new_unit = f"${self.unit.replace('$', '')}^"+r"{-1}$" if self.unit else ''
             if self.unit.startswith('$'):
                 new_unit = f"${new_unit}$" # Preserve LaTeX wrapper if it had one
             

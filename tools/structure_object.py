@@ -107,6 +107,51 @@ class PlasmaStructure(Polygon, FitShape):
             self.regular_parameters = value
         else:
             raise KeyError(f"Cannot set dictionary key '{key}' on PlasmaStructure.")
+            
+
+class TrackedPlasmaStructure:
+    """A time-resolved plasma structure spanning multiple frames."""
+    
+    def __init__(self, label: int, start_time: float):
+        self.label = label
+        self.start_time = start_time
+        self.time = []  # Raw list of time steps (can easily be cast to np.array)
+        
+        # We reuse your awesome hybrid dictionaries to hold MetricArrays!
+        self.regular_parameters = ParameterDict()
+        self.differential_parameters = ParameterDict()
+
+    def add_step(self, struct: PlasmaStructure, current_time: float):
+        """Ingests a single-frame structure and appends its data to the time series."""
+        self.time.append(current_time)
+        
+        # 1. Harvest Regular Parameters
+        for key, metric in struct.regular_parameters.items():
+            if key not in self.regular_parameters:
+                # First time seeing this metric! Initialize a MetricArray.
+                self.regular_parameters[key] = MetricArray(
+                    value=[metric.value],
+                    dict_label=metric.dict_label,
+                    plot_label=metric.plot_label,
+                    unit=metric.unit,
+                    multiplier=metric.multiplier
+                )
+            else:
+                # We already have an array for this, just append the new Metric!
+                self.regular_parameters[key].append(metric)
+                
+        # 2. Harvest Differential Parameters
+        for key, metric in struct.differential_parameters.items():
+            if key not in self.differential_parameters:
+                self.differential_parameters[key] = MetricArray(
+                    value=[metric.value],
+                    dict_label=metric.dict_label,
+                    plot_label=metric.plot_label,
+                    unit=metric.unit,
+                    multiplier=metric.multiplier
+                )
+            else:
+                self.differential_parameters[key].append(metric)
 
 class StructureDataset:
     """
@@ -208,50 +253,6 @@ class StructureDataset:
         # Case C: It's a standard variable (e.g., .label, .born)
         else:
             return np.array(harvested)
-
-class TrackedPlasmaStructure:
-    """A time-resolved plasma structure spanning multiple frames."""
-    
-    def __init__(self, label: int, start_time: float):
-        self.label = label
-        self.start_time = start_time
-        self.time = []  # Raw list of time steps (can easily be cast to np.array)
-        
-        # We reuse your awesome hybrid dictionaries to hold MetricArrays!
-        self.regular_parameters = ParameterDict()
-        self.differential_parameters = ParameterDict()
-
-    def add_step(self, struct: PlasmaStructure, current_time: float):
-        """Ingests a single-frame structure and appends its data to the time series."""
-        self.time.append(current_time)
-        
-        # 1. Harvest Regular Parameters
-        for key, metric in struct.regular_parameters.items():
-            if key not in self.regular_parameters:
-                # First time seeing this metric! Initialize a MetricArray.
-                self.regular_parameters[key] = MetricArray(
-                    value=[metric.value],
-                    dict_label=metric.dict_label,
-                    plot_label=metric.plot_label,
-                    unit=metric.unit,
-                    multiplier=metric.multiplier
-                )
-            else:
-                # We already have an array for this, just append the new Metric!
-                self.regular_parameters[key].append(metric)
-                
-        # 2. Harvest Differential Parameters
-        for key, metric in struct.differential_parameters.items():
-            if key not in self.differential_parameters:
-                self.differential_parameters[key] = MetricArray(
-                    value=[metric.value],
-                    dict_label=metric.dict_label,
-                    plot_label=metric.plot_label,
-                    unit=metric.unit,
-                    multiplier=metric.multiplier
-                )
-            else:
-                self.differential_parameters[key].append(metric)
 
 class ParameterDict(dict):
     """
