@@ -569,11 +569,11 @@ def identify_structures(#General inputs
             'Angle of least inertia': poly.principal_axes_angle
         })
 
-        if fit_shape == 'ellipse':
+        if fit_shape.lower() == 'ellipse':
             fit_struct = FitEllipse(x=poly.x, y=poly.y, method=ellipse_method, verbose=verbose)
             struct['Ellipse'] = fit_struct
             
-        elif fit_shape == 'gaussian':
+        elif fit_shape.lower() == 'gaussian':
             fit_struct = FitGaussian(x=poly.x_data, y=poly.y_data, data=poly.data, verbose=verbose)
             struct['Gaussian'] = fit_struct
 
