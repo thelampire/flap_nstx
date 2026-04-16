@@ -168,8 +168,10 @@ def identify_structures(#General inputs
 
     elif isinstance(data_object, np.ndarray):
         data = data_object
-        x_coord = np.arange(data_object.shape[0])
-        y_coord = np.arange(data_object.shape[1])
+        # BUG FIX: Use meshgrid to ensure 2D boolean masking works downstream
+        x_coord, y_coord = np.meshgrid(np.arange(data.shape[0]), 
+                                       np.arange(data.shape[1]), 
+                                       indexing='ij')
         x_coord_pix = x_coord
         y_coord_pix = y_coord
     else:
@@ -278,7 +280,7 @@ def identify_structures(#General inputs
                 )
 
 
-                # 2. VALIDATE AND APPEND (Massively simplified!)
+                # 2. VALIDATE AND APPEND
                 if validate_structure(one_struct, x_coord, y_coord, elongation_threshold, 
                                       str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
                     structures.append(one_struct)
@@ -348,7 +350,7 @@ def identify_structures(#General inputs
                         distance_unit=dist_unit, 
                         verbose=verbose
                     )
-                    # VALIDATE AND APPEND (Massively simplified!)
+                    # VALIDATE AND APPEND
                     if validate_structure(one_structure, x_coord, y_coord, elongation_threshold, 
                                           str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
                         
@@ -373,9 +375,8 @@ def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse,
     ax_cur.plot(x_polygon, y_polygon, linewidth=polygon_linewidth, **poly_args)
     ax_cur.plot(x_ellipse, y_ellipse, linewidth=ellipse_linewidth, **el_args)
 
-    # Plot Semi-axis using native object properties!
-    cx, cy = struct.fit_center[0].value, struct.fit_center[1].value
-    a, angle = struct.fit_axes_length[1].value, struct.fit_angle.value
+    cx, cy = struct.fit_center[0], struct.fit_center[1]
+    a, angle = struct.fit_axes_length[1], struct.fit_angle
     
     if not (np.isnan(cx) or np.isnan(cy) or np.isnan(a) or np.isnan(angle)):
         ax_cur.plot([cx - a*np.cos(angle), cx + a*np.cos(angle)],
@@ -383,29 +384,30 @@ def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse,
                     color='magenta', linewidth=semiaxis_linewidth)
     
     if plot_structure_mid:
-        ax_cur.scatter(struct.centroid[0].value, struct.centroid[1].value, color='yellow')
-        ax_cur.scatter(struct.center_of_gravity[0].value, struct.center_of_gravity[1].value, color='red')
+        ax_cur.scatter(struct.centroid[0], struct.centroid[1], color='yellow')
+        ax_cur.scatter(struct.center_of_gravity[0], struct.center_of_gravity[1], color='red')
         
 def validate_structure(struct, x_coord, y_coord, elongation_threshold, str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
     """Filters out invalid structures based on size, elongation, and boundary constraints."""
     
     # 1. NaN Check
-    if np.isnan(struct.fit_size[0].value) or np.isnan(struct.fit_size[1].value):
+    if np.isnan(struct.fit_size[0]) or np.isnan(struct.fit_size[1]):
         struct.set_invalid()
         return False
 
     # 2. Elongation check (safely neutralize angle if it's too round)
-    if struct.fit_elongation.value < elongation_threshold:
+    if struct.fit_elongation < elongation_threshold:
         struct._angle = np.nan 
-        
+        # BUG FIX: Sync the dictionary so downstream trackers see the NaN!
+        struct.update_regular_parameters()
 
     # 3. Size & Boundary Edge check
-    if str_size_lower_thres is not None and not np.isnan(struct.fit_size[1].value):
+    if str_size_lower_thres is not None and not np.isnan(struct.fit_size[1]):
         # Check lower/upper bounds
-        if (struct.fit_size[0].value < str_size_lower_thres or 
-            struct.fit_size[1].value < str_size_lower_thres or
-            struct.fit_size[0].value > str_size_upper_thres or 
-            struct.fit_size[1].value > str_size_upper_thres):
+        if (struct.fit_size[0] < str_size_lower_thres or 
+            struct.fit_size[1] < str_size_lower_thres or
+            struct.fit_size[0] > str_size_upper_thres or 
+            struct.fit_size[1] > str_size_upper_thres):
             struct.set_invalid()
             return False
             
@@ -414,10 +416,10 @@ def validate_structure(struct, x_coord, y_coord, elongation_threshold, str_size_
                                       np.any(struct.x_data == x_coord.max()) or
                                       np.any(struct.y_data == y_coord.min()) or 
                                       np.any(struct.y_data == y_coord.max()) or
-                                      struct.fit_center[0].value < x_coord.min() or 
-                                      struct.fit_center[0].value > x_coord.max() or
-                                      struct.fit_center[1].value < y_coord.min() or 
-                                      struct.fit_center[1].value > y_coord.max()):
+                                      struct.fit_center[0] < x_coord.min() or 
+                                      struct.fit_center[0] > x_coord.max() or
+                                      struct.fit_center[1] < y_coord.min() or 
+                                      struct.fit_center[1] > y_coord.max()):
             struct.set_invalid()
             return False
             

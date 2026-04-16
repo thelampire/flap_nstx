@@ -18,7 +18,7 @@ import flap
 import flap_nstx
 flap_nstx.register('NSTX_GPI')
 
-from flap_nstx.gpi import analyze_gpi_structures, transform_frames_to_structures
+from flap_nstx.gpi import analyze_gpi_structures
 from flap_nstx.thomson import get_fit_nstx_thomson_profiles
 
 import flap_mdsplus

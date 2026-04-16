@@ -1,5 +1,5 @@
 #from .fit_objects import FitEllipse, FitGaussian
-from .metric import Metric, MetricArray
+from .metric import MetricArray
 from .fit_objects import FitEllipse, FitGaussian
 from .shape_objects import Polygon, FitShape
 from .structure_object import PlasmaStructure, StructureDataset, TrackedPlasmaStructure

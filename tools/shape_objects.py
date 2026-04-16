@@ -9,37 +9,30 @@ import numpy as np
 from scipy.optimize import curve_fit
 from functools import cached_property
 from skimage.measure import EllipseModel
-
 from scipy.spatial import ConvexHull
-
 from shapely.geometry import Polygon as PolygonShapely
 from shapely import concave_hull
 
-from flap_nstx.tools import Metric
-
 class Polygon:
+    
+    METADATA = {}
+
     def __init__(self,
-                 x=None,  # x coord for defining polygon in DEVICE coordinates
-                 y=None,  # y coord for defining polygon in DEVICE coordinates
+                 x=None,  
+                 y=None,  
                  smooth=0,
-                 
-                 x_data=None,  # x coordinates of pixels enclosed by the polygon in DEVICE coordinates
-                 y_data=None,  # y coordinates of pixels enclosed by the polygon in DEVICE coordinates
-
-                 x_data_pix=None,  # x coordinates of pixels enclosed by the polygon in PIXEL coordinates
-                 y_data_pix=None,  # y coordinates of pixels enclosed by the polygon in PIXEL coordinates
-
-                 data=None,  # Intensity data enclosed by the polygon
-
-                 path_order=3,  # Order of the polygon path fit onto the vertices defined by x,y
-
-                 test=False,  # Run test procedures
+                 x_data=None,  
+                 y_data=None,  
+                 x_data_pix=None,  
+                 y_data_pix=None,  
+                 data=None,  
+                 path_order=3,  
+                 test=False,  
                  distance_unit='mm',
                  ):
 
         if (x is None or y is None) or len(x) != len(y):
-            raise ValueError(
-                'The input x and y has to be defined and must have the same length.')
+            raise ValueError('The input x and y has to be defined and must have the same length.')
 
         self.x = np.asarray(x)
         self.y = np.asarray(y)
@@ -52,19 +45,14 @@ class Polygon:
         self.data = None
         self.polygon_with_data = False
 
-        if (x_data is not None and
-            y_data is not None and
-                data is not None):
-            if (x_data.shape != y_data.shape or
-               x_data.shape != data.shape):
+        if (x_data is not None and y_data is not None and data is not None):
+            if (x_data.shape != y_data.shape or x_data.shape != data.shape):
                 raise ValueError('The shapes of the input data do not match.')
 
             self.x_data = x_data
             self.y_data = y_data
-
             self.x_data_pix = x_data_pix
             self.y_data_pix = y_data_pix
-
             self.data = data
             self.polygon_with_data = True
 
@@ -76,9 +64,7 @@ class Polygon:
             self._smooth(refinements=smooth)
         self._create_valid_polygon()
         
-        
-    def _smooth(self, refinements=5):  # chaikins_corner_cutting
-        # This does not really mooothes the polygon.
+    def _smooth(self, refinements=5):  
         coords = np.array([self.x, self.y]).T
 
         for _ in range(refinements):
@@ -94,127 +80,100 @@ class Polygon:
         self.y = coords[:, 1].copy()
         
     def _create_valid_polygon(self):
-
         poly = PolygonShapely(zip(self.x, self.y))
 
         if not poly.is_valid:
             poly = poly.buffer(0)
 
-            # If buffer(0) splits a pinched figure-8 polygon into multiple pieces,
-            # we grab the largest continuous piece to be our main polygon.
             if poly.geom_type == 'MultiPolygon':
                 poly = max(poly.geoms, key=lambda p: p.area)
             elif poly.geom_type != 'Polygon':
-                raise ValueError(f"Geometry resolution failed, returned {
-                                 poly.geom_type}")
+                raise ValueError(f"Geometry resolution failed, returned {poly.geom_type}")
 
         self._shapely_polygon = poly
-
-        # Shapely's exterior.coords automatically closes the loop (first point == last point).
-        # We can extract them directly without manually rebuilding the array!
         coords = np.array(poly.exterior.coords)
-
         self.x = coords[:, 0]
         self.y = coords[:, 1]
 
     @property
-    def shapely_polygon(self):  # initialized by remove_self_intersection
+    def shapely_polygon(self): 
         return self._shapely_polygon
 
     @cached_property
-    # return oriented envelope normalized in a way that the enveloping rectangle is starting with the lower left point.
     def oriented_envelope(self):
         return self._shapely_polygon.oriented_envelope.normalize()
 
+    # ==========================================
+    # GEOMETRIC PROPERTIES & METADATA
+    # ==========================================
+
     @cached_property
     def axes_length(self):
+        bbox = np.asarray(self.oriented_envelope.exterior.coords)
+        axis1 = np.linalg.norm(bbox[0] - bbox[3])
+        axis2 = np.linalg.norm(bbox[0] - bbox[1])
+        return [axis1, axis2] if axis1 <= axis2 else [axis2, axis1]
+
+    METADATA['axes_length'] = [
+        {'dict_label': 'Axes length minor', 
+         'plot_label': '$a_{env}$', 
+         'unit': 'DU', },
+        {'dict_label': 'Axes length major', 
+         'plot_label': '$b_{env}$', 
+         'unit': 'DU', }
+    ]
+
+    @cached_property
+    def size(self):
+        alfa = self.envelope_angle
+        a, b = self.axes_length
+        xsize = (a * np.abs(np.cos(alfa)) + b * np.abs(np.sin(alfa)))
+        ysize = (a * np.abs(np.sin(alfa)) + b * np.abs(np.cos(alfa)))
+        return [xsize, ysize]
+        
+    METADATA['size'] = [
+        {'dict_label': 'Size radial', 
+         'plot_label': '$d_{rad}$', 
+         'unit': 'DU', },
+        {'dict_label': 'Size poloidal', 
+         'plot_label': '$d_{pol}$', 
+         'unit': 'DU', }
+    ]
+
+    @cached_property
+    def envelope_angle(self):
+        def _azimuth(point1, point2):
+            angle = np.arctan2(point2[1] - point1[1], point2[0] - point1[0])
+            return np.degrees(angle) if angle > 0 else np.degrees(angle) + 180
 
         bbox = np.asarray(self.oriented_envelope.exterior.coords)
         axis1 = np.linalg.norm(bbox[0] - bbox[3])
         axis2 = np.linalg.norm(bbox[0] - bbox[1])
 
-        if axis1 <= axis2:  # Ellipse is also [minor, major]
-            data = np.array([axis1, axis2])
-        else:
-            data = np.array([axis2, axis1])
+        az = _azimuth(bbox[0], bbox[1]) if axis1 <= axis2 else _azimuth(bbox[0], bbox[3])
+        return az / 180. * np.pi
 
-        return [
-            Metric(value=data[0],
-                   dict_label='Axes length minor',
-                   plot_label='a_{env}',
-                   unit=self._distance_unit,
-                   multiplier=1.),
-            Metric(value=data[1],
-                   dict_label='Axes length major',
-                   plot_label='$b_{env}$',
-                   unit=self._distance_unit,
-                   multiplier=1.,)
-            ]
-
-    @cached_property
-    def size(self):
-        # Calculate the horizontal and vertical spans of the rotated rectangular envelope
-        alfa = self.envelope_angle.value
-        a, b = self.axes_length[0].value, self.axes_length[1].value
-
-        xsize = (a * np.abs(np.cos(alfa)) + b * np.abs(np.sin(alfa)))
-        ysize = (a * np.abs(np.sin(alfa)) + b * np.abs(np.cos(alfa)))
-
-        return [
-            Metric(value=xsize, 
-                   dict_label='Size radial',
-                   plot_label='$d_{rad}$', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0),
-            Metric(value=ysize, 
-                   dict_label='Size poloidal',
-                   plot_label='$d_{pol}$', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0)
-        ]
-
-    @cached_property
-    def envelope_angle(self):
-        def _azimuth(point1, point2):
-            """azimuth between 2 points (interval 0 - 180)"""
-            angle = np.arctan2(point2[1] - point1[1], point2[0] - point1[0])
-            return np.degrees(angle) if angle > 0 else np.degrees(angle) + 180
-
-        def azimuth_angle(mrr):  # angle of the longer side of the rectangle w.r.t. horizontal
-            """azimuth of minimum_rotated_rectangle"""
-            bbox = np.asarray(mrr.exterior.coords)
-            axis1 = np.linalg.norm(bbox[0] - bbox[3])
-            axis2 = np.linalg.norm(bbox[0] - bbox[1])
-
-            if axis1 <= axis2:
-                az = _azimuth(bbox[0], bbox[1])
-            else:
-                az = _azimuth(bbox[0], bbox[3])
-
-            return az/180.*np.pi
-
-        return Metric(value=azimuth_angle(self.oriented_envelope),
-                      dict_label='Angle envelope',
-                      plot_label=r'$\theta_{env}$',
-                      unit='rad',
-                      multiplier=1.,)
+    METADATA['envelope_angle'] = {
+        'dict_label': 'Angle envelope', 
+        'plot_label': r'$\theta_{env}$', 
+        'unit': 'rad', 
+    }
 
     @cached_property
     def concave_hull(self):
         return concave_hull(self.shapely_polygon)
 
-
     @cached_property
     def intensity(self):
         if self.polygon_with_data:
-            return Metric(value=np.sum(self.data),
-                          dict_label='Intensity',
-                          plot_label='Intensity',
-                          unit='Digit',
-                          multiplier=1.,)
-        else:
-            raise ValueError(
-                'The polygon needs to have data to integrate the intensity')
+            return np.sum(self.data)
+        raise ValueError('The polygon needs to have data to integrate the intensity')
+
+    METADATA['intensity'] = {
+        'dict_label': 'Intensity', 
+        'plot_label': 'Intensity', 
+        'unit': 'Digit', 
+    }
 
     @property
     def vertices(self):
@@ -222,116 +181,64 @@ class Polygon:
 
     @cached_property
     def path(self):
-        """
-        Returns
-        -------
-        matplotlib Path of the polygon. Has built in methods for intersection, contain etc. See
-        matplotlib documentation.
-
-        """
         from matplotlib.path import Path
         codes = [Path.MOVETO]
         for i_code in range(1, len(self.x)-1):
-            if self.path_order == 3:
-                codes.append(Path.CURVE4)
-            elif self.path_order == 2:
-                codes.append(Path.CURVE3)
-            elif self.path_order == 1:
-                codes.append(Path.LINETO)
-            else:
-                raise ValueError(
-                    'Polygon.path_order cannot be higher than 3. Returning...')
+            if self.path_order == 3: codes.append(Path.CURVE4)
+            elif self.path_order == 2: codes.append(Path.CURVE3)
+            elif self.path_order == 1: codes.append(Path.LINETO)
+            else: raise ValueError('Polygon.path_order cannot be higher than 3. Returning...')
 
-        if self.path_order == 3 or self.path_order == 2:
-            codes.append(Path.CURVE3)
-        elif self.path_order == 1:
-            codes.append(Path.LINETO)
-
+        if self.path_order in [2, 3]: codes.append(Path.CURVE3)
+        elif self.path_order == 1: codes.append(Path.LINETO)
         codes.append(Path.CLOSEPOLY)
 
         xy_looped = np.zeros([len(self.x)+1, 2])
         xy_looped[0:-1, :] = np.asarray([self.x, self.y]).transpose()
         xy_looped[-1, :] = [self.x[0], self.y[0]]
-
         return Path(xy_looped, codes)
 
     @cached_property
     def area(self):
-        """
-        Returns the area of the polygon based on the so called shoelace formula.
-        Sources:
-            https://stackoverflow.com/questions/24467972/calculate-area-of-polygon-given-x-y-coordinates
-            https://en.wikipedia.org/wiki/Shoelace_formula
-        """
+        return 0.5 * np.abs(np.dot(self.x, np.roll(self.y, 1)) - np.dot(self.y, np.roll(self.x, 1)))
 
-        return Metric(value=0.5*np.abs(np.dot(self.x, np.roll(self.y, 1)) -
-                                       np.dot(self.y, np.roll(self.x, 1))),
-                      dict_label='Area',
-                      plot_label='Area',
-                      unit=f'${self._distance_unit}^2$',
-                      multiplier=1.,)
+    METADATA['area'] = {
+        'dict_label': 'Area', 
+        'plot_label': 'Area', 
+        'unit': 'DU^2', 
+    }
 
     @cached_property
     def signed_area(self):
-        return Metric(value=0.5*(np.dot(self.x, np.roll(self.y, 1)) -
-                                 np.dot(self.y, np.roll(self.x, 1))),
-                      dict_label='Signed area',
-                      plot_label='$Area_{signed}$',
-                      unit=f'${self._distance_unit}^2$',
-                      multiplier=1.,)
+        return 0.5 * (np.dot(self.x, np.roll(self.y, 1)) - np.dot(self.y, np.roll(self.x, 1)))
+
+    METADATA['signed_area'] = {
+        'dict_label': 'Signed area', 
+        'plot_label': '$Area_{signed}$', 
+        'unit': 'DU^2', 
+    }
 
     @cached_property
     def centroid(self):
-        """
-        Source: https://en.wikipedia.org/wiki/Polygon
-        Coding based on the area's convention.
-        """
+        sa = self.signed_area
+        if sa != 0:
+            x_center = 1/(6*sa) * np.dot(self.x+np.roll(self.x, 1), self.x*np.roll(self.y, 1) - np.roll(self.x, 1)*self.y)
+            y_center = 1/(6*sa) * np.dot(self.y+np.roll(self.y, 1), self.x*np.roll(self.y, 1) - np.roll(self.x, 1)*self.y)
+            return [x_center, y_center]
+        return [np.nan, np.nan]
 
-        if self.test:
-            print('area', self.signed_area)
-            print('x', self.x)
-            print('y', self.y)
-
-        if self.signed_area != 0:
-            x_center = 1/(6*self.signed_area) * np.dot(self.x+np.roll(self.x, 1),
-                                                       self.x*np.roll(self.y, 1) -
-                                                       np.roll(self.x, 1)*self.y)
-            y_center = 1/(6*self.signed_area) * np.dot(self.y+np.roll(self.y, 1),
-                                                       self.x*np.roll(self.y, 1) -
-                                                       np.roll(self.x, 1)*self.y)
-        else:
-            x_center = np.nan
-            y_center = np.nan
-
-        if self.test:
-            print('centroid', [x_center, y_center])
-
-        return [
-            Metric(value=x_center,
-                   dict_label='Centroid radial',
-                   plot_label='Centr. rad.', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0),
-            Metric(value=y_center,
-                   dict_label='Centroid poloidal',
-                   plot_label='Centr. pol.', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0)
-        ]
+    METADATA['centroid'] = [
+        {'dict_label': 'Centroid radial', 
+         'plot_label': 'Centr. rad.', 
+         'unit': 'DU', },
+        {'dict_label': 'Centroid poloidal', 
+         'plot_label': 'Centr. pol.', 
+         'unit': 'DU', }
+    ]
 
     @cached_property
-    def convex_hull(self):
-        '''
-        Returns the convex hull of the polygon as [n_point,2] ndarray
-
-        Returns
-        -------
-        ndarray
-            CONVEX HULL COORDINATES OF THE INPUT POLYGON.
-
-        '''
+    def convex_hull_obj(self):
         coordinates = np.asarray([self.x, self.y]).transpose()
-
         try:
             hull = ConvexHull(coordinates)
             x_hull = coordinates[hull.vertices, 0]
@@ -339,182 +246,131 @@ class Polygon:
         except:
             x_hull = self.x
             y_hull = self.y
-
-        return Polygon(x=x_hull,
-                       y=y_hull,
-                       distance_unit=self._distance_unit)
+        return Polygon(x=x_hull, y=y_hull, distance_unit=self._distance_unit)
 
     @cached_property
     def perimeter(self):
-        val = np.sum(np.sqrt(np.diff(self.x)**2 + np.diff(self.y)**2))
-        return Metric(value=val,
-                      dict_label='Perimeter',
-                      plot_label='Perimeter',
-                      unit=self._distance_unit,
-                      multiplier=1.)
+        return np.sum(np.sqrt(np.diff(self.x)**2 + np.diff(self.y)**2))
+
+    METADATA['perimeter'] = {
+        'dict_label': 'Perimeter', 
+        'plot_label': 'Perimeter', 
+        'unit': 'DU', 
+    }
 
     @cached_property
     def center_of_gravity(self):
         if not self.polygon_with_data:
-            raise ValueError(
-                'The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
+            raise ValueError('The polygon doesn\'t contain data.')
+        x_cog = np.sum(self.x_data*self.data) / np.sum(self.data)
+        y_cog = np.sum(self.y_data*self.data) / np.sum(self.data)
+        return [x_cog, y_cog]
 
-        x_cog = np.sum(self.x_data*self.data)/np.sum(self.data)
-        y_cog = np.sum(self.y_data*self.data)/np.sum(self.data)
-
-        return [
-            Metric(value=x_cog, 
-                   dict_label='Center of gravity radial',
-                   plot_label='$COG_{rad}$', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0),
-            Metric(value=y_cog, 
-                   dict_label='Center of gravity poloidal',
-                   plot_label='$COG_{pol}$', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0)
-        ]
+    METADATA['center_of_gravity'] = [
+        {'dict_label': 'Center of gravity radial', 
+         'plot_label': '$COG_{rad}$', 
+         'unit': 'DU', },
+        {'dict_label': 'Center of gravity poloidal', 
+         'plot_label': '$COG_{pol}$', 
+         'unit': 'DU', }
+    ]
 
     @cached_property
     def second_central_moment(self):
         if not self.polygon_with_data:
-            raise ValueError(
-                'The polygon doesn\'t contain data. Please provide x_data, y_data and data to Polygon()')
+            raise ValueError('The polygon doesn\'t contain data.')
         mu = np.zeros([2, 2])
         cog = self.center_of_gravity
 
-        if not np.isnan(cog[0].value):
-            cx, cy = cog[0].value, cog[1].value 
-            
+        if not np.isnan(cog[0]):
+            cx, cy = cog[0], cog[1] 
             mu[0, 0] = np.sum(self.data*(self.y_data - cy)**2)
             mu[0, 1] = -np.sum(self.data*(self.x_data - cx)*(self.y_data - cy))
             mu[1, 0] = mu[0, 1]
             mu[1, 1] = np.sum(self.data*(self.x_data - cx)**2)
         else:
             mu[:, :] = np.nan
-
-        if self.test:
-            print('mu', mu)
-            print('data', self.data)
-            print('x_data', self.x_data)
-            print('y_data', self.x_data)
-            print('cog', self.centroid)
         return mu
 
     @cached_property
     def principal_axes_angle(self):
         if not self.polygon_with_data:
-            raise ValueError(
-                'The polygon doesn\'t have data within, please add data and x_data,y_data coordinates. Returning...')
-
-        if self.test:
-            print('centroid', self.centroid)
-            print('central moment', self.second_central_moment)
-
+            raise ValueError('The polygon doesn\'t have data within.')
         if not np.isnan(self.centroid[0]):
             try:
                 mu = self.second_central_moment
                 eigvalues, eigvectors = np.linalg.eig(mu)
                 eig_ind = np.argmax(eigvalues)
-
-                angle = np.arctan2(eigvectors[1, eig_ind],
-                                   eigvectors[0, eig_ind])
-                data = np.arcsin(np.sin(angle))
-
-            #   return np.arctan2(eigvectors[1,eig_ind],
-            #                     eigvectors[0,eig_ind])
-
+                angle = np.arctan2(eigvectors[1, eig_ind], eigvectors[0, eig_ind])
+                return np.arcsin(np.sin(angle))
             except:
-                data = np.nan
-        else:
-            data = np.nan
+                return np.nan
+        return np.nan
 
-        return Metric(value=data,
-                      dict_label='Angle ALI',
-                      plot_label=r'$\theta_{ALI}$', # BUG FIX: Moved the 'r' outside the string!
-                      unit='rad',
-                      multiplier=1.,
-                      )
-
-    # Shape descriptors
+    METADATA['principal_axes_angle'] = {
+        'dict_label': 'Angle ALI', 
+        'plot_label': r'$\theta_{ALI}$', 
+        'unit': 'rad', 
+    }
 
     @property
     def convexity(self):
-        return Metric(value=self.convex_hull.perimeter.value/self.perimeter.value,
-                      dict_label='Convexity',
-                      plot_label='Convexity',
-                      unit='',
-                      multiplier=1.,
-                      )
+        return self.convex_hull_obj.perimeter / self.perimeter
+
+    METADATA['convexity'] = {
+        'dict_label': 'Convexity', 
+        'plot_label': 'Convexity', 
+        'unit': '', 
+    }
 
     @property
     def roundness(self):
-        return Metric(value=4*np.pi*self.area.value/(self.convex_hull.perimeter.value)**2,
-                      dict_label='Roundness',
-                      plot_label='Roundness',
-                      unit='',
-                      multiplier=1.,
-                      )
+        return 4 * np.pi * self.area / (self.convex_hull_obj.perimeter)**2
+
+    METADATA['roundness'] = {
+        'dict_label': 'Roundness', 
+        'plot_label': 'Roundness', 
+        'unit': '', 
+    }
 
     @property
     def solidity(self):
-        return Metric(value=self.area.value/self.convex_hull.area.value,
-                      dict_label='Solidity',
-                      plot_label='Solidity',
-                      unit='',
-                      multiplier=1.,
-                      )
+        return self.area / self.convex_hull_obj.area
+
+    METADATA['solidity'] = {
+        'dict_label': 'Solidity', 
+        'plot_label': 'Solidity', 
+        'unit': '', 
+    }
 
     @cached_property
     def _curvature(self):
-        """
-        Returns the magnitude of the curvature vector for each vertex
-
-        Returns
-        -------
-        ndarray
-            DESCRIPTION.
-
-        """
-
         if self.x[0] == self.x[-1] and self.y[0] == self.y[-1]:
-            x_looped = self.x
-            y_looped = self.y
-
+            x_l, y_l = self.x, self.y
         else:
-            x_looped = np.append(self.x, self.x[0])
-            y_looped = np.append(self.y, self.y[0])
+            x_l = np.append(self.x, self.x[0])
+            y_l = np.append(self.y, self.y[0])
 
-        dsx = np.diff(x_looped)
-        dsy = np.diff(y_looped)
-        ds = np.sqrt(dsx**2+dsy**2)
+        dsx, dsy = np.diff(x_l), np.diff(y_l)
+        ds = np.sqrt(dsx**2 + dsy**2)
         ds = np.where(ds == 0, 1e-10, ds)
-        Tx = dsx/ds
-        Ty = dsy/ds
-        ds2 = 0.5*(np.append(ds[-1], ds[:-1])+ds)
+        Tx, Ty = dsx/ds, dsy/ds
+        ds2 = 0.5 * (np.append(ds[-1], ds[:-1]) + ds)
 
-        ds2 = 0.5*(np.append(ds[-1], ds[:-1])+ds)
-
-        Hx = np.diff(np.append(Tx[-1], Tx))/ds2
-        Hy = np.diff(np.append(Ty[-1], Ty))/ds2
-
+        Hx = np.diff(np.append(Tx[-1], Tx)) / ds2
+        Hy = np.diff(np.append(Ty[-1], Ty)) / ds2
         self._curvature_vector = np.asarray([Hx, Hy]).T
-
-        curvature = np.sqrt(Hx**2 + Hy**2)
-
-        if self.test:
-            print('curvature', curvature)
-
-        return curvature
+        return np.sqrt(Hx**2 + Hy**2)
 
     @property
     def total_curvature(self):
-        return Metric(value=np.mean(np.abs(self._curvature)),
-                      dict_label='Total curvature',
-                      plot_label=r'$\kappa_{tot}$',
-                      unit='',
-                      multiplier=1.,
-                      )
+        return np.mean(np.abs(self._curvature))
+
+    METADATA['total_curvature'] = {
+        'dict_label': 'Total curvature', 
+        'plot_label': r'$\kappa_{tot}$', 
+        'unit': '', 
+    }
 
     @property
     def bending_energy(self):
@@ -522,19 +378,19 @@ class Polygon:
 
     @property
     def total_bending_energy(self):
-        return Metric(value=np.mean(self.bending_energy),
-                      dict_label='Total bending energy',
-                      plot_label='$E_{bend}$',
-                      unit='',
-                      multiplier=1.,
-                      )
+        return np.mean(self.bending_energy)
+
+    METADATA['total_bending_energy'] = {
+        'dict_label': 'Total bending energy', 
+        'plot_label': '$E_{bend}$', 
+        'unit': '', 
+    }
 
 
 class FitShape:
-    """
-    A unified geometry engine that computes either Elliptical or Gaussian fits 
-    based on the 'fitting' argument.
-    """
+    
+    METADATA = {}
+    
     def __init__(self, fitting='ellipse', x=None, y=None, x_data=None, y_data=None, data=None, 
                  method='linalg', elongation_base='size', distance_unit='m', verbose=False, test=False):
         
@@ -544,12 +400,10 @@ class FitShape:
         self._verbose = verbose
         self._test = test
 
-        # Core geometric properties
         self._angle = np.nan
         self._axes_length = np.array([np.nan, np.nan])
         self._center = np.array([np.nan, np.nan])
 
-        # --- ROUTE 1: ELLIPSE FITTING ---
         if self.fitting_type == 'ellipse':
             self.x = np.asarray(x, dtype=float) if x is not None else None
             self.y = np.asarray(y, dtype=float) if y is not None else None
@@ -559,7 +413,6 @@ class FitShape:
             if len(self.x) != len(self.y):
                 raise ValueError('The length of x and y must be the same.')
 
-            # Vectorized interpolation for polygons with < 6 vertices
             if len(self.x) < 6:
                 x_mid = (self.x + np.roll(self.x, -1)) / 2.0
                 y_mid = (self.y + np.roll(self.y, -1)) / 2.0
@@ -570,19 +423,14 @@ class FitShape:
             self._xmean, self._ymean = np.mean(self.x), np.mean(self.y)
             
             try:
-                if method == 'linalg':
-                    self._fit_ellipse_linalg(self.x, self.y)
-                elif method == 'skimage':
-                    self._fit_ellipse_skimage(self.x, self.y)
-                elif method == 'leastsquare':
-                    self._fit_ellipse_leastsq(self.x, self.y)
-                else:
-                    raise ValueError(f"Unknown ellipse method: {method}")
+                if method == 'linalg': self._fit_ellipse_linalg(self.x, self.y)
+                elif method == 'skimage': self._fit_ellipse_skimage(self.x, self.y)
+                elif method == 'leastsquare': self._fit_ellipse_leastsq(self.x, self.y)
+                else: raise ValueError(f"Unknown ellipse method: {method}")
             except Exception as e:
                 if self._verbose: print(f"Ellipse fitting failed: {e}")
                 self.set_invalid()
 
-        # --- ROUTE 2: GAUSSIAN FITTING ---
         elif self.fitting_type == 'gaussian':
             self.x_data = np.asarray(x_data, dtype=float) if x_data is not None else None
             self.y_data = np.asarray(y_data, dtype=float) if y_data is not None else None
@@ -602,89 +450,90 @@ class FitShape:
             raise ValueError(f"fitting argument must be 'ellipse' or 'gaussian', got '{fitting}'")
 
     def set_invalid(self):
-        """Resets core geometric properties to NaN."""
         self._angle = np.nan
         self._axes_length = np.array([np.nan, np.nan])
         self._center = np.array([np.nan, np.nan])
         self._parameters = np.full(6, np.nan)
         self.popt = np.full(7, np.nan)
 
-    # ==========================================
-    # SHARED GEOMETRIC PROPERTIES (Prefixed with fit_)
-    # ==========================================
     @property
     def fit_angle(self): 
-        return Metric(
-            value=self._angle, 
-            dict_label='Angle fit',
-            plot_label=r'$\phi_{fit}$', 
-            unit='rad', 
-            multiplier=1.
-        )
+        return self._angle
+
+    METADATA['fit_angle'] = {
+        'dict_label': 'Angle fit', 
+        'plot_label': r'$\phi_{fit}$', 
+        'unit': 'rad', 
+    }
 
     @property
     def fit_axes_length(self): 
-        return [
-            Metric(value=self._axes_length[0],
-                   dict_label='Axes length minor fit',
-                   plot_label='a', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0),
-            Metric(value=self._axes_length[1], 
-                   dict_label='Axes length major fit',
-                   plot_label='b', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0)
-        ]
+        return [self._axes_length[0], self._axes_length[1]]
+
+    METADATA['fit_axes_length'] = [
+        {'dict_label': 'Axes length minor fit', 
+         'plot_label': 'a', 
+         'unit': 'DU', },
+        {'dict_label': 'Axes length major fit', 
+         'plot_label': 'b', 
+         'unit': 'DU', }
+    ]
 
     @property
     def fit_center(self): 
-        return [
-            Metric(value=self._center[0],
-                   dict_label='Position radial fit',
-                   plot_label='R', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0),
-            Metric(value=self._center[1], 
-                   dict_label='Position poloidal fit',
-                   plot_label='z', 
-                   unit=self._distance_unit, 
-                   multiplier=1.0)
-        ]
+        return [self._center[0], self._center[1]]
+
+    METADATA['fit_center'] = [
+        {'dict_label': 'Position radial fit', 
+         'plot_label': 'R', 
+         'unit': 'DU', },
+        {'dict_label': 'Position poloidal fit', 
+         'plot_label': 'z', 
+         'unit': 'DU', }
+    ]
 
     @cached_property
     def fit_size(self):
-        alfa = self.fit_angle.value
-        a, b = self.fit_axes_length[0].value, self.fit_axes_length[1].value
+        alfa = self.fit_angle
+        a, b = self.fit_axes_length
 
         if np.isnan(a) or np.isnan(b) or a == 0 or b == 0:
-            data = np.array([np.nan, np.nan])
-        else:
-            a0 = (np.cos(alfa)**2 / a**2) + (np.sin(alfa)**2 / b**2)
-            a2 = (np.sin(alfa)**2 / a**2) + (np.cos(alfa)**2 / b**2)
-            with np.errstate(invalid='ignore'):
-                xsize, ysize = 2 / np.sqrt(a0), 2 / np.sqrt(a2)
+            return [np.nan, np.nan]
+            
+        a0 = (np.cos(alfa)**2 / a**2) + (np.sin(alfa)**2 / b**2)
+        a2 = (np.sin(alfa)**2 / a**2) + (np.cos(alfa)**2 / b**2)
+        with np.errstate(invalid='ignore'):
+            xsize, ysize = 2 / np.sqrt(a0), 2 / np.sqrt(a2)
 
-            if np.isnan(xsize) or np.isnan(ysize):
-                data = np.array([np.nan, np.nan])
-            else:
-                data = np.array([xsize, ysize])
+        if np.isnan(xsize) or np.isnan(ysize):
+            return [np.nan, np.nan]
+        return [xsize, ysize]
 
-        return [
-            Metric(value=data[0], dict_label='Size radial fit', plot_label='$d_{rad}$', unit=self._distance_unit),
-            Metric(value=data[1], dict_label='Size poloidal fit', plot_label='$d_{pol}$', unit=self._distance_unit)
-        ]
+    METADATA['fit_size'] = [
+        {'dict_label': 'Size radial fit', 
+         'plot_label': '$d_{rad}$', 
+         'unit': 'DU', 
+         },
+        {'dict_label': 'Size poloidal fit', 
+         'plot_label': '$d_{pol}$', 
+         'unit': 'DU'
+         }
+    ]
 
     @cached_property
     def fit_elongation(self):
         if self._elongation_base == 'size':
-            s1, s2 = self.fit_size[0].value, self.fit_size[1].value
-            data = (s1 - s2) / (s1 + s2) if (s1 + s2) != 0 else np.nan
+            s1, s2 = self.fit_size
+            return (s1 - s2) / (s1 + s2) if (s1 + s2) != 0 else np.nan
         else:
-            a1, a2 = self.fit_axes_length[0].value, self.fit_axes_length[1].value
-            data = (a1 - a2) / (a1 + a2) if (a1 + a2) != 0 else np.nan
-            
-        return Metric(value=data, dict_label='Elongation fit', plot_label='Elong.', unit='')
+            a1, a2 = self.fit_axes_length
+            return (a1 - a2) / (a1 + a2) if (a1 + a2) != 0 else np.nan
+
+    METADATA['fit_elongation'] = {
+        'dict_label': 'Elongation fit', 
+        'plot_label': 'Elong.', 
+        'unit': '', 
+    }
 
     # ==========================================
     # INTERNAL ELLIPSE SOLVERS
@@ -704,8 +553,6 @@ class FitShape:
         ak = eigvec[:, con > 0]
 
         self._parameters = np.concatenate((ak, T @ ak)).ravel()
-        
-        # Calculate specific metrics
         a, b, c = self._parameters[0], self._parameters[1]/2, self._parameters[2]
         d, f, g = self._parameters[3]/2, self._parameters[4]/2, self._parameters[5]
         den = b**2 - a*c
@@ -713,7 +560,6 @@ class FitShape:
         if den > 0: raise ValueError('Coeffs do not represent an ellipse!')
         
         self._center = np.array([(c*d - b*f) / den, (a*f - b*d) / den])
-        
         num = 2 * (a*f**2 + c*d**2 + g*b**2 - 2*b*d*f - a*c*g)
         fac = np.sqrt((a - c)**2 + 4*b**2)
         ap, bp = np.sqrt(num / den / (fac - a - c)), np.sqrt(num / den / (-fac - a - c))
@@ -774,7 +620,6 @@ class FitShape:
             0., np.mean(data)
         ]
 
-
         popt, _ = curve_fit(self.gaussian2D_fit_function, xdata, data, p0=initial_guess)
         popt[5] = np.arcsin(np.sin(popt[5]))
         self.popt = popt
@@ -799,11 +644,9 @@ class FitShape:
 
         g = offset + amplitude * np.exp(-(a*(x-xo)**2 + 2*b*(x-xo)*(y-yo) + c*(y-yo)**2))
         return g.ravel()
-        
-        
+
         
 class SamplePolygon(Polygon):
-
     def __init__(self):
         x_arr=np.asarray([1.4890597, 1.4890597, 1.4928097, 1.4928097, 1.4965597, 1.5003097,
                            1.5040597, 1.5078097, 1.5115597, 1.5153097, 1.5190597, 1.5265597,
@@ -966,6 +809,5 @@ class SamplePolygon(Polygon):
             x_data=x_data_arr, 
             y_data=y_data_arr, 
             data=data_arr,
-            distance_unit='m' # Don't forget your new unit metric!
+            distance_unit='m' 
         )
-

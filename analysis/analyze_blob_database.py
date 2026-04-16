@@ -23,7 +23,6 @@ from flap_nstx.analysis import read_all_blob_data, read_blob_data, read_all_plas
 from flap_nstx.analysis import read_blob_database_file, read_blob_lh_mode_database_file
 from flap_nstx.analysis import return_interesting_key_pairs
 
-from flap_nstx.gpi import transform_frames_to_structures
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
 from flap_nstx.tools import correlation, mutual_information
 

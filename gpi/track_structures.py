@@ -26,7 +26,8 @@ from scipy.signal import correlate2d
 from scipy.optimize import linear_sum_assignment
 
 from flap_nstx.tools import (
-    fringe_jump_correction, Metric, 
+    fringe_jump_correction,
+    MetricArray,
     StructureDataset, TrackedPlasmaStructure
 )
 
@@ -78,7 +79,7 @@ def track_structures(dataset=None,
                                                extension='pickle')
 
     # Check cache
-    if nocalc and os.path.exists(pickle_filename):
+    if nocalc and os.path.exists(pickle_filename) and not recalc_tracking:
         try:
             with open(pickle_filename, 'rb') as f:
                 tracked_dataset = pickle.load(f)
@@ -96,8 +97,9 @@ def track_structures(dataset=None,
         
         highest_label = 0
         n_frames = len(dataset.frames)
-        sample_time = Metric(value=dataset.frame_times[1] - dataset.frame_times[0],
-                             unit='s', dict_label='Time', plot_label=r'$\Delta t$')
+        
+        # BUG FIX: sample_time is now a pure float!
+        sample_time = dataset.frame_times[1] - dataset.frame_times[0]
         
         for i_frames in range(1, n_frames):
             structures_1 = dataset.frames[i_frames - 1]
@@ -289,23 +291,21 @@ def _process_structure_merging(structures_1, structures_2, str_overlap_matrix,
             if gap == 1 and np.sum(str_overlap_matrix[p_idx, :]) == 1:
                 s2.label = s1.label
                 s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-                s2 = calculate_differential_keys(structure_1=s1, structure_2=s2, sample_time=sample_time)
 
             elif gap > 1 and s2.born and s1.died:
                 if np.sum(str_overlap_matrix[p_idx, :]) == 1:
                     s2.label = s1.label
                     s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-                    s2 = calculate_differential_keys(structure_1=s1, structure_2=s2, sample_time=sample_time)
                     s2.born, s1.died = False, False
 
         elif num_parents > 1 and gap == 1:
             if np.sum(str_overlap_matrix[parent_indices, :]) == num_parents:
-                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity.value)
+                # BUG FIX: Removed .value
+                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
                 dom_s1 = structures_1[dominant_p_idx]
                 
                 s2.label = dom_s1.label
                 s2 = correct_structure_angle(structure_1=dom_s1, structure_2=s2)
-                s2 = calculate_differential_keys(structure_1=dom_s1, structure_2=s2, sample_time=sample_time)
                 
                 for p_idx in parent_indices:
                     s1 = structures_1[p_idx]
@@ -314,7 +314,8 @@ def _process_structure_merging(structures_1, structures_2, str_overlap_matrix,
                     s1.merges = True
 
             else:
-                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity.value)
+                # BUG FIX: Removed .value
+                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
                 dom_s1 = structures_1[dominant_p_idx]
 
                 all_child_indices = set()
@@ -322,7 +323,8 @@ def _process_structure_merging(structures_1, structures_2, str_overlap_matrix,
                     for c_idx in np.where(str_overlap_matrix[p_idx, :] == 1)[0]:
                         all_child_indices.add(c_idx)
                         
-                dominant_c_idx = max(all_child_indices, key=lambda idx: structures_2[idx].intensity.value)
+                # BUG FIX: Removed .value
+                dominant_c_idx = max(all_child_indices, key=lambda idx: structures_2[idx].intensity)
                 
                 for p_idx in parent_indices:
                     s1 = structures_1[p_idx]
@@ -335,7 +337,6 @@ def _process_structure_merging(structures_1, structures_2, str_overlap_matrix,
                         if c_idx == dominant_c_idx and p_idx == dominant_p_idx:
                             child.label = dom_s1.label
                             child = correct_structure_angle(structure_1=dom_s1, structure_2=child)
-                            child = calculate_differential_keys(structure_1=dom_s1, structure_2=child, sample_time=sample_time)
                         elif child.label is None:
                             highest_label += 1
                             child.label = highest_label
@@ -362,7 +363,8 @@ def _process_structure_splitting(structures_1, structures_2, str_overlap_matrix,
             child_indices = np.where(overlaps == 1)[0]
 
             if np.sum(str_overlap_matrix[:, child_indices]) == num_overlaps:
-                dominant_idx = max(child_indices, key=lambda idx: structures_2[idx].intensity.value)
+                # BUG FIX: Removed .value
+                dominant_idx = max(child_indices, key=lambda idx: structures_2[idx].intensity)
 
                 for idx in child_indices:
                     s2 = structures_2[idx]
@@ -370,7 +372,6 @@ def _process_structure_splitting(structures_1, structures_2, str_overlap_matrix,
                     if idx == dominant_idx:
                         s2.label = s1.label
                         s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-                        s2 = calculate_differential_keys(structure_1=s1, structure_2=s2, sample_time=sample_time)
                     else:
                         highest_label += 1
                         s2.label = highest_label
@@ -411,107 +412,88 @@ def _remove_orphans(dataset, test, min_structure_lifetime):
             dataset.frames[i_frames] = valid_structures
 
     return dataset
-#Wrapper function for calculating differential key results.
-def calculate_differential_keys(structure_1, 
-                                structure_2, 
-                                sample_time = Metric(value=2.5e-6, dict_label='Sample time', plot_label=r'$\Delta t$', unit='s')):
+
+
+def calculate_differential_structure_keys(dataset):
     """
-    Calculates time-differential kinematic properties between two consecutive structures.
-
-    This function compares a structure from the current frame (`structure_2`) to its 
-    linked predecessor in the previous frame (`structure_1`). It computes radial and 
-    poloidal velocities, expansion fractions (area growth), and angular velocities. 
-    The calculated Metric objects are appended directly to the `structure_2` differential parameters.
+    Vectorized calculation of time-differential properties for all tracked structures.
+    Utilizes the built-in math operators of MetricArray to automatically derive
+    units and LaTeX labels (e.g., Area / dt -> m^2/s).
     """
-
-    if structure_1 is None or structure_2 is None or not isinstance(sample_time, Metric):
-        raise ValueError("structure_1, structure_2, and sample_time must be provided.")
-
-    # For readability
-    s1, s2, dt = structure_1, structure_2, sample_time
-    
-    # Dynamically extract the units for the exact formatting you requested
-    time_unit = dt.unit
-    distance_unit = s1.centroid[0].unit
-
-    # Let the Metric algebra engine calculate the raw values
-    diff_params = {
-        'Velocity radial COG': (s2.center_of_gravity[0] - s1.center_of_gravity[0]) / dt,
-        'Velocity poloidal COG': (s2.center_of_gravity[1] - s1.center_of_gravity[1]) / dt,
-        'Velocity radial centroid': (s2.centroid[0] - s1.centroid[0]) / dt,
-        'Velocity poloidal centroid': (s2.centroid[1] - s1.centroid[1]) / dt,
-        'Expansion fraction area': (s2.area / s1.area) ** 0.5,
-        'Angular velocity ALI': (s2.principal_axes_angle - s1.principal_axes_angle) / dt,
-        
-        'Convexity diff': (s2.convexity - s1.convexity) / dt,
-        'Solidity diff': (s2.solidity - s1.solidity) / dt,
-        'Roundness diff': (s2.roundness - s1.roundness) / dt,
-        'Total curvature diff': (s2.total_curvature - s1.total_curvature) / dt,
-        'Total bending energy diff': (s2.total_bending_energy - s1.total_bending_energy) / dt,
-        'Area diff': (s2.area - s1.area) / dt,
-        
-        'Size radial diff': (s2.size[0] - s1.size[0]) / dt,
-        'Size poloidal diff': (s2.size[1] - s1.size[1]) / dt,
-        'Axes length minor diff': (s2.axes_length[0] - s1.axes_length[0]) / dt,
-        'Axes length major diff': (s2.axes_length[1] - s1.axes_length[1]) / dt,
-        
-        # Fit properties
-        'Velocity radial position fit': (s2.fit_center[0] - s1.fit_center[0]) / dt,
-        'Velocity poloidal position fit': (s2.fit_center[1] - s1.fit_center[1]) / dt,
-        'Expansion fraction axes fit': ((s2.fit_axes_length[0] * s2.fit_axes_length[1]) / 
-                                        (s1.fit_axes_length[0] * s1.fit_axes_length[1])) ** 0.5,
-        'Angular velocity angle fit': (s2.fit_angle - s1.fit_angle) / dt,
-        'Elongation fit diff': (s2.fit_elongation - s1.fit_elongation) / dt,
+    # Map the desired dict_label to the base property it differentiates
+    diff_map = {
+        'Velocity radial COG': 'Center of gravity radial',
+        'Velocity poloidal COG': 'Center of gravity poloidal',
+        'Velocity radial centroid': 'Centroid radial',
+        'Velocity poloidal centroid': 'Centroid poloidal',
+        'Angular velocity ALI': 'Angle ALI',
+        'Convexity diff': 'Convexity',
+        'Solidity diff': 'Solidity',
+        'Roundness diff': 'Roundness',
+        'Total curvature diff': 'Total curvature',
+        'Total bending energy diff': 'Total bending energy',
+        'Area diff': 'Area',
+        'Size radial diff': 'Size radial',
+        'Size poloidal diff': 'Size poloidal',
+        'Axes length minor diff': 'Axes length minor',
+        'Axes length major diff': 'Axes length major',
+        'Velocity radial position fit': 'Position radial fit',
+        'Velocity poloidal position fit': 'Position poloidal fit',
+        'Angular velocity angle fit': 'Angle fit',
+        'Elongation fit diff': 'Elongation fit',
     }
 
-    # Apply your exact requested plot labels and units
-    derived_formatting = {
-        'Angular velocity angle fit':      (r'$\omega_{fit}$',   f'rad/{time_unit}'),
-        'Angular velocity ALI':            (r'$\omega_{ALI}$',   f'rad/{time_unit}'),
-        'Expansion fraction axes fit':     ('$f_{E,area}$',      f'1/{time_unit}'),
-        'Expansion fraction area':         ('$f_{E}$',           f'1/{time_unit}'),
-        
-        'Velocity radial position fit':    ('$v_{rad,pos}$',     f'{distance_unit}/{time_unit}'),
-        'Velocity poloidal position fit':  ('$v_{pol,pos}$',     f'{distance_unit}/{time_unit}'),
-        'Velocity radial COG':             ('$v_{rad,COG}$',     f'{distance_unit}/{time_unit}'),
-        'Velocity poloidal COG':           ('$v_{pol,COG}$',     f'{distance_unit}/{time_unit}'),
-        'Velocity radial centroid':        ('$v_{rad,centroid}$',f'{distance_unit}/{time_unit}'),
-        'Velocity poloidal centroid':      ('$v_{pol,centroid}$',f'{distance_unit}/{time_unit}'),
-    }
-
-    # Save to the structure's ParameterDict and update the internal Metric labels
-    for key, metric in diff_params.items():
-        metric.dict_label = key 
-        
-        # Apply the explicit overrides if they exist in the formatting dictionary
-        if key in derived_formatting:
-            metric.plot_label = derived_formatting[key][0]
-            metric.unit = derived_formatting[key][1]
+    for struct in dataset.tracked_structures:
+        if len(struct.time) < 2:
+            continue
             
-        s2.differential_parameters[key] = metric
+        rp = struct.regular_parameters
+        dp = struct.differential_parameters
+        
+        # Dynamically create the dt array using the MetricArray engine
+        dt_arr = np.diff(struct.time)
+        dt_metric = MetricArray(value=dt_arr, dict_label='Sample time', plot_label=r'\Delta t', unit='s')
+        
+        # 1. Calculate standard derivatives (Velocity, Growth rates, etc.)
+        for diff_key, reg_key in diff_map.items():
+            if reg_key in rp:
+                # V E C T O R I Z E D   M A T H !
+                # This automatically triggers MetricArray.__sub__ and __truediv__
+                delta = rp[reg_key][1:] - rp[reg_key][:-1]
+                rate = delta / dt_metric
+                
+                # Keep the legacy dictionary key so plotting loops still find it
+                rate.dict_label = diff_key
+                
+                # We optionally clean up the plot label for velocities so they don't get too long
+                if 'Velocity' in diff_key or 'Angular' in diff_key:
+                    base_label = rp[reg_key].plot_label.replace('$','')
+                    rate.plot_label = f"$\\partial {base_label} / \\partial t$"
+                    
+                dp[diff_key] = rate
 
-    return s2
+        # 2. Calculate Expansion Fractions (Area ratios)
+        if 'Area' in rp:
+            # Triggers MetricArray.__truediv__ and __pow__
+            res = (rp['Area'][1:] / rp['Area'][:-1]) ** 0.5
+            res.dict_label = 'Expansion fraction area'
+            res.plot_label = '$f_{E,area}$'
+            dp['Expansion fraction area'] = res
+            
+        if 'Axes length minor fit' in rp and 'Axes length major fit' in rp:
+            area_fit = rp['Axes length minor fit'] * rp['Axes length major fit']
+            res = (area_fit[1:] / area_fit[:-1]) ** 0.5
+            res.dict_label = 'Expansion fraction axes fit'
+            res.plot_label = '$f_{E,ellipse}$'
+            dp['Expansion fraction axes fit'] = res
+            
+    return dataset
 
 
 def correct_structure_angle(structure_1, structure_2):
     """
-    Corrects unphysical angle wrapping (fringe jumps) between consecutive frames.
-
-    When tracking structures between frames, the calculated angle (e.g., from 
-    an ellipse fit or polygon inertia) might unphysically jump due to phase 
-    wrapping (e.g., flipping abruptly from +pi/2 to -pi/2). This function compares 
-    the current structure's angle to the previous one and unwraps it if necessary 
-    to maintain a continuous trajectory.
-
-    Args:
-        structure_1 (PlasmaStructure): The structure data for the previous frame.
-        structure_2 (PlasmaStructure): The structure data for the current frame.
-
-    Raises:
-        ValueError: If either structure_1 or structure_2 is not provided.
-
-    Returns:
-        PlasmaStructure: The updated `structure_2` object with corrected angles.
+    Corrects unphysical angle wrapping (fringe jumps) between consecutive frames
+    using raw floats.
     """
     if structure_1 is None or structure_2 is None:
         raise ValueError('Both structure_1 and structure_2 need to be defined.')
@@ -521,17 +503,17 @@ def correct_structure_angle(structure_1, structure_2):
     for key in keys_to_correct:
         if key in structure_1.regular_parameters and key in structure_2.regular_parameters:
             
-            # Extract the actual Metric objects!
-            m1 = structure_1.regular_parameters[key]
-            m2 = structure_2.regular_parameters[key]
+            # BUG FIX: Extract raw floats natively, no .value!
+            v1 = structure_1.regular_parameters[key]
+            v2 = structure_2.regular_parameters[key]
             
-            if not (np.isnan(m1.value) or np.isnan(m2.value)):
-                corrected = fringe_jump_correction(np.asarray([m1.value, m2.value]), tolerance=0.5)
+            if not (np.isnan(v1) or np.isnan(v2)):
+                corrected = fringe_jump_correction(np.asarray([v1, v2]), tolerance=0.5)
                 
-                # Directly update the value inside the Metric!
-                m2.value = corrected[1]
+                # Directly update the raw float inside the dictionary!
+                structure_2.regular_parameters[key] = corrected[1]
                 
-                # Sync the internal fit float so downstream mathematical calculations remain accurate
+                # Sync the internal fit float so downstream calculations remain accurate
                 if key == 'Angle fit':
                     structure_2._angle = corrected[1]
                     
