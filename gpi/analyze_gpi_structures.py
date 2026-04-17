@@ -69,7 +69,7 @@ def analyze_gpi_structures(exp_id=None, time_range=None, data_object=None,
                            elongation_threshold=0.1, tracking='weighted', tracking_assignment='max_score', 
                            max_gap=1, smooth_contours=5, remove_orphans=True, min_structure_lifetime=10, 
                            calculate_rough_diff_velocities=False, structure_pixel_calc=False, 
-                           score_threshold=0.7, matrix_weight={'iou':1,'cccf':0}, plot=True, 
+                           score_threshold=0.3, matrix_weight={'iou':1,'cccf':0}, plot=True, 
                            pdf=False, plot_error=False, error_window=4., overplot_average=True, 
                            plot_tracking=True, plot_scatter=False, structure_video_save=False, 
                            video_start_frame=0, video_resolution=(1024,1024), video_framerate=24, 
@@ -736,10 +736,11 @@ def _plot_example_structure_frames(exp_id=None,
             for i_str, struct in enumerate(structures):
                 
                 # Check for a valid fit
+# Check for a valid fit
                 if not np.isnan(struct.fit_angle):
                     
-                    # Extracted the raw values smoothly!
-                    phi = struct.fit_angle
+                    # BUG FIX: Rotate 90 degrees to draw the major axis correctly!
+                    phi = struct.fit_angle + (np.pi / 2)
                     a, b = struct.fit_axes_length[1], struct.fit_axes_length[0] # major, minor
                     cx, cy = struct.fit_center[0], struct.fit_center[1]
 
@@ -810,7 +811,7 @@ def _plot_example_structure_frames(exp_id=None,
 
 def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=None,
                                  dataset=None, wd=None, n_color=None,
-                                 colortable=None, pdf=None, markersize=0.5,
+                                 colortable=None, pdf=None, markersize=0.02,
                                  save_data_for_publication=False):
     
     """
@@ -1025,13 +1026,14 @@ def _structure_video_save(sample_0=None,
 
         if structures is not None and len(structures) > 0:
             R = np.arange(0, 2*np.pi, 0.01)
-            
             for struct in structures:
                 # If it has a valid fit angle, we can plot the geometric shape!
                 if not np.isnan(struct.fit_angle):
 
-                    phi = struct.fit_angle
+                    # BUG FIX: Rotate 90 degrees to draw the major axis correctly!
+                    phi = struct.fit_angle + (np.pi / 2)
                     a, b = struct.fit_axes_length[1], struct.fit_axes_length[0] # major, minor
+
                     cx, cy = struct.fit_center[0], struct.fit_center[1]
 
                     x_polygon, y_polygon = struct.x, struct.y
@@ -1171,7 +1173,7 @@ def _plot_str_by_str(dataset=None,
                                 metric_array.value,
                                 linestyle,
                                 label=str(struct.label),
-                                markersize=5,
+                                markersize=0.5,
                                 color=colortable[np.mod(int(struct.label) + 1, n_color)])
                                 
                     except Exception as e:

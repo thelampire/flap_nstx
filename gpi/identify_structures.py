@@ -376,32 +376,53 @@ def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse,
     ax_cur.plot(x_ellipse, y_ellipse, linewidth=ellipse_linewidth, **el_args)
 
     cx, cy = struct.fit_center[0], struct.fit_center[1]
-    a, angle = struct.fit_axes_length[1], struct.fit_angle
+    b, angle = struct.fit_axes_length[0], struct.fit_angle
     
-    if not (np.isnan(cx) or np.isnan(cy) or np.isnan(a) or np.isnan(angle)):
-        ax_cur.plot([cx - a*np.cos(angle), cx + a*np.cos(angle)],
-                    [cy - a*np.sin(angle), cy + a*np.sin(angle)],
+    # BUG FIX: Rotate the angle 90 degrees to align with the major axis
+    angle_major = angle
+    
+    if not (np.isnan(cx) or np.isnan(cy) or np.isnan(b) or np.isnan(angle_major)):
+        ax_cur.plot([cx - b*np.cos(angle_major), cx + b*np.cos(angle_major)],
+                    [cy - b*np.sin(angle_major), cy + b*np.sin(angle_major)],
                     color='magenta', linewidth=semiaxis_linewidth)
     
     if plot_structure_mid:
         ax_cur.scatter(struct.centroid[0], struct.centroid[1], color='yellow')
         ax_cur.scatter(struct.center_of_gravity[0], struct.center_of_gravity[1], color='red')
         
+        
+        
 def validate_structure(struct, x_coord, y_coord, elongation_threshold, str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
     """Filters out invalid structures based on size, elongation, and boundary constraints."""
     
-    # 1. NaN Check
+    # 1. NaN Check 
     if np.isnan(struct.fit_size[0]) or np.isnan(struct.fit_size[1]):
         struct.set_invalid()
         return False
 
-    # 2. Elongation check (safely neutralize angle if it's too round)
+    # 2. Elongation & Angle Wrapping Check
     if struct.fit_elongation < elongation_threshold:
+        # If it's too circular, neutralize the angle
         struct._angle = np.nan 
-        # BUG FIX: Sync the dictionary so downstream trackers see the NaN!
-        struct.update_regular_parameters()
+    else:
+        # BUG FIX: Shift the angle so 0 radians is straight up (vertical)
+        # This completely eliminates the +pi/2 to -pi/2 wrapping jump!
+        if not np.isnan(struct._angle):
+            shifted_angle = struct._angle - (np.pi / 2)
+            struct._angle = (shifted_angle + np.pi/2) % np.pi - (np.pi/2)
+            
+        # Also fix Angle ALI if the physics engine calculated it
+        if 'Angle ALI' in struct.regular_parameters:
+            ali = struct.regular_parameters['Angle ALI']
+            if not np.isnan(ali):
+                shifted_ali = ali - (np.pi / 2)
+                struct.regular_parameters['Angle ALI'] = (shifted_ali + np.pi/2) % np.pi - (np.pi/2)
+                
+    # Sync the dictionary so downstream trackers see the modified angles!
+    struct.update_regular_parameters()
+        
 
-    # 3. Size & Boundary Edge check
+    # 3. Size & Boundary Edge check 
     if str_size_lower_thres is not None and not np.isnan(struct.fit_size[1]):
         # Check lower/upper bounds
         if (struct.fit_size[0] < str_size_lower_thres or 

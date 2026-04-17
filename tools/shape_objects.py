@@ -524,10 +524,12 @@ class FitShape:
     def fit_elongation(self):
         if self._elongation_base == 'size':
             s1, s2 = self.fit_size
-            return (s1 - s2) / (s1 + s2) if (s1 + s2) != 0 else np.nan
+            # BUG FIX: Added np.abs() to prevent negative elongation
+            return np.abs(s1 - s2) / (s1 + s2) if (s1 + s2) != 0 else np.nan
         else:
             a1, a2 = self.fit_axes_length
-            return (a1 - a2) / (a1 + a2) if (a1 + a2) != 0 else np.nan
+            # BUG FIX: Added np.abs() to prevent negative elongation
+            return np.abs(a1 - a2) / (a1 + a2) if (a1 + a2) != 0 else np.nan
 
     METADATA['fit_elongation'] = {
         'dict_label': 'Elongation fit', 
@@ -568,7 +570,14 @@ class FitShape:
         phi = np.arctan((2.*b) / (a - c)) / 2 if b != 0 else (0 if a < c else np.pi/2)
         if b != 0 and a > c: phi += np.pi/2
         if ap < bp: phi += np.pi/2
-        self._angle = (phi + np.pi/2) % np.pi - np.pi/2
+        if phi > np.pi/2:
+            while phi > np.pi/2:
+                phi -= np.pi
+        else:
+            while phi < -np.pi/2:
+                phi += np.pi
+        
+        self._angle = phi   
 
     def _fit_ellipse_leastsq(self, x, y):
         aat = np.array([

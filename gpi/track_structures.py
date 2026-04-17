@@ -56,16 +56,10 @@ def track_structures(dataset=None,
                      test=False):
     """
     Main loop for tracking identified plasma structures across consecutive frames.
-    
-    Takes an 'untracked' StructureDataset, connects structures across time, 
-    calculates kinematics, and returns a 'tracked' StructureDataset populated 
-    with time-resolved TrackedPlasmaStructure objects.
     """
-    
     if dataset is None or dataset.mode != 'untracked':
         raise ValueError("A valid 'untracked' StructureDataset must be provided.")
 
-    # --- 1. Filename & Caching Setup ---
     comment = comment or ""
     comment += f"_{tracking}_{tracking_assignment}_sm{smooth_contours}"
     if remove_orphans:
@@ -78,27 +72,21 @@ def track_structures(dataset=None,
                                                comment=comment,
                                                extension='pickle')
 
-    # Check cache
     if nocalc and os.path.exists(pickle_filename) and not recalc_tracking:
         try:
             with open(pickle_filename, 'rb') as f:
-                tracked_dataset = pickle.load(f)
-                return tracked_dataset
+                return pickle.load(f)
         except Exception:
             print(f"Failed to load {pickle_filename}. Recalculating.")
             nocalc = False
     else:
-        if nocalc: print(f"File {pickle_filename} does not exist. Recalculating.")
         nocalc = False
 
-    # --- 2. Main Tracking Loop ---
     if not nocalc or recalc_tracking:
         print("\nCalculating structure tracking.")
         
         highest_label = 0
         n_frames = len(dataset.frames)
-        
-        # BUG FIX: sample_time is now a pure float!
         sample_time = dataset.frame_times[1] - dataset.frame_times[0]
         
         for i_frames in range(1, n_frames):
@@ -108,16 +96,18 @@ def track_structures(dataset=None,
             # Case A: Mass Death
             if structures_1 and not structures_2:
                 for s1 in structures_1:
-                    s1.label = highest_label + 1
                     s1.born, s1.died = False, True
-                    highest_label += 1
+                    if s1.label is None:
+                        highest_label += 1
+                        s1.label = highest_label
 
             # Case B: Mass Birth
             elif not structures_1 and structures_2:
                 for s2 in structures_2:
-                    s2.label = highest_label + 1
-                    s2.born, s2.died = True, False
                     highest_label += 1
+                    s2.label = highest_label
+                    s2.born, s2.died = True, False
+
 
             # Case C: Standard Tracking
             elif structures_1 and structures_2:
@@ -130,37 +120,38 @@ def track_structures(dataset=None,
                 # 1. Build overlap matrix
                 str_overlap_matrix = _calculate_str_overlap_matrix(structures_1, structures_2, tracking, 
                                                                    matrix_weight, tracking_assignment, test)
-
+                            
                 # 2. Process standard 1-to-1 links and Merges
                 structures_1, structures_2, highest_label = _process_structure_merging(
                     structures_1, structures_2, str_overlap_matrix, 
-                    gap=1, sample_time=sample_time, highest_label=highest_label)
+                    gap=1, highest_label=highest_label)
 
                 # 3. Process Splits
                 structures_1, structures_2, highest_label = _process_structure_splitting(
                     structures_1, structures_2, str_overlap_matrix, 
-                    sample_time=sample_time, highest_label=highest_label)
+                    highest_label=highest_label)
 
-                # 4. Gap Recovery 
-                if i_frames > max_gap:
-                    for ind_gap in range(2, max_gap + 1):
-                        n_born = sum(1 for s in structures_2 if s.born)
-                        if n_born > 0:
-                            structures_before_gap = dataset.frames[i_frames - ind_gap]
-                            if structures_before_gap:
-                                overlap_gap_matrix = _calculate_str_overlap_matrix(
-                                    structures_before_gap, structures_2, tracking, matrix_weight, tracking_assignment, test)
-                                
-                                structures_before_gap, structures_2, highest_label = _process_structure_merging(
-                                    structures_before_gap, structures_2, overlap_gap_matrix, 
-                                    gap=ind_gap, sample_time=sample_time * ind_gap, highest_label=highest_label)
-
-        # --- 3. Post-Processing ---
+                                    
+            # 4. Gap Recovery 
+            if i_frames >= 2 and structures_2:
+                max_search = min(max_gap, i_frames)
+                
+                for ind_gap in range(2, max_search + 1):
+                    n_born = sum(1 for s in structures_2 if s.born)
+                    
+                    if n_born > 0:
+                        structures_before_gap = dataset.frames[i_frames - ind_gap]
+                        if structures_before_gap:
+                            overlap_gap_matrix = _calculate_str_overlap_matrix(
+                                structures_before_gap, structures_2, tracking, matrix_weight, tracking_assignment, test)
+                            
+                            structures_before_gap, structures_2, highest_label = _process_structure_merging(
+                                structures_before_gap, structures_2, overlap_gap_matrix, 
+                                gap=ind_gap, highest_label=highest_label)
+        
         if remove_orphans:
             dataset = _remove_orphans(dataset, test, min_structure_lifetime)
 
-        # --- 4. Package into Tracked Dataset ---
-        print("Packaging into time-series TrackedPlasmaStructures...")
         tracked_dataset = StructureDataset(mode='tracked', exp_id=dataset.exp_id)
         tracked_blobs = {}
         
@@ -171,14 +162,122 @@ def track_structures(dataset=None,
                 if label not in tracked_blobs:
                     tracked_blobs[label] = TrackedPlasmaStructure(label=label, start_time=current_time)
                 tracked_blobs[label].add_step(s, current_time)
-                
+
         for label, blob in tracked_blobs.items():
             tracked_dataset.add_tracked_structure(blob)
+
 
         with open(pickle_filename, 'wb') as f:
             pickle.dump(tracked_dataset, f)
 
         return tracked_dataset
+
+
+def _process_structure_merging(structures_1, structures_2, str_overlap_matrix, 
+                               gap=1, highest_label=None):
+    
+    for j_str2, s2 in enumerate(structures_2):
+        parent_indices = np.where(str_overlap_matrix[:, j_str2] == 1)[0]
+        num_parents = len(parent_indices)
+        
+        if num_parents == 0 and gap == 1:
+            highest_label += 1
+            s2.label = highest_label
+            s2.born = True
+
+        elif num_parents == 1:
+            p_idx = parent_indices[0]
+            s1 = structures_1[p_idx]
+            
+            if gap == 1 and np.sum(str_overlap_matrix[p_idx, :]) == 1:
+                s2.label = s1.label
+                s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
+
+            elif gap > 1 and s2.born and s1.died:
+                if np.sum(str_overlap_matrix[p_idx, :]) == 1:
+                    s2.label = s1.label
+                    s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
+                    s2.born, s1.died = False, False
+
+        elif num_parents > 1 and gap == 1:
+            if np.sum(str_overlap_matrix[parent_indices, :]) == num_parents:
+                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
+                dom_s1 = structures_1[dominant_p_idx]
+                
+                s2.label = dom_s1.label
+                s2 = correct_structure_angle(structure_1=dom_s1, structure_2=s2)
+                
+                for p_idx in parent_indices:
+                    s1 = structures_1[p_idx]
+                    s2.parents.append(s1.label)
+                    s1.children.append(s2.label)
+                    s1.merges = True
+            else:
+                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
+                dom_s1 = structures_1[dominant_p_idx]
+
+                all_child_indices = set()
+                for p_idx in parent_indices:
+                    for c_idx in np.where(str_overlap_matrix[p_idx, :] == 1)[0]:
+                        all_child_indices.add(c_idx)
+                        
+                dominant_c_idx = max(all_child_indices, key=lambda idx: structures_2[idx].intensity)
+                
+                for p_idx in parent_indices:
+                    s1 = structures_1[p_idx]
+                    s1.splits = np.sum(str_overlap_matrix[p_idx, :]) > 1
+                    s1.merges = True
+                    
+                    for c_idx in np.where(str_overlap_matrix[p_idx, :] == 1)[0]:
+                        child = structures_2[c_idx]
+                        
+                        if c_idx == dominant_c_idx and p_idx == dominant_p_idx:
+                            child.label = dom_s1.label
+                            child = correct_structure_angle(structure_1=dom_s1, structure_2=child)
+                        elif child.label is None:
+                            highest_label += 1
+                            child.label = highest_label
+                            
+                        if dom_s1.label not in child.parents:
+                            child.parents.append(dom_s1.label)
+                        if child.label not in s1.children:
+                            s1.children.append(child.label)
+
+    return structures_1, structures_2, highest_label
+
+
+def _process_structure_splitting(structures_1, structures_2, str_overlap_matrix, 
+                                 highest_label=None):
+    
+    for j_str1, s1 in enumerate(structures_1):
+        overlaps = str_overlap_matrix[j_str1, :]
+        num_overlaps = np.sum(overlaps)
+
+        if num_overlaps == 0:
+            s1.died = True
+
+        elif num_overlaps > 1:
+            child_indices = np.where(overlaps == 1)[0]
+
+            if np.sum(str_overlap_matrix[:, child_indices]) == num_overlaps:
+                dominant_idx = max(child_indices, key=lambda idx: structures_2[idx].intensity)
+
+                for idx in child_indices:
+                    s2 = structures_2[idx]
+                    
+                    if idx == dominant_idx:
+                        s2.label = s1.label
+                        s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
+                    else:
+                        highest_label += 1
+                        s2.label = highest_label
+
+                    s2.parents.append(s1.label)
+                    s1.children.append(s2.label)
+
+                s1.splits = True
+                
+    return structures_1, structures_2, highest_label
 
 
 def _calculate_str_overlap_matrix(structures_1, structures_2, tracking=None, 
@@ -271,117 +370,6 @@ def calculate_score_matrix(structures_1, structures_2, matrix_weight, coeff_r=No
                 
     return score_matrix
 
-
-def _process_structure_merging(structures_1, structures_2, str_overlap_matrix, 
-                               gap=1, sample_time=None, highest_label=None):
-    
-    for j_str2, s2 in enumerate(structures_2):
-        parent_indices = np.where(str_overlap_matrix[:, j_str2] == 1)[0]
-        num_parents = len(parent_indices)
-        
-        if num_parents == 0 and gap == 1:
-            highest_label += 1
-            s2.label = highest_label
-            s2.born = True
-
-        elif num_parents == 1:
-            p_idx = parent_indices[0]
-            s1 = structures_1[p_idx]
-            
-            if gap == 1 and np.sum(str_overlap_matrix[p_idx, :]) == 1:
-                s2.label = s1.label
-                s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-
-            elif gap > 1 and s2.born and s1.died:
-                if np.sum(str_overlap_matrix[p_idx, :]) == 1:
-                    s2.label = s1.label
-                    s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-                    s2.born, s1.died = False, False
-
-        elif num_parents > 1 and gap == 1:
-            if np.sum(str_overlap_matrix[parent_indices, :]) == num_parents:
-                # BUG FIX: Removed .value
-                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
-                dom_s1 = structures_1[dominant_p_idx]
-                
-                s2.label = dom_s1.label
-                s2 = correct_structure_angle(structure_1=dom_s1, structure_2=s2)
-                
-                for p_idx in parent_indices:
-                    s1 = structures_1[p_idx]
-                    s2.parents.append(s1.label)
-                    s1.children.append(s2.label)
-                    s1.merges = True
-
-            else:
-                # BUG FIX: Removed .value
-                dominant_p_idx = max(parent_indices, key=lambda idx: structures_1[idx].intensity)
-                dom_s1 = structures_1[dominant_p_idx]
-
-                all_child_indices = set()
-                for p_idx in parent_indices:
-                    for c_idx in np.where(str_overlap_matrix[p_idx, :] == 1)[0]:
-                        all_child_indices.add(c_idx)
-                        
-                # BUG FIX: Removed .value
-                dominant_c_idx = max(all_child_indices, key=lambda idx: structures_2[idx].intensity)
-                
-                for p_idx in parent_indices:
-                    s1 = structures_1[p_idx]
-                    s1.splits = np.sum(str_overlap_matrix[p_idx, :]) > 1
-                    s1.merges = True
-                    
-                    for c_idx in np.where(str_overlap_matrix[p_idx, :] == 1)[0]:
-                        child = structures_2[c_idx]
-                        
-                        if c_idx == dominant_c_idx and p_idx == dominant_p_idx:
-                            child.label = dom_s1.label
-                            child = correct_structure_angle(structure_1=dom_s1, structure_2=child)
-                        elif child.label is None:
-                            highest_label += 1
-                            child.label = highest_label
-                            
-                        if dom_s1.label not in child.parents:
-                            child.parents.append(dom_s1.label)
-                        if child.label not in s1.children:
-                            s1.children.append(child.label)
-
-    return structures_1, structures_2, highest_label
-
-
-def _process_structure_splitting(structures_1, structures_2, str_overlap_matrix, 
-                                 sample_time=None, highest_label=None):
-    
-    for j_str1, s1 in enumerate(structures_1):
-        overlaps = str_overlap_matrix[j_str1, :]
-        num_overlaps = np.sum(overlaps)
-
-        if num_overlaps == 0:
-            s1.died = True
-
-        elif num_overlaps > 1:
-            child_indices = np.where(overlaps == 1)[0]
-
-            if np.sum(str_overlap_matrix[:, child_indices]) == num_overlaps:
-                # BUG FIX: Removed .value
-                dominant_idx = max(child_indices, key=lambda idx: structures_2[idx].intensity)
-
-                for idx in child_indices:
-                    s2 = structures_2[idx]
-                    
-                    if idx == dominant_idx:
-                        s2.label = s1.label
-                        s2 = correct_structure_angle(structure_1=s1, structure_2=s2)
-                    else:
-                        highest_label += 1
-                        s2.label = highest_label
-
-                    s2.parents.append(s1.label)
-                    s1.children.append(s2.label)
-
-                s1.splits = True
-                
-    return structures_1, structures_2, highest_label
 
 
 def _remove_orphans(dataset, test, min_structure_lifetime):
