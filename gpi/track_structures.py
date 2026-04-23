@@ -52,10 +52,68 @@ def track_structures(dataset=None,
                      min_structure_lifetime=20,
                      nocalc=False,
                      recalc_tracking=False,
+                     score_threshold=0.7,
                      comment=None,
                      test=False):
+    
     """
     Main loop for tracking identified plasma structures across consecutive frames.
+
+    This function processes an 'untracked' StructureDataset containing raw, frame-by-frame 
+    plasma blobs and links them together to form continuous time-series trajectories 
+    (TrackedPlasmaStructures). It manages the birth, death, merging, and splitting of 
+    structures, and utilizes a dynamic search radius to recover structures that temporarily 
+    disappear due to segmentation dropouts (gap recovery).
+
+    Args:
+        dataset (StructureDataset): The input dataset object containing the untracked 
+            frames of PlasmaStructure objects. Must be in 'untracked' mode.
+        time_range (list or tuple, optional): The [start, end] time range used solely 
+            for generating the output pickle filename.
+        tracking (str, optional): The tracking algorithm to use. Options are 'overlap' 
+            (strict physical intersection) or 'weighted' (score-based tracking). 
+            Defaults to 'weighted'.
+        tracking_assignment (str, optional): The method for assigning structural matches. 
+            Options are 'max_score' (highest score wins) or 'hungarian' (global linear 
+            sum assignment). Defaults to 'max_score'.
+        max_gap (int, optional): The maximum number of missing consecutive frames a 
+            structure can bridge during gap recovery. Defaults to 3.
+        matrix_weight (dict, optional): Weights applied to the scoring matrix when using 
+            'weighted' tracking (e.g., {'iou': 1.0, 'cccf': 0.0, 'distance': 1.0}).
+        smooth_contours (int, optional): The contour smoothing parameter, used for generating 
+            the output filename comment.
+        prev_str_weighting (str, optional): Weighting method used for calculating previous 
+            structure properties. Defaults to 'area'.
+        calculate_rough_diff_velocities (bool, optional): Legacy parameter for calculating 
+            differential velocities during the tracking loop. Defaults to False.
+        differential_keys (list, optional): List of dictionary keys specifying which 
+            differential parameters to track.
+        weighting (str, optional): Weighting criteria for resolving splits/merges. 
+            Defaults to 'area'.
+        maxing (str, optional): Criteria used to select the dominant structure during 
+            complex splits/merges.
+        remove_orphans (bool, optional): If True, aggressively filters out structures 
+            that do not meet the minimum lifetime requirement. Defaults to True.
+        min_structure_lifetime (int, optional): The minimum number of frames a structure 
+            must survive to be kept in the final dataset. Defaults to 20.
+        nocalc (bool, optional): If True, attempts to bypass the calculation by loading 
+            the results directly from a cached pickle file. Defaults to False.
+        recalc_tracking (bool, optional): If True, forces the tracker to run and overwrite 
+            any existing cached data. Defaults to False.
+        score_threshold (float, optional): The minimum allowable score (e.g., Intersection 
+            over Union) for two structures to be linked. Gap recovery automatically overrides 
+            this to 0.0. Defaults to 0.7.
+        comment (str, optional): A custom string appended to the output pickle filename 
+            for identification.
+        test (bool, optional): If True, activates verbose diagnostic print statements 
+            for tracking matrices and frame intersections. Defaults to False.
+
+    Raises:
+        ValueError: If no valid 'untracked' StructureDataset is provided.
+
+    Returns:
+        StructureDataset: A new dataset object in 'tracked' mode, where the frames 
+        have been parsed into continuous TrackedPlasmaStructure timelines.
     """
     if dataset is None or dataset.mode != 'untracked':
         raise ValueError("A valid 'untracked' StructureDataset must be provided.")
@@ -65,19 +123,21 @@ def track_structures(dataset=None,
     if remove_orphans:
         comment += f"_LT{min_structure_lifetime}"
 
-    pickle_filename = flap_nstx.tools.filename(exp_id=dataset.exp_id,
-                                               working_directory=os.path.join(wd, 'processed_data'),
-                                               time_range=time_range,
-                                               purpose='tracking',
-                                               comment=comment,
-                                               extension='pickle')
+# Set extension to .h5 for HDF5 saving
+    hdf5_filename = flap_nstx.tools.filename(exp_id=dataset.exp_id,
+                                             working_directory=os.path.join(wd, 'processed_data'),
+                                             time_range=time_range,
+                                             purpose='tracking',
+                                             comment=comment,
+                                             extension='h5')
 
-    if nocalc and os.path.exists(pickle_filename) and not recalc_tracking:
+    # --- HDF5 LOAD LOGIC ---
+    if nocalc and os.path.exists(hdf5_filename):
         try:
-            with open(pickle_filename, 'rb') as f:
-                return pickle.load(f)
-        except Exception:
-            print(f"Failed to load {pickle_filename}. Recalculating.")
+            print(f"Loading tracked data from {hdf5_filename}...")
+            return StructureDataset.load_hdf5(hdf5_filename)
+        except Exception as e:
+            print(f"Failed to load {hdf5_filename}: {e}. Recalculating.")
             nocalc = False
     else:
         nocalc = False
@@ -167,8 +227,9 @@ def track_structures(dataset=None,
             tracked_dataset.add_tracked_structure(blob)
 
 
-        with open(pickle_filename, 'wb') as f:
-            pickle.dump(tracked_dataset, f)
+# --- HDF5 SAVE LOGIC ---
+        print(f"Saving tracked dataset to HDF5: {hdf5_filename}")
+        tracked_dataset.save_hdf5(hdf5_filename)
 
         return tracked_dataset
 

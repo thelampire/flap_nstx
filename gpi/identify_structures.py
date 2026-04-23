@@ -392,9 +392,40 @@ def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse,
         
         
         
-def validate_structure(struct, x_coord, y_coord, elongation_threshold, str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
-    """Filters out invalid structures based on size, elongation, and boundary constraints."""
+def validate_structure(struct, x_coord, y_coord, elongation_threshold, 
+                       str_size_lower_thres, str_size_upper_thres, 
+                       ignore_side_structure):
     
+    """
+    Validates and standardizes a segmented plasma structure based on geometric and spatial constraints.
+
+    This internal function acts as the final gatekeeper before a structure is added to 
+    the frame's dataset. It checks if the structural fit failed (NaN sizes), forces 
+    angles to NaN if the structure is too circular, and normalizes the fit angle to 
+    prevent π/-π wrapping. Finally, it drops structures that fall outside the defined 
+    physical size bounds or touch the extreme edges of the camera frame.
+
+    Args:
+        struct (PlasmaStructure): The object containing the shape, pixel data, and 
+            fitted geometric parameters of the plasma blob.
+        x_coord (np.ndarray): The 1D or 2D array of the X-coordinates for the full frame.
+        y_coord (np.ndarray): The 1D or 2D array of the Y-coordinates for the full frame.
+        elongation_threshold (float): The minimum elongation ratio required to trust 
+            the angle fit. If `struct.fit_elongation < elongation_threshold`, the 
+            blob is considered too circular and its angle is neutralized to np.nan.
+        str_size_lower_thres (float or None): The minimum allowable physical size 
+            (for both major and minor axes). Structures smaller than this are rejected.
+        str_size_upper_thres (float or None): The maximum allowable physical size. 
+            Structures larger than this are rejected.
+        ignore_side_structure (bool): If True, the function evaluates the boundary 
+            coordinates of the blob. If any part of the structure touches the minimum 
+            or maximum bounds of `x_coord` or `y_coord`, it is rejected.
+
+    Returns:
+        bool: True if the structure survives all checks and is valid. False if the 
+        structure triggers any filter. (Note: Modifies the `struct` object in place 
+        by calling `struct.set_invalid()` or adjusting `struct._angle` if necessary).
+    """
     # 1. NaN Check 
     if np.isnan(struct.fit_size[0]) or np.isnan(struct.fit_size[1]):
         struct.set_invalid()

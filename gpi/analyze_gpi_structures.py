@@ -56,40 +56,261 @@ fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 
 
-def analyze_gpi_structures(exp_id=None, time_range=None, data_object=None, 
-                           x_range=None, y_range=None, normalize='simple',
-                           normalize_f_kernel='Elliptic', normalize_f_high=1e3,
-                           str_finding_method='watershed', ignore_side_structures=False,
-                           ellipse_method='linalg', fit_shape='ellipse', subtraction_order=None, 
-                           remove_interlaced_structures=True, nlevel=51, filter_level=5, 
-                           global_levels=False, levels=None, threshold_method='variance', 
-                           threshold_coeff=1.0, threshold_bg_range={'x':[54,65], 'y':[0,79]},
-                           threshold_bg_multiplier=2., weighting='intensity', maxing='intensity', 
-                           prev_str_weighting='intensity', str_size_lower_thres=0.00375*4, 
-                           elongation_threshold=0.1, tracking='weighted', tracking_assignment='max_score', 
-                           max_gap=1, smooth_contours=5, remove_orphans=True, min_structure_lifetime=10, 
-                           calculate_rough_diff_velocities=False, structure_pixel_calc=False, 
-                           score_threshold=0.3, matrix_weight={'iou':1,'cccf':0}, plot=True, 
-                           pdf=False, plot_error=False, error_window=4., overplot_average=True, 
-                           plot_tracking=True, plot_scatter=False, structure_video_save=False, 
-                           video_start_frame=0, video_resolution=(1024,1024), video_framerate=24, 
-                           nocolorbar=False, structure_pdf_save=False, plot_separatrix=True, 
-                           plot_flux_surfaces=True, plot_time_range=None, plot_for_publication=False, 
-                           plot_vertical_line_at=None, plot_str_by_str=False, plot_watershed_steps=False, 
-                           plot_example_structure_frames=False, plot_example_frames_results=False, 
-                           plot_nframe=None, plot_ncol=None, linewidth=None, filename=None, 
-                           save_results=True, nocalc=True, recalc_tracking=False, return_results=False, 
-                           return_pixel_displacement=False, cache_data=True, test=False, 
-                           test_structures=False, test_histogram=False, save_data_for_publication=False, 
-                           verbose=False, skip_mdsplus=False):
+def analyze_gpi_structures(exp_id=None,                          #Shot number
+                           time_range=None,                      #The time range for the calculation
+                           data_object=None,                     #Input data object if available from outside (e.g. generated sythetic signal)
+
+                           x_range=None,                       #X range for the calculation
+                           y_range=None,                       #Y range for the calculation
+
+                           #Normalizer inputs
+                           normalize='simple',                #Normalization options,
+                                                                                                                #None: no normalization
+                                                                                                                #'roundtrip': zero phase LPF IIR filter
+                                                                                                                #'halved': different normalzation for before and after the ELM
+                                                                                                                #'simple': simple low-pass filtered normalization
+                           normalize_f_kernel='Elliptic',        #The kernel for filtering the gas cloud
+                           normalize_f_high=1e3,                 #High pass frequency for the normalizer data
+
+                           #Input for size pre-processing
+                           str_finding_method='watershed',         # Contour or watershed based structure finding
+                           ignore_side_structures=False,
+                           ellipse_method='linalg',
+                           fit_shape='ellipse',
+                           subtraction_order=None,      #Polynomial subtraction order
+                           remove_interlaced_structures=True,    #Merge the found structures which contain each other
+                           
+                           #Inputs for size processing
+                           nlevel=51,                            #Number of contour levels for the structure size and velocity calculation.
+                           filter_level=5,                       #Number of embedded paths to be identified as an individual structure
+                           global_levels=False,                  #Set for having structure identification based on a global intensity level.
+                           levels=None,                          #Levels of the contours for the entire dataset. If None, it equals data.min(),data.max() divided to nlevel intervals.
+                           threshold_method='variance',          #variance or background for the size calculation
+                           threshold_coeff=1.0,                  #Variance multiplier threshold for size determination
+                           threshold_bg_range={'x':[54,65],      #For the background subtraction, ROI where the bg intensity is calculated
+                                              'y':[0,79]},
+
+                           threshold_bg_multiplier=2.,           #Background multiplier for the thresholding
+                           weighting='intensity',                #Weighting of the results based on the 'number' of structures, the 'intensity' of the structures or the 'area' of the structures (options are in '')
+                           maxing='intensity',                   #Return the properties of structures which have the largest "area" or "intensity"
+                           prev_str_weighting='intensity',       #weighting for the differential quantities like angular and linear velocity
+                           str_size_lower_thres=0.00375*4,       #Structures having sizes under this value are filtered out from the results. (Default is 4 pixels for both radial, poloidal)
+                           elongation_threshold=0.1,             #Structures having major/minor_axis-1 lower than this value are set to angle=np.nan
+
+                           tracking='weighted',                  #Tracking methods 'overlap' or 'weighted'
+                           tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
+                           max_gap=1,
+                           smooth_contours=5,                    #Smooths contours with the corner cutting technique this many times.
+                           remove_orphans=True,                  #Structures which "live" shorter than min_structure_lifetime
+                           min_structure_lifetime=10,            #are cut out from the calculation
+                           calculate_rough_diff_velocities=False,#Calculate velocities from average or maximum structures (deprecated)
+                           structure_pixel_calc=False,           #Calculate and plot the structure sizes in pixels
+
+                           score_threshold=0.7,                  #Threshold for tracking of the structures based on the weighted tracking.
+                           matrix_weight={'iou':1,'cccf':0},     #Weights for the tracking matrix. iou: intersection over union, cccf cross correlation coefficient funcion
+                           #Fixing incorrect calculations
+                           #fix_structure_angles=False,
+                           
+                           #Plot options:
+                           plot=True,                            #Plot the results
+                           pdf=False,                            #Print the results into a PDF
+                           plot_error=False,                     #Plot the errorbars of the velocity calculation based on the line fitting and its RMS error
+                           error_window=4.,                      #Plot the average signal with the error bars calculated from the normalized variance.
+                           overplot_average=True,
+                           plot_tracking=True,                   #Plot the tracked structures with a line
+                           plot_scatter=False,                   #Add scatter points  to the lineplots
+                           structure_video_save=False,           #Save the video of the overplot ellipses
+                           video_start_frame=0,
+                           video_resolution=(1024,1024),
+                           video_framerate=24,
+                           
+                           nocolorbar=False,
+                           structure_pdf_save=False,             #Save the struture finding algorithm's plot output into a PDF (can create very large PDF's, the number of pages equals the number of frames)
+
+                           plot_separatrix=True,
+                           plot_flux_surfaces=True,
+
+                           plot_time_range=None,                 #Plot the results in a different time range than the data is read from
+                           plot_for_publication=False,           #Modify the plot sizes to single column sizes and golden ratio axis ratios
+                           plot_vertical_line_at=None,
+                           plot_str_by_str=False,
+                           plot_watershed_steps=False,           #Plot the steps of the watershed segmentation at the sample number this is set to.
+                           plot_example_structure_frames=False,  #Plot 10 example frames from the sample number this is set to.
+                           plot_example_frames_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
+                           plot_nframe=None,
+                           plot_ncol=None,
+                           linewidth=None,
+
+                            #File input/output options
+                           filename=None,                        #Filename for restoring data
+                           save_results=True,                    #Save the results into a .pickle file to filename+.pickle
+                           nocalc=True,                          #Restore the results from the .pickle file from filename+.pickle
+                           recalc_tracking=False,
+                           
+                            #Output options:
+                           return_results=False,                 #Return the results if set.
+                           return_pixel_displacement=False,
+                           cache_data=True,                      #Cache the data or try to open is from cache
+
+                            #Test options
+                           test=False,                           #Test the results
+                           test_structures=False,                #Test the structure size calculation
+                           test_histogram=False,                 #Plot the poloidal velocity histogram
+
+                           save_data_for_publication=False,
+                           verbose=False,
+                           skip_mdsplus=False,
+                           ):
     
     """
     Analyzes Gas Puff Imaging (GPI) structures in plasma physics data.
+
+    (Gemini generated docstring)
 
     This function performs comprehensive structure identification, size processing,
     tracking, and velocity calculation on GPI data. It handles data normalization,
     contour/watershed segmentation, tracking structures over time, and generating 
     various diagnostic plots and video outputs.
+
+    Args:
+        --- General Inputs ---
+        exp_id (int, optional): Shot number for the experiment.
+        time_range (list or tuple, optional): The time range [start, end] for the calculation.
+        data_object (object, optional): Input data object if available from outside 
+            (e.g., generated synthetic signal).
+        x_range (list or tuple, optional): X-axis spatial range for the calculation.
+        y_range (list or tuple, optional): Y-axis spatial range for the calculation.
+
+        --- Normalizer Inputs ---
+        normalize (str, optional): Normalization options. 
+            Options include: None (no normalization), 'roundtrip' (zero phase LPF IIR filter), 
+            'halved' (different normalization for before and after the ELM), or 
+            'simple' (simple low-pass filtered normalization). Defaults to 'simple'.
+        normalize_f_kernel (str, optional): The kernel type for filtering the gas cloud. 
+            Defaults to 'Elliptic'.
+        normalize_f_high (float, optional): High-pass frequency for the normalizer data. 
+            Defaults to 1e3.
+
+        --- Structure Pre-processing ---
+        str_finding_method (str, optional): 'contour' or 'watershed' based structure finding. 
+            Defaults to 'watershed'.
+        ignore_side_structures (bool, optional): If True, ignores structures touching the edges.
+        ellipse_method (str, optional): Method for fitting ellipses. Defaults to 'linalg'.
+        fit_shape (str, optional): Shape to fit to the structures. Defaults to 'ellipse'.
+        subtraction_order (int, optional): Polynomial subtraction order.
+        remove_interlaced_structures (bool, optional): Merge found structures which contain 
+            each other. Defaults to True.
+
+        --- Structure Processing ---
+        nlevel (int, optional): Number of contour levels for structure size and velocity 
+            calculation. Defaults to 51.
+        filter_level (int, optional): Number of embedded paths to be identified as an 
+            individual structure. Defaults to 5.
+        global_levels (bool, optional): Set to True for structure identification based on a 
+            global intensity level. Defaults to False.
+        levels (list, optional): Contour levels for the entire dataset. If None, it dynamically 
+            calculates based on data min/max divided into `nlevel` intervals.
+        threshold_method (str, optional): Method ('variance' or 'background') for size 
+            calculation. Defaults to 'variance'.
+        threshold_coeff (float, optional): Variance multiplier threshold for size determination. 
+            Defaults to 1.0.
+        threshold_bg_range (dict, optional): ROI where background intensity is calculated 
+            for background subtraction. Defaults to {'x':[54,65], 'y':[0,79]}.
+        threshold_bg_multiplier (float, optional): Background multiplier for thresholding. 
+            Defaults to 2.0.
+        weighting (str, optional): Weighting of results ('number', 'intensity', or 'area' 
+            of structures). Defaults to 'intensity'.
+        maxing (str, optional): Return properties of structures with the largest 'area' 
+            or 'intensity'. Defaults to 'intensity'.
+        prev_str_weighting (str, optional): Weighting for differential quantities like angular 
+            and linear velocity. Defaults to 'intensity'.
+        str_size_lower_thres (float, optional): Minimum size threshold; structures below this 
+            are filtered out. Defaults to 0.015 (4 pixels for radial/poloidal).
+        elongation_threshold (float, optional): Structures with major/minor_axis-1 lower than 
+            this have angle set to np.nan. Defaults to 0.1.
+
+        --- Tracking ---
+        tracking (str, optional): Tracking method ('overlap' or 'weighted'). Defaults to 'weighted'.
+        tracking_assignment (str, optional): Correspondence assignment method ('hungarian' 
+            or 'max_score'). Defaults to 'max_score'.
+        max_gap (int, optional): Maximum frame gap allowed for tracking a single structure. 
+            Defaults to 1.
+        smooth_contours (int, optional): Number of times to smooth contours using the corner 
+            cutting technique. Defaults to 5.
+        remove_orphans (bool, optional): Remove structures living shorter than 
+            `min_structure_lifetime`. Defaults to True.
+        min_structure_lifetime (int, optional): Minimum frames a structure must exist to be kept. 
+            Defaults to 10.
+        calculate_rough_diff_velocities (bool, optional): (Deprecated) Calculate velocities 
+            from average or maximum structures. Defaults to False.
+        structure_pixel_calc (bool, optional): Calculate/plot structure sizes in pixels. 
+            Defaults to False.
+        score_threshold (float, optional): Threshold for weighted tracking. Defaults to 0.7.
+        matrix_weight (dict, optional): Tracking matrix weights for IoU (intersection over union) 
+            and CCCF (cross-correlation coefficient function). Defaults to {'iou': 1, 'cccf': 0}.
+        fix_structure_angles (bool, optional): Toggles fixing of incorrect angle calculations. 
+            Defaults to False.
+
+        --- Plotting Options ---
+        plot (bool, optional): Toggles main results plotting. Defaults to True.
+        pdf (bool, optional): Print results to a PDF. Defaults to False.
+        plot_error (bool, optional): Plot velocity calculation error bars (based on line fitting 
+            and RMS error). Defaults to False.
+        error_window (float, optional): Plot average signal with error bars from normalized variance. 
+            Defaults to 4.0.
+        overplot_average (bool, optional): Toggles overplotting the average. Defaults to True.
+        plot_tracking (bool, optional): Plot tracked structures with lines. Defaults to True.
+        plot_scatter (bool, optional): Add scatter points to line plots. Defaults to False.
+        structure_video_save (bool, optional): Save video of overplotted ellipses. Defaults to False.
+        video_start_frame (int, optional): Starting frame for saved video. Defaults to 0.
+        video_resolution (tuple, optional): Resolution for saved video. Defaults to (1024, 1024).
+        video_framerate (int, optional): Framerate for saved video. Defaults to 24.
+        nocolorbar (bool, optional): Suppress colorbars on plots. Defaults to False.
+        structure_pdf_save (bool, optional): Save structural finding algorithm output to PDF. 
+            Warning: can generate very large files. Defaults to False.
+        plot_separatrix (bool, optional): Overplot the separatrix. Defaults to True.
+        plot_flux_surfaces (bool, optional): Overplot flux surfaces. Defaults to True.
+        plot_time_range (list, optional): Specific time range for plotting, if different from 
+            read data.
+        plot_for_publication (bool, optional): Format plots to single-column sizes and 
+            golden ratio dimensions. Defaults to False.
+        plot_vertical_line_at (float, optional): X-axis value to draw a vertical reference line.
+        plot_str_by_str (bool, optional): Plot individual structures step-by-step.
+        plot_watershed_steps (int, optional): Frame/sample number to plot watershed segmentation steps.
+        plot_example_structure_frames (int, optional): Sample number to plot 10 example frames.
+        plot_example_frames_results (bool, optional): Plot example Area, Angle, Elongation, 
+            and Roundness for one shot. Defaults to False.
+        plot_nframe (int, optional): Number of frames to plot.
+        plot_ncol (int, optional): Number of columns for subplots.
+        linewidth (float, optional): Line width for plot elements.
+
+        --- File I/O & Output Options ---
+        filename (str, optional): Base filename for restoring/saving data.
+        save_results (bool, optional): Save results to a .pickle file (filename + .pickle). 
+            Defaults to True.
+        nocalc (bool, optional): Skip calculation and restore results from the .pickle file. 
+            Defaults to True.
+        recalc_tracking (bool, optional): Force recalculation of tracking. Defaults to False.
+        return_results (bool, optional): Return the calculated results dictionary/object. 
+            Defaults to False.
+        return_pixel_displacement (bool, optional): Return displacement in pixels instead of 
+            physical units. Defaults to False.
+        cache_data (bool, optional): Cache data or attempt to read from cache. Defaults to True.
+        save_data_for_publication (bool, optional): Export data formats optimized for publication. 
+            Defaults to False.
+        verbose (bool, optional): Enable detailed logging output. Defaults to False.
+        skip_mdsplus (bool, optional): Skip reading data from the MDSplus tree. Defaults to False.
+
+        --- Testing Options ---
+        test (bool, optional): Run general tests on results. Defaults to False.
+        test_structures (bool, optional): Test the structure size calculation. Defaults to False.
+        test_histogram (bool, optional): Plot the poloidal velocity histogram for debugging. 
+            Defaults to False.
+
+    Returns:
+        Varies based on flags. If `return_results` is True, it returns the processed 
+        structure tracking and analysis data (a dict). Otherwise, 
+        returns None and saves output to files/plots.
     """
 
     # Input error handling
@@ -139,14 +360,23 @@ def analyze_gpi_structures(exp_id=None, time_range=None, data_object=None,
     else:
         filename_was_none = False
 
+    # plot_results=plot
+    # fit_shape=fit_shape.capitalize()
+
+    # pickle_filename=filename+'.pickle'
+    
+    # if not os.path.exists(pickle_filename) and nocalc:
+    #     print(pickle_filename)
+    #     print('The pickle file does not exist. Recalculating the results.')
+    #     nocalc = False
+    
     plot_results=plot
     fit_shape=fit_shape.capitalize()
-
-    pickle_filename=filename+'.pickle'
+    hdf5_filename = filename + '.h5'
     
-    if not os.path.exists(pickle_filename) and nocalc:
-        print(pickle_filename)
-        print('The pickle file does not exist. Recalculating the results.')
+    if not os.path.exists(hdf5_filename) and nocalc:
+        print(hdf5_filename)
+        print('The HDF5 file does not exist. Recalculating the results.')
         nocalc = False
 
     if ((not test and not test_structures) or
@@ -387,23 +617,37 @@ def analyze_gpi_structures(exp_id=None, time_range=None, data_object=None,
                 if structure_pdf_save:
                     plt.title(str(exp_id)+' @ '+"{:.3f}".format(time[i_frames]*1e3)+'ms')
                     plt.show()
-                    pdf_structures.savefig()
-
+                    pdf_structures.savefig()                
+                
+                
             if structure_pdf_save:
                 pdf_structures.close()
-
-            with open(pickle_filename, 'wb') as f:
-                pickle.dump(raw_dataset,f)
-            if test:
-                plt.close()
+                
+            print(f"Saving untracked dataset to HDF5: {hdf5_filename}")
+            raw_dataset.save_hdf5(hdf5_filename)
+            if test: plt.close()
         else:
-            print('\n\n--- Loading data from the pickle file ---')
-            with open(pickle_filename, 'rb') as f:
-                raw_dataset=pickle.load(f)
+            print('\n\n--- Loading data from the HDF5 file ---')
+            raw_dataset = StructureDataset.load_hdf5(hdf5_filename)
     else:
-        print('\n\n--- Loading data from the pickle file ---')
-        with open(pickle_filename, 'rb') as f:
-            raw_dataset=pickle.load(f)
+        print('\n\n--- Loading data from the HDF5 file ---')
+        raw_dataset = StructureDataset.load_hdf5(hdf5_filename)
+
+    #         if structure_pdf_save:
+    #             pdf_structures.close()
+
+    #         with open(pickle_filename, 'wb') as f:
+    #             pickle.dump(raw_dataset,f)
+    #         if test:
+    #             plt.close()
+    #     else:
+    #         print('\n\n--- Loading data from the pickle file ---')
+    #         with open(pickle_filename, 'rb') as f:
+    #             raw_dataset=pickle.load(f)
+    # else:
+    #     print('\n\n--- Loading data from the pickle file ---')
+    #     with open(pickle_filename, 'rb') as f:
+    #         raw_dataset=pickle.load(f)
         
     """
     Structure tracking
@@ -553,6 +797,7 @@ def _plot_results(dataset=None,
                   plot_str_by_str=False,
                   comment=None,
                   exp_id=None,
+                  
                   plot_for_publication=False,
                   plot_vertical_line_at=None,
                   overplot_average=False,
@@ -570,6 +815,47 @@ def _plot_results(dataset=None,
     handles time range validation, sets up figure dimensions (including 
     publication-ready sizing), manages PDF export, and delegates the rendering
     to either average or structure-by-structure plotting routines.
+
+    Args:
+        pdf (bool, optional): If True, saves the generated plots to a multipage 
+            PDF file in the working directory. Defaults to False.
+        plot_results (bool, optional): If True, uses the 'QT5Agg' backend for 
+            interactive plotting. If False, uses the 'agg' backend for background 
+            rendering. Defaults to False.
+        plot_time_range (list or tuple, optional): The specific [start, end] time 
+            range to plot. Must be within `time_range`. Defaults to None.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            of the calculated data. Defaults to None.
+        plot_str_by_str (bool, optional): If True, plots individual structures 
+            step-by-step. If False, plots average results. Defaults to False.
+        comment (str, optional): A string to append to the generated PDF filename 
+            for identification. Defaults to None.
+        exp_id (int or str, optional): The experiment or shot ID, used for 
+            generating the file path and name. Defaults to None.
+        frame_properties (dict, optional): The main data dictionary containing 
+            the 'structures' and 'derived' calculation keys. Defaults to None.
+        plot_for_publication (bool, optional): If True, forces the figure size to 
+            single-column width (8.5 cm) and a golden ratio height for publication. 
+            Defaults to False.
+        plot_vertical_line_at (float, optional): X-coordinate at which to draw a 
+            vertical reference line. Defaults to None.
+        overplot_average (bool, optional): If True, overplots the average value 
+            on the graphs. Defaults to False.
+        plot_scatter (bool, optional): If True, uses scatter plots instead of or 
+            in addition to lines. Defaults to False.
+        plot_tracking (bool, optional): If True, plots the tracked structures 
+            with lines (passed to `_plot_str_by_str`). Defaults to False.
+        n_color (int, optional): The number of distinct colors to use in the 
+            color table. Defaults to None.
+        colortable (list or object, optional): A specific color table or colormap 
+            to use for rendering structures. Defaults to None.
+
+    Raises:
+        ValueError: If `plot_time_range` falls outside the bounds of the original 
+            `time_range`.
+
+    Returns:
+        None
     """
     
     if plot_results:
@@ -811,7 +1097,7 @@ def _plot_example_structure_frames(exp_id=None,
 
 def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=None,
                                  dataset=None, wd=None, n_color=None,
-                                 colortable=None, pdf=None, markersize=0.02,
+                                 colortable=None, pdf=None, markersize=0.5,
                                  save_data_for_publication=False):
     
     """
@@ -822,6 +1108,33 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
     top-to-bottom: Radial position, Poloidal position, Area, Angle, Roundness, 
     and Total curvature. It handles both standard and differential properties 
     (which have a one-frame offset) and optionally exports the raw plot data to text files.
+
+    Args:
+        exp_id (int or str, optional): The experiment or shot ID.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            of the calculated data. Used as the default x-axis limits.
+        plot_time_range (list or tuple, optional): Specific [start, end] time range 
+            to plot, overriding `time_range` for the x-axis limits if provided.
+        frame_properties (dict, optional): Dictionary containing the analysis data. 
+            Must include 'structures' (tracked data), 'data' (metadata/units for 
+            standard properties), and 'derived' (metadata/units for differential properties).
+        wd (str, optional): The working directory path where output files (PDFs and 
+            data text files) will be saved.
+        n_color (int, optional): The total number of distinct colors available in 
+            the colortable.
+        colortable (list or object, optional): A color sequence used to consistently 
+            color distinct structures across all subplots.
+        pdf (bool, optional): If True, saves the generated multi-panel figure to 
+            a PDF file in the working directory.
+        markersize (float, optional): The size of the markers on the line plots. 
+            Defaults to 0.5.
+        save_data_for_publication (bool, optional): If True, exports the time and 
+            property value data for each tracked structure to individual `.txt` files 
+            for external plotting. Defaults to False.
+
+    Returns:
+        None: The function generates plots, optionally saves files, and closes the 
+        matplotlib figures.
     """
 
     set_matplotlib_for_publication(labelsize=8,
@@ -923,24 +1236,24 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
 
 
 def _structure_video_save(sample_0=None,
-                         object_name=None,
-                         exp_id=None,
-                         n_frames=None,
-                         d_sep_x=None,
-                         d_sep_y=None,
-                         d_flux=None,
-                         video_resolution=None,
-                         levels=None,
-                         nocolorbar=None,
-                         plot_flux_surfaces=None,
-                         plot_separatrix=None,
-                         str_finding_method=None,
-                         video_framerate=None,
-                         dataset=None,
-                         colortable=None,
-                         wd=None,
-                         n_color=None,
-                         video_start_frame=0):
+                          object_name=None,
+                          exp_id=None,
+                          n_frames=None,
+                          d_sep_x=None,
+                          d_sep_y=None,
+                          d_flux=None,
+                          video_resolution=None,
+                          levels=None,
+                          nocolorbar=None,
+                          plot_flux_surfaces=None,
+                          plot_separatrix=None,
+                          str_finding_method=None,
+                          video_framerate=None,
+                          dataset=None,
+                          colortable=None,
+                          wd=None,
+                          n_color=None,
+                          video_start_frame=0):
     
     """
     Generates and saves a video animation of tracked GPI structures over time.
@@ -950,6 +1263,51 @@ def _structure_video_save(sample_0=None,
     separatrix, flux surfaces, and identified structures (polygons and fitted ellipses). 
     It captures the matplotlib figure canvas for each frame and encodes them into an 
     MP4 video file using OpenCV.
+
+    Args:
+        --- General Inputs ---
+        sample_0 (int, optional): The reference starting sample index for the data slice.
+        object_name (str, optional): The name of the data object as registered in 
+            the `flap` framework.
+        exp_id (int or str, optional): The experiment or shot ID, used for the title 
+            and the output filename.
+        wd (str, optional): The working directory path where the video will be saved 
+            (specifically in the `/plots` subdirectory).
+
+        --- Data Inputs ---
+        n_frames (int, optional): The total number of frames to iterate through.
+        d_sep_x (object, optional): Data object containing separatrix R-coordinates.
+        d_sep_y (object, optional): Data object containing separatrix Z-coordinates.
+        d_flux (object, optional): Data object containing flux surface data.
+        time (array-like, optional): Array of time values corresponding to each frame, 
+            used for timestamping the video and the filename.
+        frame_properties (dict, optional): Dictionary containing the tracked 
+            'structures' data for each frame.
+
+        --- Plot Formatting ---
+        levels (int or array-like, optional): Contour levels for the background 
+            data plot. If None, defaults to 51.
+        nocolorbar (bool, optional): If True, suppresses the colorbar on the plot.
+        plot_flux_surfaces (bool, optional): If True, overlays the flux surfaces 
+            onto the frames.
+        plot_separatrix (bool, optional): If True, overlays the magnetic separatrix.
+        str_finding_method (str, optional): The name of the structure finding method 
+            used (e.g., 'watershed'), appended to the output video filename.
+        colortable (list or object, optional): A color sequence used to color distinct 
+            structures based on their tracking label.
+        n_color (int, optional): The total number of distinct colors in the colortable.
+
+        --- Video Settings ---
+        video_resolution (tuple or list, optional): The (width, height) resolution of 
+            the output figure.
+        video_framerate (int or float, optional): The frames per second (FPS) for the 
+            encoded MP4 video.
+        video_start_frame (int, optional): The frame offset to begin the video 
+            rendering. Defaults to 0.
+
+    Returns:
+        None: The function saves an '.mp4' file to the working directory and 
+        releases the video writer resources.
     """
 
     import scipy
@@ -1121,6 +1479,32 @@ def _plot_str_by_str(dataset=None,
     the time evolution of every tracked structure on the same axes, differentiating 
     them by color. It handles both standard properties and differential properties 
     (which have one less time step) and can append the figures to an open PDF object.
+
+    Args:
+        frame_properties (dict, optional): The main data dictionary containing 
+            tracked 'structures', 'data' (metadata for standard properties), and 
+            'derived' (metadata for differential properties).
+        plot_scatter (bool, optional): If True, plots lines with scatter markers 
+            ('-o'). If False, plots solid lines ('-'). Defaults to True.
+        figsize (tuple, optional): The (width, height) dimensions for the generated 
+            matplotlib figures.
+        colortable (list or object, optional): A sequence of colors used to assign 
+            consistent colors to individual structures based on their index.
+        n_color (int, optional): The total number of unique colors available in 
+            the `colortable`.
+        time_range (list or tuple, optional): The original [start, end] time range 
+            used to set the x-axis limits (in seconds, converted to ms for plotting).
+        plot_for_publication (bool, optional): If True, enforces a golden ratio 
+            aspect ratio on the plot axes for publication-ready formatting. 
+            Defaults to False.
+        pdf (bool, optional): If True, saves each generated figure to the provided 
+            `pdf_pages` object. Defaults to False.
+        pdf_pages (matplotlib.backends.backend_pdf.PdfPages, optional): An open 
+            PDF multi-page object where the plots will be saved.
+
+    Returns:
+        None: The function modifies the `pdf_pages` object in place or displays 
+        figures interactively.
     """
     
     tracked_structs = dataset.tracked_structures
@@ -1197,42 +1581,3 @@ def _plot_str_by_str(dataset=None,
             if pdf:
                 pdf_pages.savefig()
             plt.close(fig)
-        
-        
-def validate_structure(struct, x_coord, y_coord, elongation_threshold, str_size_lower_thres, str_size_upper_thres, ignore_side_structure):
-    """Filters out invalid structures based on size, elongation, and boundary constraints."""
-    
-    # 1. NaN Check 
-    if np.isnan(struct.fit_size[0]) or np.isnan(struct.fit_size[1]):
-        struct.set_invalid()
-        return False
-
-    # 2. Elongation check (safely neutralize angle if it's too round)
-    if struct.fit_elongation < elongation_threshold:
-        struct._angle = np.nan 
-        struct.update_regular_parameters()
-        
-
-    # 3. Size & Boundary Edge check 
-    if str_size_lower_thres is not None and not np.isnan(struct.fit_size[1]):
-        # Check lower/upper bounds
-        if (struct.fit_size[0] < str_size_lower_thres or 
-            struct.fit_size[1] < str_size_lower_thres or
-            struct.fit_size[0] > str_size_upper_thres or 
-            struct.fit_size[1] > str_size_upper_thres):
-            struct.set_invalid()
-            return False
-            
-        # Check edge touching
-        if ignore_side_structure and (np.any(struct.x_data == x_coord.min()) or 
-                                      np.any(struct.x_data == x_coord.max()) or
-                                      np.any(struct.y_data == y_coord.min()) or 
-                                      np.any(struct.y_data == y_coord.max()) or
-                                      struct.fit_center[0] < x_coord.min() or 
-                                      struct.fit_center[0] > x_coord.max() or
-                                      struct.fit_center[1] < y_coord.min() or 
-                                      struct.fit_center[1] > y_coord.max()):
-            struct.set_invalid()
-            return False
-            
-    return True # It survived all checks!
