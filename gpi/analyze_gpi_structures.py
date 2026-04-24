@@ -632,26 +632,11 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     else:
         print('\n\n--- Loading data from the HDF5 file ---')
         raw_dataset = StructureDataset.load_hdf5(hdf5_filename)
-
-    #         if structure_pdf_save:
-    #             pdf_structures.close()
-
-    #         with open(pickle_filename, 'wb') as f:
-    #             pickle.dump(raw_dataset,f)
-    #         if test:
-    #             plt.close()
-    #     else:
-    #         print('\n\n--- Loading data from the pickle file ---')
-    #         with open(pickle_filename, 'rb') as f:
-    #             raw_dataset=pickle.load(f)
-    # else:
-    #     print('\n\n--- Loading data from the pickle file ---')
-    #     with open(pickle_filename, 'rb') as f:
-    #         raw_dataset=pickle.load(f)
         
     """
     Structure tracking
     """
+
     tracked_dataset = track_structures(dataset=raw_dataset,
                                         max_gap=max_gap,
                                         time_range=time_range,
@@ -668,7 +653,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                         nocalc=nocalc,
                                         recalc_tracking=recalc_tracking,
                                         smooth_contours=smooth_contours,
-                                        comment=comment)
+                                        comment=comment,
+                                        hdf5_filename=hdf5_filename)
     
     tracked_dataset = calculate_differential_structure_keys(tracked_dataset)
     
@@ -1519,12 +1505,14 @@ def _plot_str_by_str(dataset=None,
         return
 
     # Use the first structure to get the available keys
-    first_struct = tracked_structs[0]
-    param_groups = [
-        ('Regular parameters', first_struct.regular_parameters.keys()),
-        ('Differential parameters', first_struct.differential_parameters.keys())
-    ]
-
+    for struct in tracked_structs:
+        if struct:
+            param_groups = [
+                ('Regular parameters', struct.regular_parameters.keys()),
+                ('Differential parameters', struct.differential_parameters.keys())
+                ]
+            break
+    print(tracked_structs)
     for param_type, keys in param_groups:
         for key in keys:
             
@@ -1532,9 +1520,9 @@ def _plot_str_by_str(dataset=None,
 
             # SAFELY EXTRACT THE METRIC REFERENCE BEFORE THE LOOP
             if param_type == 'Regular parameters':
-                metric_ref = first_struct.regular_parameters.get(key)
+                metric_ref = struct.regular_parameters.get(key)
             else:
-                metric_ref = first_struct.differential_parameters.get(key)
+                metric_ref = struct.differential_parameters.get(key)
             
             for ind_str, struct in enumerate(tracked_structs):
                 if len(struct.time) > 0:

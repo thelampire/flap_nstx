@@ -134,6 +134,60 @@ class PlasmaStructure(Polygon, FitShape):
         self.update_regular_parameters()
 
     def save_hdf5(self, group):
+        """Dynamically saves attributes with strict catch-all fallbacks."""
+        import numpy as np
+        
+        for key, value in self.__dict__.items():
+            if key.startswith('__'): 
+                continue
+
+            # 1. Standard None Catch
+            if value is None:
+                group.attrs[key] = "NONE_TYPE_FLAG"
+                
+            # 2. Primitives
+            elif isinstance(value, (int, float, str, bool, np.generic)):
+                group.attrs[key] = value
+                
+            # 3. NumPy Arrays
+            elif isinstance(value, np.ndarray):
+                group.create_dataset(key, data=value)
+                
+            # 4. Lists & Tuples
+            elif isinstance(value, (list, tuple)):
+                if len(value) == 0:
+                    group.attrs[key] = "EMPTY_LIST_FLAG"
+                else:
+                    try:
+                        group.create_dataset(key, data=np.array(value))
+                    except Exception:
+                        pass
+                        
+            # 5. Dictionaries
+            elif isinstance(value, dict):
+                dict_group = group.create_group(key)
+                for k, v in value.items():
+                    # BUG FIX: Ensure nested Nones inside dicts don't evaporate
+                    if v is None:
+                        dict_group.attrs[k] = "NONE_TYPE_FLAG"
+                    elif isinstance(v, (int, float, str, bool, np.generic)):
+                        dict_group.attrs[k] = v
+                    elif isinstance(v, np.ndarray):
+                        dict_group.create_dataset(k, data=v)
+                        
+            # 6. Shapely Polygons
+            elif type(value).__name__ == 'Polygon':
+                if hasattr(value, 'exterior') and not value.is_empty:
+                    group.create_dataset(f"{key}_poly_coords", data=np.array(value.exterior.coords))
+                else:
+                    group.attrs[key] = "NONE_TYPE_FLAG" 
+                    
+            # 7. BUG FIX: The Catch-All
+            # If the object is a ConvexHull, MultiPolygon, etc., flag it so the key survives the round-trip!
+            else:
+                group.attrs[key] = "UNSUPPORTED_OBJ_FLAG"
+
+    def save_hdf5_2(self, group):
         """Dynamically saves attributes, now handling empty lists, np.bool_, and UI fallbacks."""
         for key, value in self.__dict__.items():
             if key.startswith('__'): 
@@ -168,9 +222,64 @@ class PlasmaStructure(Polygon, FitShape):
                 else:
                     # BUG FIX 3: Initialize skipped UI polygons to None on load
                     group.attrs[key] = "NONE_TYPE_FLAG" 
-
+                    
     @classmethod
     def load_hdf5(cls, group):
+        """Dynamically recreates the PlasmaStructure, resilient to missing/changed features."""
+        import h5py
+        import numpy as np
+
+        obj = cls.__new__(cls)
+        obj.__dict__ = {} 
+        
+        # 1. Load Attributes
+        for key, val in group.attrs.items():
+            # BUG FIX 1: Explicitly catch both None and Unsupported flags!
+            if val in ["NONE_TYPE_FLAG", "UNSUPPORTED_OBJ_FLAG"]:
+                setattr(obj, key, None)
+            elif val == "EMPTY_LIST_FLAG":
+                setattr(obj, key, [])
+            else:
+                setattr(obj, key, val)
+                
+        # 2. Load Datasets and Groups
+        for key in group:
+            item = group[key]
+            
+            if isinstance(item, h5py.Dataset):
+                if key.endswith('_poly_coords'):
+                    import shapely.geometry
+                    orig_key = key.replace('_poly_coords', '')
+                    setattr(obj, orig_key, shapely.geometry.Polygon(item[:]))
+                else:
+                    # BUG FIX 2: Safely extract data while preserving np.ndarray types!
+                    val = item[()]
+                    if isinstance(val, np.ndarray):
+                        if val.dtype.kind in ['S', 'U', 'O']:
+                            val = val.astype(str).tolist() if val.ndim > 0 else str(val)
+                        else:
+                            # Only unpack actual scalars into standard Python floats/ints
+                            if val.ndim == 0:
+                                val = val.item() 
+                    setattr(obj, key, val)
+                    
+            elif isinstance(item, h5py.Group):
+                d = {}
+                # BUG FIX 3: Catch nested Nones inside dictionaries
+                for k, v in item.attrs.items(): 
+                    if v in ["NONE_TYPE_FLAG", "UNSUPPORTED_OBJ_FLAG"]:
+                        d[k] = None
+                    else:
+                        d[k] = v
+                for k in item: 
+                    # Extract dict datasets safely
+                    d[k] = item[k][()]
+                setattr(obj, key, d)
+                
+        return obj                    
+                    
+    @classmethod
+    def load_hdf5_2(cls, group):
         """Dynamically recreates the PlasmaStructure, resilient to missing/changed features."""
         obj = cls.__new__(cls)
         obj.__dict__ = {} 
@@ -240,6 +349,8 @@ class PlasmaStructure(Polygon, FitShape):
 class TrackedPlasmaStructure:
     """A time-resolved plasma structure spanning multiple frames."""
     
+    
+    
     def __init__(self, label: int, start_time: float):
         self.label = label
         self.start_time = start_time
@@ -305,14 +416,23 @@ class TrackedPlasmaStructure:
                 for k, v in val.__dict__.items():
                     if not k.startswith('__'):
                         _save_node(obj_grp, k, v)
-                        
+        # if False:   
+        #     for key, value in self.__dict__.items():
+        #         if not key.startswith('__'):
+        #             _save_node(group, key, value)
+        # Modification for unifying the files.           
         for key, value in self.__dict__.items():
             if not key.startswith('__'):
+                # BUG FIX: Stop saving the heavy footprint duplicates!
+                # We will relink them dynamically on load.
+                if key == 'structures': 
+                    continue
                 _save_node(group, key, value)
 
     @classmethod
     def load_hdf5(cls, group):
         """Recursively recreates the tracked structure without missing a single edge case."""
+        
         def _load_node(grp, name):
             # Intercept attributes first
             if name in grp.attrs:
@@ -326,11 +446,20 @@ class TrackedPlasmaStructure:
                 if name.endswith('_poly_coords'):
                     import shapely.geometry
                     return shapely.geometry.Polygon(item[:])
-                val = item[:]
-                if isinstance(val, np.ndarray) and val.dtype.kind in ['S', 'U', 'O']:
-                    val = val.astype(str).tolist() if len(val.shape) > 0 else str(val)
-                else:
-                    val = val.tolist() if len(val.shape) == 1 else val
+                
+                # Extract the raw data safely (handles both scalars and arrays)
+                val = item[()]
+                
+                if isinstance(val, np.ndarray):
+                    # Handle string/byte arrays
+                    if val.dtype.kind in ['S', 'U', 'O']:
+                        val = val.astype(str).tolist() if val.ndim > 0 else str(val)
+                    else:
+                        # BUG FIX: Keep numeric arrays as np.ndarray to preserve HDF5 Dataset typing!
+                        # We only unpack 0-D arrays (scalars) into native Python floats/ints.
+                        if val.ndim == 0:
+                            val = val.item()
+                            
                 return val
                 
             elif isinstance(item, h5py.Group):
@@ -355,17 +484,32 @@ class TrackedPlasmaStructure:
                     return res
                     
                 elif item.attrs.get('__is_custom_obj__', False):
-                    class DynamicParameter: pass
-                    obj = DynamicParameter()
+                    # Upgraded fallback class that supports array slicing and dict access
+                    class DynamicParameter: 
+                        def __getitem__(self, key):
+                            if isinstance(key, str) and hasattr(self, key):
+                                return getattr(self, key)
+                            elif hasattr(self, 'value'):
+                                return self.value[key]
+                            raise KeyError(key)
+                            
+                        def __setitem__(self, key, val):
+                            if isinstance(key, str):
+                                setattr(self, key, val)
+                            elif hasattr(self, 'value'):
+                                self.value[key] = val
+                                
+                    custom_obj = DynamicParameter()
                     for k in item.attrs:
                         if not k.startswith('__'): 
-                            setattr(obj, k.replace('_poly_coords', ''), _load_node(item, k))
+                            setattr(custom_obj, k.replace('_poly_coords', ''), _load_node(item, k))
                     for k in item:
-                        setattr(obj, k.replace('_poly_coords', ''), _load_node(item, k))
-                    return obj
+                        setattr(custom_obj, k.replace('_poly_coords', ''), _load_node(item, k))
+                    return custom_obj
                     
                 else:
                     try:
+                        # Fallback for PlasmaStructure steps
                         return PlasmaStructure.load_hdf5(item)
                     except Exception:
                         pass
@@ -422,6 +566,14 @@ class StructureDataset:
         Magically intercepts attribute requests (like dataset.area)
         and packages the raw floats into MetricArrays using PlasmaStructure.METADATA.
         """
+        
+        if attr_name == 'structures':
+            if self.mode == 'tracked':
+                # Returns a list of lists containing the raw PlasmaStructures for each blob
+                return [blob.structures for blob in self.tracked_structures if hasattr(blob, 'structures')]
+            else:
+                return self.frames
+        
         if attr_name.startswith('_'):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{attr_name}'")
             
@@ -472,7 +624,8 @@ class StructureDataset:
         # Case C: It's a standard variable (e.g., .label) missing from METADATA
         return np.array(harvested)
     
-    def save_hdf5(self, filename):
+    #separate saving
+    def save_hdf5_2(self, filename):
         """Master save function to write the entire dataset to an HDF5 file."""
         with h5py.File(filename, 'w') as f:
             f.attrs['mode'] = self.mode
@@ -495,40 +648,162 @@ class StructureDataset:
                     label = getattr(tracked_blob, 'label', i)
                     blob_grp = tracked_grp.create_group(f"blob_{label}")
                     tracked_blob.save_hdf5(blob_grp)
+    #Unified saving
+    def save_hdf5(self, filename):
+        """Master save function for fully Unified HDF5 files."""
+        import h5py
+        import numpy as np
+        
+        # Use 'a' (append) mode so data gracefully merges
+        with h5py.File(filename, 'a') as f:
+            f.attrs['exp_id'] = self.exp_id if self.exp_id is not None else "NONE_TYPE_FLAG"
+            f.attrs['mode'] = self.mode
+            
+            if 'frame_times' not in f and hasattr(self, 'frame_times'):
+                f.create_dataset('frame_times', data=np.array(self.frame_times))
 
+            # 1. ALWAYS save untracked frames if we have them and they aren't in the file yet!
+            if hasattr(self, 'frames') and len(self.frames) > 0 and 'frames' not in f:
+                frames_grp = f.create_group('frames')
+                for i_frame, frame_structures in enumerate(self.frames):
+                    frame_grp = frames_grp.create_group(f"frame_{i_frame}")
+                    for j_str, struct in enumerate(frame_structures):
+                        str_grp = frame_grp.create_group(f"struct_{j_str}")
+                        struct.save_hdf5(str_grp)
+
+            # 2. ALWAYS save tracked blobs if we have them!
+            if hasattr(self, 'tracked_structures') and len(self.tracked_structures) > 0:
+                # Overwrite tracking data if recalculating on the same file
+                if 'tracked_structures' in f:
+                    del f['tracked_structures']
+                    
+                tracked_grp = f.create_group('tracked_structures')
+                for blob in self.tracked_structures:
+                    label = getattr(blob, 'label', 'unknown')
+                    blob_grp = tracked_grp.create_group(f"blob_{label}")
+                    blob.save_hdf5(blob_grp)
+    #Unified loader
     @classmethod
-    def load_hdf5(cls, filename):
-        """Master load function to reconstruct the dataset from an HDF5 file."""
+    def load_hdf5(cls, filename, tracked=False):
+        """Unified loader that dynamically reconstructs data without redundancy."""
+        
         with h5py.File(filename, 'r') as f:
-            mode = f.attrs['mode']
-            exp_id = f.attrs['exp_id']
-            if exp_id == "NONE_TYPE_FLAG": exp_id = None
+            # Override the file's mode based on what the user requested
+            mode = 'tracked' if tracked else 'untracked'
+            
+            raw_exp = f.attrs.get('exp_id', None)
+            exp_id = str(raw_exp) if raw_exp != "NONE_TYPE_FLAG" else None
             
             dataset = cls(mode=mode, exp_id=exp_id)
+
             if 'frame_times' in f:
                 dataset.frame_times = f['frame_times'][:].tolist()
 
-            if mode == 'untracked' and 'frames' in f:
+            # 1. ALWAYS load the physical untracked frames (since tracked blobs need them)
+            if 'frames' in f:
                 frames_grp = f['frames']
-                
-                # Ensure we load frames in the correct integer order
                 frame_keys = sorted(frames_grp.keys(), key=lambda x: int(x.split('_')[1]))
+                
                 for frame_key in frame_keys:
                     frame_grp = frames_grp[frame_key]
                     current_frame_structures = []
-                    
-                    for str_key in frame_grp:
-                        str_grp = frame_grp[str_key]
-                        reconstructed_struct = PlasmaStructure.load_hdf5(str_grp)
-                        current_frame_structures.append(reconstructed_struct)
-                        
+                    for str_key in frame_grp.keys():
+                        reconstructed_struct = PlasmaStructure.load_hdf5(frame_grp[str_key])
+                        if reconstructed_struct is not None:
+                            current_frame_structures.append(reconstructed_struct)
                     dataset.frames.append(current_frame_structures)
 
-            elif mode == 'tracked' and 'tracked_structures' in f:
+            # 2. If requested, load tracked blobs and RELINK them to the frames!
+            if tracked and 'tracked_structures' in f:
                 tracked_grp = f['tracked_structures']
-                for blob_key in tracked_grp:
-                    blob_grp = tracked_grp[blob_key]
-                    reconstructed_blob = TrackedPlasmaStructure.load_hdf5(blob_grp)
-                    dataset.add_tracked_structure(reconstructed_blob)
+                dataset.tracked_structures = []
+                
+                for blob_key in tracked_grp.keys():
+                    blob_grp_item = tracked_grp[blob_key]
+                    reconstructed_blob = TrackedPlasmaStructure.load_hdf5(blob_grp_item)
+                    
+                    if reconstructed_blob is not None:
+                        # --- POINTER RELINKING LOGIC ---
+                        reconstructed_blob.structures = []
+                        for step_time in reconstructed_blob.time:
+                            # Match the time safely to find the frame index
+                            safe_step_time = np.round(step_time, 6)
+                            i_frame = next((i for i, t in enumerate(dataset.frame_times) if np.round(t, 6) == safe_step_time), None)
+                            
+                            if i_frame is not None:
+                                # Grab the footprint from the frame using the label
+                                matched_struct = next((s for s in dataset.frames[i_frame] if s.label == reconstructed_blob.label), None)
+                                if matched_struct is not None:
+                                    reconstructed_blob.structures.append(matched_struct)
+                        
+                        dataset.tracked_structures.append(reconstructed_blob)
+                
+                dataset.tracked_structures.sort(key=lambda b: getattr(b, 'label', 0))
+
+        return dataset
+    
+    #Separate loader
+    @classmethod
+    def load_hdf5_2(cls, filename):
+        """Master load function with strict decoding and X-Ray debugging."""
+        print(f"\n[Loader Debug] Opening: {filename}")
+        
+        with h5py.File(filename, 'r') as f:
+            # 1. Bulletproof String Decoding
+            raw_mode = f.attrs.get('mode', 'untracked')
+            if hasattr(raw_mode, 'decode'): 
+                mode = raw_mode.decode('utf-8')
+            elif isinstance(raw_mode, bytes): 
+                mode = raw_mode.decode('utf-8')
+            else:
+                mode = str(raw_mode)
+                
+            raw_exp = f.attrs.get('exp_id', None)
+            exp_id = str(raw_exp) if raw_exp != "NONE_TYPE_FLAG" else None
+            
+            dataset = cls(mode=mode, exp_id=exp_id)
+            print(f"[Loader Debug] Extracted Mode: '{mode}' (Type: {type(mode).__name__})")
+
+            # 2. Timeline
+            if 'frame_times' in f:
+                dataset.frame_times = f['frame_times'][:].tolist()
+                print(f"[Loader Debug] Loaded {len(dataset.frame_times)} frame times.")
+
+            # 3. Tracked Loading
+            if mode == 'tracked':
+                if 'tracked_structures' in f:
+                    tracked_grp = f['tracked_structures']
+                    keys = list(tracked_grp.keys())
+                    print(f"[Loader Debug] Found {len(keys)} blobs in the HDF5 group!")
+                    
+                    dataset.tracked_structures = []
+                    for blob_key in keys:
+                        blob_grp_item = tracked_grp[blob_key]
+                        reconstructed_blob = TrackedPlasmaStructure.load_hdf5(blob_grp_item)
+                        if reconstructed_blob is not None:
+                            dataset.tracked_structures.append(reconstructed_blob)
+                    
+                    dataset.tracked_structures.sort(key=lambda b: getattr(b, 'label', 0))
+                    print(f"[Loader Debug] Successfully appended {len(dataset.tracked_structures)} blobs to memory.")
+                else:
+                    print("[Loader Debug] ERROR: 'tracked_structures' group is missing from the HDF5 file!")
+
+            # 4. Untracked Loading
+            elif mode == 'untracked':
+                if 'frames' in f:
+                    frames_grp = f['frames']
+                    frame_keys = sorted(frames_grp.keys(), key=lambda x: int(x.split('_')[1]))
+                    print(f"[Loader Debug] Found {len(frame_keys)} untracked frames.")
+                    
+                    for frame_key in frame_keys:
+                        frame_grp = frames_grp[frame_key]
+                        current_frame_structures = []
+                        for str_key in frame_grp.keys():
+                            reconstructed_struct = PlasmaStructure.load_hdf5(frame_grp[str_key])
+                            if reconstructed_struct is not None:
+                                current_frame_structures.append(reconstructed_struct)
+                        dataset.frames.append(current_frame_structures)
+                else:
+                    print("[Loader Debug] ERROR: 'frames' group is missing from the HDF5 file!")
 
         return dataset

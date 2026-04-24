@@ -35,8 +35,167 @@ from flap_nstx.tools import (
 coeff_r = np.asarray([3.75, 0,    1402.8097])/1000. 
 coeff_z = np.asarray([0,    3.75, 70.544312])/1000.  
 
-
 def track_structures(dataset=None,
+                     time_range=None,
+                     tracking='weighted',
+                     tracking_assignment='max_score',
+                     max_gap=3,
+                     matrix_weight=None,
+                     smooth_contours=None,
+                     prev_str_weighting='area',
+                     calculate_rough_diff_velocities=False,
+                     differential_keys=None,
+                     weighting='area',
+                     maxing='',
+                     remove_orphans=True,
+                     min_structure_lifetime=20,
+                     nocalc=False,
+                     recalc_tracking=False,
+                     score_threshold=0.7,
+                     comment=None,
+                     test=False,
+                     hdf5_filename=False,
+                     ):
+    
+    """
+    Main loop for tracking identified plasma structures across consecutive frames.
+    """
+    if dataset is None or dataset.mode != 'untracked':
+        raise ValueError("A valid 'untracked' StructureDataset must be provided.")
+        
+    if not hdf5_filename:
+        comment = comment or ""
+        comment += f"_{tracking}_{tracking_assignment}_sm{smooth_contours}"
+        if remove_orphans:
+            comment += f"_LT{min_structure_lifetime}"
+    
+        # Set extension to .h5 for HDF5 saving
+        hdf5_filename = flap_nstx.tools.filename(exp_id=dataset.exp_id,
+                                                 working_directory=os.path.join(wd, 'processed_data'),
+                                                 time_range=time_range,
+                                                 purpose='tracking',
+                                                 comment=comment,
+                                                 extension='h5')
+
+    # --- HDF5 LOAD LOGIC ---
+    has_tracked_data = False
+    if os.path.exists(hdf5_filename):
+        import h5py
+        try:
+            # Peek inside the file to see if tracking was already appended
+            with h5py.File(hdf5_filename, 'r') as f:
+                if 'tracked_structures' in f:
+                    has_tracked_data = True
+        except Exception:
+            pass # File might be corrupted or locked, fallback to calculation
+
+    if has_tracked_data and not recalc_tracking:
+        try:
+            print(f"Tracked data found in {hdf5_filename}. Loading...")
+            # Use the Matchmaker loader to pull tracking data and map it to frames
+            return StructureDataset.load_hdf5(hdf5_filename, tracked=True)
+        except Exception as e:
+            print(f"Failed to load tracked data from {hdf5_filename}: {e}. Recalculating.")
+
+    # Fall through to calculation if no data was found, recalc is True, or load failed
+    print("\nCalculating structure tracking.")
+        
+    highest_label = 0
+    n_frames = len(dataset.frames)
+    sample_time = dataset.frame_times[1] - dataset.frame_times[0]
+    
+    for i_frames in range(1, n_frames):
+        structures_1 = dataset.frames[i_frames - 1]
+        structures_2 = dataset.frames[i_frames]
+
+        # Case A: Mass Death
+        if structures_1 and not structures_2:
+            for s1 in structures_1:
+                s1.born, s1.died = False, True
+                if s1.label is None:
+                    highest_label += 1
+                    s1.label = highest_label
+
+        # Case B: Mass Birth
+        elif not structures_1 and structures_2:
+            for s2 in structures_2:
+                highest_label += 1
+                s2.label = highest_label
+                s2.born, s2.died = True, False
+
+        # Case C: Standard Tracking
+        elif structures_1 and structures_2:
+            for s1 in structures_1:
+                if s1.label is None:
+                    highest_label += 1
+                    s1.label = highest_label
+                    s1.born, s1.died = True, False
+
+            # 1. Build overlap matrix
+            str_overlap_matrix = _calculate_str_overlap_matrix(structures_1, structures_2, tracking, 
+                                                               matrix_weight, tracking_assignment, test)
+                        
+            # 2. Process standard 1-to-1 links and Merges
+            structures_1, structures_2, highest_label = _process_structure_merging(
+                structures_1, structures_2, str_overlap_matrix, 
+                gap=1, highest_label=highest_label)
+
+            # 3. Process Splits
+            structures_1, structures_2, highest_label = _process_structure_splitting(
+                structures_1, structures_2, str_overlap_matrix, 
+                highest_label=highest_label)
+                                
+        # 4. Gap Recovery 
+        if i_frames >= 2 and structures_2:
+            max_search = min(max_gap, i_frames)
+            
+            for ind_gap in range(2, max_search + 1):
+                n_born = sum(1 for s in structures_2 if s.born)
+                
+                if n_born > 0:
+                    structures_before_gap = dataset.frames[i_frames - ind_gap]
+                    if structures_before_gap:
+                        overlap_gap_matrix = _calculate_str_overlap_matrix(
+                            structures_before_gap, structures_2, tracking, matrix_weight, tracking_assignment, test)
+                        
+                        structures_before_gap, structures_2, highest_label = _process_structure_merging(
+                            structures_before_gap, structures_2, overlap_gap_matrix, 
+                            gap=ind_gap, highest_label=highest_label)
+    
+    if remove_orphans:
+        dataset = _remove_orphans(dataset, test, min_structure_lifetime)
+
+    tracked_dataset = StructureDataset(mode='tracked', exp_id=dataset.exp_id)
+    tracked_dataset.frame_times = dataset.frame_times
+    tracked_dataset.frames = dataset.frames 
+    tracked_blobs = {}
+    
+    for i_frames, structures in enumerate(dataset.frames):
+        current_time = dataset.frame_times[i_frames]
+        for s in structures:
+            label = s.label
+            if label not in tracked_blobs:
+                tracked_blobs[label] = TrackedPlasmaStructure(label=label, start_time=current_time)
+                # Explicitly initialize a list to hold the raw footprints
+                tracked_blobs[label].structures = []
+            
+            # 1. Let the native FLAP engine handle the time and parameter math
+            tracked_blobs[label].add_step(s, current_time)
+            
+            # 2. Explicitly save the physical footprint so the HDF5 serializer can find it
+            tracked_blobs[label].structures.append(s)
+
+    for label, blob in tracked_blobs.items():
+        # Append directly to prevent label-based None padding!
+        tracked_dataset.tracked_structures.append(blob)
+
+    # --- HDF5 SAVE LOGIC ---
+    print(f"Saving tracked dataset to HDF5: {hdf5_filename}")
+    tracked_dataset.save_hdf5(hdf5_filename)
+
+    return tracked_dataset
+
+def track_structures2(dataset=None,
                      time_range=None,
                      tracking='weighted',
                      tracking_assignment='max_score',
@@ -132,7 +291,7 @@ def track_structures(dataset=None,
                                              extension='h5')
 
     # --- HDF5 LOAD LOGIC ---
-    if nocalc and os.path.exists(hdf5_filename):
+    if nocalc and os.path.exists(hdf5_filename) and not recalc_tracking:
         try:
             print(f"Loading tracked data from {hdf5_filename}...")
             return StructureDataset.load_hdf5(hdf5_filename)
@@ -213,6 +372,7 @@ def track_structures(dataset=None,
             dataset = _remove_orphans(dataset, test, min_structure_lifetime)
 
         tracked_dataset = StructureDataset(mode='tracked', exp_id=dataset.exp_id)
+        tracked_dataset.frame_times = dataset.frame_times
         tracked_blobs = {}
         
         for i_frames, structures in enumerate(dataset.frames):
@@ -221,13 +381,21 @@ def track_structures(dataset=None,
                 label = s.label
                 if label not in tracked_blobs:
                     tracked_blobs[label] = TrackedPlasmaStructure(label=label, start_time=current_time)
+                    # BUG FIX: Explicitly initialize a list to hold the raw footprints
+                    tracked_blobs[label].structures = []
+                
+                # 1. Let the native FLAP engine handle the time and parameter math
                 tracked_blobs[label].add_step(s, current_time)
+                
+                # 2. Explicitly save the physical footprint so the HDF5 serializer can find it
+                tracked_blobs[label].structures.append(s)
 
         for label, blob in tracked_blobs.items():
-            tracked_dataset.add_tracked_structure(blob)
+            # Append directly to prevent label-based None padding!
+            tracked_dataset.tracked_structures.append(blob)
 
 
-# --- HDF5 SAVE LOGIC ---
+        # --- HDF5 SAVE LOGIC ---
         print(f"Saving tracked dataset to HDF5: {hdf5_filename}")
         tracked_dataset.save_hdf5(hdf5_filename)
 
@@ -493,7 +661,7 @@ def calculate_differential_structure_keys(dataset):
     }
 
     for struct in dataset.tracked_structures:
-        if len(struct.time) < 2:
+        if not struct or len(struct.time) < 2:
             continue
             
         rp = struct.regular_parameters
