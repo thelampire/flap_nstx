@@ -19,17 +19,10 @@ fn = os.path.join(thisdir,"flap_nstx.cfg")
 flap.config.read(file_name=fn)
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 
-#Scientific library imports
-try:
-    plt
-    # pass
-except:
-    import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 import numpy as np
-from numpy.linalg import eig, inv
 
-import scipy
 from scipy.signal import find_peaks_cwt
 from scipy.spatial.distance import cdist  # $scipy/spatial/distance.py
 from scipy.sparse import issparse  # $scipy/sparse/csr.py
@@ -994,10 +987,10 @@ def plot_pearson_matrix(matrix,
         fig,ax=fig_ax
         
     im=ax.matshow(matrix,
-                cmap=colormap,
-                vmin=zrange[0],
-                vmax=zrange[1],
-                )
+                  cmap=colormap,
+                  vmin=zrange[0],
+                  vmax=zrange[1],
+                  )
 
     ax.set_xticks(ticks=np.arange(matrix.shape[1]),
                   labels=xlabels,

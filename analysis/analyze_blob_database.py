@@ -7,9 +7,11 @@ Created on Tue Aug 29 13:52:23 2023
 """
 #Core modules
 import os
-import copy
 import time as time_mod
 import pickle
+
+from string import ascii_lowercase as alc
+
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -21,7 +23,6 @@ from flap_nstx.analysis import read_all_blob_data, read_blob_data, read_all_plas
 from flap_nstx.analysis import read_blob_database_file, read_blob_lh_mode_database_file
 from flap_nstx.analysis import return_interesting_key_pairs
 
-from flap_nstx.gpi import transform_frames_to_structures, read_analyzed_keys
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
 from flap_nstx.tools import correlation, mutual_information
 
@@ -35,7 +36,7 @@ flap.config.read(file_name=fn)
 
 #Scientific modules
 import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
+from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -52,8 +53,7 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
 
-def calculate_all_blob_results(time_range_around_peak=5e-3,
-                               min_structure_lifetime=20,
+def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                str_finding_method='watershed',
                                plot=False,
                                pdf=False,
@@ -75,8 +75,8 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
        heavy tracking calculations.
 
     Args:
-        time_range_around_peak (float, optional): The time padding (in seconds) 
-            around the peak signal to define the analysis window. Defaults to 5e-3.
+        time_range_around_peak (float or list, optional): The time padding (in seconds) 
+            around the peak signal to define the analysis window. Defaults to [-5e-3, 15e-3].
         min_structure_lifetime (int, optional): Minimum frame lifetime for a 
             structure to be retained in the analysis. Defaults to 20.
         str_finding_method (str, optional): Algorithm used for image segmentation 
@@ -101,7 +101,7 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
         None: Executes batch processing and saves results/data to disk.
     """
                 
-                # --- 1. Database Setup ---
+    # --- 1. Database Setup ---
     databases_to_process = []
     
     if not calculate_for_lh_study:
@@ -139,31 +139,38 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
             # Time parsing logic
             if not calculate_for_lh_study:
                 blob_time = db['time'][ind]
-                time_range = [blob_time - time_range_around_peak, 
-                               blob_time + time_range_around_peak]
+                
+                # BUG FIX: Safely handle if the user passed a single float vs a list/tuple!
+                if isinstance(time_range_around_peak, (list, np.ndarray, tuple)):
+                    time_range = [blob_time + time_range_around_peak[0], 
+                                  blob_time + time_range_around_peak[1]]
+                else:
+                    time_range = [blob_time - time_range_around_peak, 
+                                  blob_time + time_range_around_peak]
             else:
-                avg_time = np.mean(db['time'][:, ind])
+                avg_time = np.mean(db['time'][ind,:])
                 multiplier = 1e-3 if avg_time > 10 else 1.0  # Guard against ms vs s
-                time_range = [db['time'][0, ind] * multiplier, 
-                              db['time'][1, ind] * multiplier]
+                time_range = [db['time'][ind, 0] * multiplier, 
+                              db['time'][ind, 1] * multiplier]
 
             # Execution logic
             if calculate_for_lh_study and download_data_only:
-                print(f'Downloading shot #{shot}...')
+                print(f'Downloading shot #{int(shot)}...')
                 try:
                     flap.get_data('NSTX_GPI', exp_id=int(shot), name='', object_name='GPI')
                 except Exception as e:
-                    print(f'Failed to download shot #{shot}: {e}')
+                    print(f'Failed to download shot #{int(shot)}: {e}')
             else:
-                print(f'Calculating shot #{shot} for window {time_range}...')
+                print(f'Calculating shot #{int(shot)} for window {time_range}...')
                 read_blob_data(int(shot),
                                time_range,
                                nocalc=nocalc,
+                               pdf=pdf,
+                               plot=plot,
                                recalc_tracking=recalc_tracking,
-                               min_structure_lifetime=min_structure_lifetime,
                                str_finding_method=str_finding_method,
                                max_gap=2 if calculate_for_lh_study else 1,
-                               calculate_only=True if calculate_for_lh_study else False)
+                               calculate_only=True)
 
             # Cleanup
             flap.delete_data_object('*')
@@ -179,8 +186,6 @@ def calculate_all_blob_results(time_range_around_peak=5e-3,
             remaining_hours = (avg_time_per_shot * shots_remaining) / 3600.
             
             print(f'Shot took {execution_time:.1f}s. Estimated time remaining: {remaining_hours:.2f} hours.\n')
-            
-            
 
 
 def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
@@ -201,64 +206,13 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         plot_LH_diff=False,
                                         save_data_for_publication=False,
                                         ):
-    """
-    Calculates, plots, and compares statistical histograms of blob parameters.
-
-    This function aggregates structure tracking data across an entire database of 
-    shots. It extracts static properties (e.g., Area, Angle, Roundness) and 
-    differential properties (frame-to-frame changes), and saves them to a cache. 
-    It can then generate formatted histogram plots of these distributions. 
-    Notably, it includes a publication mode (`plot_LH_diff`) that overlays L-mode 
-    and H-mode distributions and prints LaTeX-formatted tables of statistical 
-    moments (mean, variance, skewness, kurtosis).
-
-    Args:
-        time_range_around_peak (float, optional): The time window (in seconds) 
-            around the peak signal to analyze. Defaults to 5e-3.
-        n_bins (int, optional): The number of bins in the histogram calculation.
-            Defaults to 51.
-        pdf (bool, optional): If True, switches the matplotlib backend to 'agg' 
-            and saves plots to PDF. Defaults to False.
-        pdf_filename (str, optional): Custom filepath for the output PDF. If None, 
-            an automatic name is generated. Defaults to None.
-        plot (bool, optional): If True, generates the histogram plots. Defaults to True.
-        plot_for_publication (bool, optional): If True, generates an 8-panel (4x2) 
-            publication-ready figure with specific units and labels. Defaults to False.
-        save_data_into_txt (bool, optional): (Unused) Flag for saving raw data to text.
-        calc_mean_distribution (bool, optional): Modifies the output filenames to 
-            indicate mean distributions are being calculated. Defaults to False.
-        nocalc (bool, optional): If True, skips calculations and attempts to load 
-            data from a cached pickle file. Defaults to True.
-        recalc_tracking (bool, optional): Forces tracking recalculation when 
-            extracting blob data. Defaults to False.
-        min_structure_lifetime (int, optional): Minimum required structure lifetime 
-            in frames. Defaults to 20.
-        str_finding_method (str, optional): Image segmentation method used 
-            ('watershed' or 'contour'). Defaults to 'watershed'.
-        analyze_h_mode_only (bool, optional): Restricts analysis to H-mode shots. 
-            Defaults to False.
-        analyze_l_mode_only (bool, optional): Restricts analysis to L-mode shots. 
-            Defaults to False.
-        filtered_blob_db (bool, optional): If True, filters the database for ELMs. 
-            Defaults to False.
-        plot_LH_diff (bool, optional): If True (and `plot_for_publication` is True), 
-            loads BOTH L-mode and H-mode caches, overlays their histograms, and 
-            prints LaTeX statistical tables to the console. Defaults to False.
-        save_data_for_publication (bool, optional): If True, exports the histogram 
-            bin data to standard text files. Defaults to False.
-
-    Returns:
-        dict: A dictionary containing the aggregated 1D arrays of structure properties.
-    """
     import matplotlib
-    import scipy
     
     if pdf:
         matplotlib.use('agg')
     else:
         matplotlib.use('qt5agg')
 
-    # Ensure working directories are defined
     wd = flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 
     # --- 1. Filename Setup ---
@@ -268,21 +222,9 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
         pdf_filename = f"{wd}/plots/blob_database_parameter_histograms_{mean_str}_{str_finding_method}.pdf"
 
     pickle_filename = f"{wd}/processed_data/blob_database_full_data_{mean_str}_{str_finding_method}"
-    if analyze_l_mode_only:
-        pickle_filename += '_l_mode'
-    elif analyze_h_mode_only:
-        pickle_filename += '_h_mode'
+    if analyze_l_mode_only: pickle_filename += '_l_mode'
+    elif analyze_h_mode_only: pickle_filename += '_h_mode'
     pickle_filename += '.pickle'
-
-    analyzed_keys = read_analyzed_keys()
-    additional_diff_keys = ['Convexity', 'Solidity', 'Roundness', 'Total curvature', 
-                            'Total bending energy', 'Area', 'Elongation']
-    
-    diff_property_keys = ['Velocity radial COG', 'Velocity poloidal COG',
-                          'Velocity radial centroid', 'Velocity poloidal centroid',
-                          'Velocity radial position', 'Velocity poloidal position',
-                          'Expansion fraction area', 'Expansion fraction axes',
-                          'Angular velocity angle', 'Angular velocity ALI']
 
     # --- 2. Data Extraction & Aggregation ---
     if not os.path.exists(pickle_filename) or not nocalc:
@@ -294,63 +236,75 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             blob_database = read_blob_lh_mode_database_file(h_mode=analyze_h_mode_only,
                                                             l_mode=analyze_l_mode_only,
                                                             time_range_around_peak=time_range_around_peak,
-                                                            filtered_blob_db=filtered_blob_db
-                                                            )   
-        if  isinstance(time_range_around_peak,(float,int)): time_range_around_peak=[time_range_around_peak,
-                                                                                    time_range_around_peak]
+                                                            filtered_blob_db=filtered_blob_db)   
+                                                            
+        if isinstance(time_range_around_peak, (float, int)): 
+            time_range_around_peak = [time_range_around_peak, time_range_around_peak]
+            
         ncalc = len(blob_database['shot'])
-        full_data = {key: [] for key in analyzed_keys}
-        full_data.update({f"{key} diff": [] for key in additional_diff_keys})
+        
+        # Will be initialized dynamically on the first successful shot
+        full_data = {} 
+        analyzed_keys = []
         n_str = 0
+        keys_initialized = False
 
         for ind in range(ncalc):
-            
             start_time = time_mod.time()
+            
             if analyze_h_mode_only or analyze_l_mode_only:
-                _time_range=list(blob_database['time'][ind])
+                _time_range = list(blob_database['time'][ind])
             else:
                 blob_time = blob_database['time'][ind]
-                _time_range=[blob_time - time_range_around_peak[0], 
-                             blob_time + time_range_around_peak[1]]
+                _time_range = [blob_time - time_range_around_peak[0], 
+                               blob_time + time_range_around_peak[1]]
             try:
-                blob_results = read_blob_data(
-                    int(blob_database['shot'][ind]),
-                    _time_range,
-                    nocalc=True,
-                    recalc_tracking=recalc_tracking,
-                    min_structure_lifetime=min_structure_lifetime,
-                    str_finding_method=str_finding_method
-                )
+                # Assumes read_blob_data returns the new StructureDataset object
+                blob_results = read_blob_data(int(blob_database['shot'][ind]),
+                                              _time_range,
+                                              nocalc=True,
+                                              recalc_tracking=recalc_tracking,
+                                              min_structure_lifetime=min_structure_lifetime,
+                                              str_finding_method=str_finding_method)
             except Exception as e:
-                print('\nException in analyze_blob_database.py Line 322')
-                print(e)
+                print(f'\nException in read_blob_data Line 110: {e}')
                 continue
 
             flap.delete_data_object('*')
-            try:
-                str_by_str = transform_frames_to_structures(blob_results)
-            except Exception as e:
-                print('\nException in analyze_blob_database.py Line 333')
-                print(e)
+            
+            # Skip invalid shots or shots with no structures
+            if blob_results is None or blob_results.mode != 'tracked' or not blob_results.tracked_structures: 
                 continue
 
-            for structure in str_by_str:
+            # --- DYNAMIC DICTIONARY INITIALIZATION ---
+            if not keys_initialized:
+                first_struct = blob_results.tracked_structures[0]
+                analyzed_keys = list(first_struct.regular_parameters.keys()) + list(first_struct.differential_parameters.keys())
+                full_data = {key: [] for key in analyzed_keys}
+                keys_initialized = True
+
+            # --- OOP DATA EXTRACTION ---
+            for structure in blob_results.tracked_structures:
                 n_str += 1
                 for key in analyzed_keys:
+                    
+                    # Safely extract the data and dynamically check if it's differential
+                    if key in structure.regular_parameters:
+                        raw_data = structure.regular_parameters[key].value
+                        is_differential = False
+                    elif key in structure.differential_parameters:
+                        raw_data = structure.differential_parameters[key].value
+                        is_differential = True
+                    else:
+                        continue 
+                        
                     try:
-                        if key in diff_property_keys:
-                            full_data[key].extend(structure[key])
+                        if is_differential:
+                            full_data[key].extend(raw_data)
                         else:
-                            full_data[key].extend(structure[key][1:])
-                    except Exception:
-                        pass # Silently skip missing keys for stability
-
-                for key in additional_diff_keys:
-                    try:
-                        diffs = np.asarray(structure[key])[1:] - np.asarray(structure[key])[:-1]
-                        full_data[f"{key} diff"].extend(diffs)
-                    except Exception:
-                        pass
+                            full_data[key].extend(raw_data[1:]) # Drop the first point to match lengths
+                    except Exception as e:
+                        print(f'Exception appending data for {key}: {e}')
 
             remaining_time = (time_mod.time() - start_time) * (ncalc - ind - 1)
             hours, rem = divmod(remaining_time, 3600)
@@ -368,39 +322,38 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     else:
         with open(pickle_filename, 'rb') as f:
             full_data = pickle.load(f)
-
-    for key in additional_diff_keys:
-        analyzed_keys.append(f"{key} diff")
-
+    return full_data
     # --- 4. Plotting & Export ---
     if plot:
         ranges = {
-            'Position radial': [1.4, 1.6], 
-            'Position poloidal': [0.15, 0.35],
-            'Velocity radial position': [-3e3, 3e3], 
-            'Velocity poloidal position': [-10e3, 10e3],
-            'Expansion fraction area': [0.75, 1.25], 
-            'Expansion fraction axis': [0.75, 1.25], 
+            'Position radial fit': [1.4, 1.6], 
+            'Position poloidal fit': [0.15, 0.35],
+            'Velocity radial position fit': [-3e3, 3e3], 
+            'Velocity poloidal position fit': [-10e3, 10e3],
+            'Expansion fraction axes fit': [0.75, 1.25], 
+            'Elongation fit diff': [-0.075, 0.075], 
+            'Angular velocity angle fit': [-250e3, 250e3],
+            
             'Area': [0, 0.006], 
+            'Expansion fraction area': [0.75, 1.25], 
             'Convexity': [0.9, 1.0],
             'Solidity': [0.75, 1.0], 
             'Total curvature': [0.9, 1.0],
             'Total bending energy': [0e8, 1.5e8], 
+            
             'Convexity diff': [-0.01, 0.01],
             'Solidity diff': [-0.25, 0.25], 
             'Total curvature diff': [-0.05, 0.05],
             'Total bending energy diff': [-0.3e8, 0.3e8], 
             'Area diff': [-0.0015, 0.0015],
-            'Elongation diff': [-0.075, 0.075], 
-            'Angular velocity angle': [-250e3, 250e3]
         }
 
         if plot_for_publication:
             multiplier = {
                 'Area': 1e4, 
                 'Area diff': 1e4, 
-                'Angle': 1, 
-                'Angular velocity angle': 1e-3,
+                'Angle fit': 1, 
+                'Angular velocity angle fit': 1e-3,
                 'Roundness': 1, 
                 'Roundness diff': 1e3, 
                 'Total curvature': 1, 
@@ -409,8 +362,8 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             xlabel = {
                 'Area': ['Area', '[$\\rm cm^2$]'], 
                 'Area diff': ['$\\rm\\Delta$Area', '[$\\rm cm^2$]'],
-                'Angle': ['Angle', '[rad]'], 
-                'Angular velocity angle': ['$\\rm\\omega$', '[krad/s]'],
+                'Angle fit': ['Angle', '[rad]'], 
+                'Angular velocity angle fit': ['$\\rm\\omega$', '[krad/s]'],
                 'Roundness': ['Roundness', '[a.u.]'], 
                 'Roundness diff': ['$\\rm\\Delta$Roundness', '[a.u.]'],
                 'Total curvature': ['Curvature', '[a.u.]'], 
@@ -418,8 +371,8 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             }
             target_keys = ['Area', 
                            'Area diff', 
-                           'Angle', 
-                           'Angular velocity angle',
+                           'Angle fit', 
+                           'Angular velocity angle fit',
                            'Roundness', 
                            'Roundness diff', 
                            'Total curvature', 
@@ -436,7 +389,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                     data = full_data[key][~np.isnan(full_data[key])] * multiplier[key]
                     ax = axes[ind // 2, ind % 2]
                     
-                    if key == 'Angle':
+                    if key == 'Angle fit':
                         data = np.mod(data, np.pi)
 
                     hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
@@ -478,7 +431,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                     l_data = data_l_mode[key][~np.isnan(data_l_mode[key])] * multiplier[key]
                     h_data = data_h_mode[key][~np.isnan(data_h_mode[key])] * multiplier[key]
 
-                    if key == 'Angle':
+                    if key == 'Angle fit':
                         l_data = np.mod(l_data.astype(float), np.pi)
                         h_data = np.mod(h_data.astype(float), np.pi)
 
@@ -521,7 +474,11 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             # Standard single plots
             if pdf:
                 pdf_page = PdfPages(pdf_filename)
-            for key in analyzed_keys:
+            
+            # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
+            keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(full_data.keys())
+            
+            for key in keys_to_plot:
                 clean_data = full_data[key][~np.isnan(full_data[key])]
                 try:
                     fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
@@ -544,6 +501,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
     return full_data
 
+
 def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3,
                                                      threshold_corr=False,
                                                      pdf=True,
@@ -562,57 +520,6 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                                                      analyze_lh_difference=False,
                                                      save_data_for_publication=False,
                                                      ):
-    """
-    Calculates and plots the Pearson correlation matrix for blob parameters.
-
-    This function computes the cross-correlation between different structural and 
-    kinematic properties of tracked plasma blobs. It can compute the matrix for 
-    a single dataset (full, L-mode, or H-mode) or calculate the difference matrix 
-    between H-mode and L-mode correlations ($\Delta r = r_{H} - r_{L}$). The 
-    results are visualized as a heatmap and can be exported to PDF or text formats.
-
-    Args:
-        threshold_corr (bool, optional): Currently unused flag for thresholding. 
-            Defaults to False.
-        pdf (bool, optional): If True, saves the generated plot to a PDF file. 
-            Defaults to True.
-        pdf_filename (str, optional): Custom filepath for the output PDF. If None, 
-            an automatic name is generated based on the configuration. 
-            Defaults to None.
-        calc_mean_distribution (bool, optional): If True, calculates correlations 
-            using shot-averaged distributions rather than individual blobs. 
-            Defaults to False.
-        plot_interesting_only (bool, optional): If True, restricts the correlation 
-            matrix to a curated subset of highly relevant parameter pairs. 
-            Defaults to False.
-        recalc_tracking (bool, optional): Forces tracking recalculation when 
-            loading blob data. Defaults to False.
-        str_finding_method (str, optional): Image segmentation method used 
-            ('watershed' or 'contour'). Defaults to 'watershed'.
-        nocalc (bool, optional): If True, attempts to load blob data from cache. 
-            Defaults to True.
-        averaging (str, optional): Type of data averaging ('no', 'shot', or 'blob'). 
-            Defaults to 'no'.
-        average (list, optional): Statistical moment descriptors used for file 
-            naming (e.g., ['avg', 'avg']). Defaults to ['avg', 'avg'].
-        fix_angle_for_correlation (bool, optional): If True, normalizes structural 
-            angles modulo pi/2 before calculating correlations. Defaults to True.
-        min_structure_lifetime (int, optional): Minimum frame lifetime required 
-            for structures to be included. Defaults to 10.
-        analyze_h_mode_only (bool, optional): Restricts to H-mode data. Defaults to False.
-        analyze_l_mode_only (bool, optional): Restricts to L-mode data. Defaults to False.
-        analyze_lh_difference (bool, optional): If True, loads both L-mode and H-mode 
-            data independently, computes their correlation matrices, and plots 
-            the difference ($r_H - r_L$). Defaults to False.
-        save_data_for_publication (bool, optional): If True, exports the raw 
-            correlation matrix as a tab-separated text file. Defaults to False.
-
-    Returns:
-        tuple: 
-            - correlation_matrix (numpy.ndarray): The 2D calculated Pearson matrix.
-            - gpi_labels (list of str): The parameter labels corresponding to 
-              the rows and columns of the matrix.
-    """
     import matplotlib
     
     if pdf:
@@ -640,16 +547,16 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
     if plot_interesting_only:
         analyzed_keys = ['Area', 
                          'Area diff', 
-                         'Axes length major', 
-                         'Axes length minor',
+                         'Axes length major fit', 
+                         'Axes length minor fit',
                          'Convexity', 
-                         'Elongation', 
-                         'Position radial', 
+                         'Elongation fit', 
+                         'Position radial fit', 
                          'Roundness',
                          'Roundness diff', 
-                         'Size radial', 
-                         'Velocity radial position',
-                         ]   
+                         'Size radial fit', 
+                         'Velocity radial position fit']  
+        
         gpi_labels = ['Area', 
                       '$\\rm \\Delta$Area', 
                       'Major semi-axis', 
@@ -660,45 +567,66 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                       'Roundness',
                       '$\\rm \\Delta$Roundness', 
                       '$\\rm d_{rad}$', 
-                      '$\\rm v_{rad}$'
-        ]
+                      '$\\rm v_{rad}$']
+    else:
+        analyzed_keys = None # Will be populated dynamically later
+        gpi_labels = None
 
     # --- 3. Internal Math Helper ---
     def _compute_corr_matrix(data_dict, keys, averaging):
         """Helper to calculate the Pearson matrix for a given data dictionary."""
-        if averaging == 'no':
-            # data_dict={key: [data for data in data_dict[key][ind]['data'] 
-            #                  for ind in range(data_dict[key]) 
-            #                  for key in data_dict.keys()]}
-            data_dict = {key: np.concatenate([shot_data['data'] for shot_data in shot_list])
-                         for key, shot_list in data_dict.items()
-                         }
+        
+        # BUG FIX: Safely extract the data depending on the averaging mode!
+        processed_data = {}
+        for key in keys:
+            if key not in data_dict:
+                processed_data[key] = np.nan # Failsafe
+                continue
+                
+            if averaging == 'no':
+                # Data is a list of dictionaries [{'shot':123, 'data':[1,2,3]}, ...]
+                # Flatten it into a 1D array
+                if len(data_dict[key]) > 0 and isinstance(data_dict[key][0], dict):
+                    processed_data[key] = np.concatenate([shot_dict['data'] for shot_dict in data_dict[key]])
+                else:
+                    processed_data[key] = np.array(data_dict[key])
+            else:
+                # Data is already a 1D array of shot averages
+                processed_data[key] = np.array(data_dict[key])
+
         matrix = np.zeros([len(keys), len(keys)])
         for i, key1 in enumerate(keys):
             try:
-                valid1 = ~np.isnan(data_dict[key1])
+                valid1 = ~np.isnan(processed_data[key1])
             except Exception as e:
                 print(f'Exception in analyze_blob_database.py line 682: {e}')
                 matrix[:, i] = np.nan
                 continue
+                
             for j, key2 in enumerate(keys):
                 try:
-                    valid2 = ~np.isnan(data_dict[key2])
+                    valid2 = ~np.isnan(processed_data[key2])
                     valid_mask = valid1 & valid2                    
-                    d1 = np.real(data_dict[key1][valid_mask])
-                    d2 = np.real(data_dict[key2][valid_mask])
+                    d1 = np.real(processed_data[key1][valid_mask])
+                    d2 = np.real(processed_data[key2][valid_mask])
                     
                     if fix_angle_for_correlation:
-                        if key1 in ['Angle', 'Angle of least inertia']:
+                        if key1 in ['Angle fit', 'Angle ALI']:
                             d1 = np.mod(d1, np.pi/2)
-                        if key2 in ['Angle', 'Angle of least inertia']:
+                        if key2 in ['Angle fit', 'Angle ALI']:
                             d2 = np.mod(d2, np.pi/2)
                     
                     d1 -= np.mean(d1)
                     d2 -= np.mean(d2)
                     
                     # Pearson correlation coefficient
-                    matrix[j, i] = np.sum(d1 * d2) / np.sqrt(np.sum(d1**2) * np.sum(d2**2))
+                    # Add safety check for zero division!
+                    denom = np.sqrt(np.sum(d1**2) * np.sum(d2**2))
+                    if denom == 0:
+                        matrix[j, i] = np.nan
+                    else:
+                        matrix[j, i] = np.sum(d1 * d2) / denom
+                        
                 except Exception as e:
                     print(f"Failed correlation for {key1} & {key2}: {e}")
                     matrix[j, i] = np.nan
@@ -706,42 +634,47 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
 
     # --- 4. Data Loading and Matrix Calculation ---
     if not analyze_lh_difference:
-        full_data = read_all_blob_data(time_range_around_peak=time_range_around_peak,
-                                       min_structure_lifetime=min_structure_lifetime,
-                                       averaging='shot' if calc_mean_distribution else 'no',
-                                       nocalc=nocalc,
-                                       recalc_tracking=recalc_tracking,
-                                       str_finding_method=str_finding_method,
-                                       read_l_mode_only=analyze_l_mode_only,
-                                       read_h_mode_only=analyze_h_mode_only,
-                                       replicate_histogram2=True,
+        full_data = read_all_blob_data(time_range_around_peak = time_range_around_peak,
+                                       min_structure_lifetime = min_structure_lifetime,
+                                       averaging = 'shot' if calc_mean_distribution else 'no',
+                                       nocalc = nocalc,
+                                       recalc_tracking = recalc_tracking,
+                                       str_finding_method = str_finding_method,
+                                       read_l_mode_only = analyze_l_mode_only,
+                                       read_h_mode_only = analyze_h_mode_only,
+                                       replicate_histogram2 = True,
                                        )
-        correlation_matrix = _compute_corr_matrix(full_data, full_data.keys(), averaging)
+        # BUG FIX: Handle the dynamic keys properly!
+        plot_keys = analyzed_keys if plot_interesting_only else list(full_data.keys())
+        correlation_matrix = _compute_corr_matrix(full_data, plot_keys, averaging)
         colormap = 'seismic'
+        
     else:
         # Calculate L-mode
-        full_data_l = read_all_blob_data(time_range_around_peak=time_range_around_peak,
-                                         min_structure_lifetime=min_structure_lifetime,
-                                         averaging='shot' if calc_mean_distribution else 'no',
-                                         nocalc=nocalc, 
-                                         recalc_tracking=recalc_tracking,
-                                         str_finding_method=str_finding_method,
-                                         read_l_mode_only=True, 
-                                         replicate_histogram2=True
+        full_data_l  =  read_all_blob_data(time_range_around_peak = time_range_around_peak,
+                                         min_structure_lifetime = min_structure_lifetime,
+                                         averaging = 'shot' if calc_mean_distribution else 'no',
+                                         nocalc = nocalc, 
+                                         recalc_tracking = recalc_tracking,
+                                         str_finding_method = str_finding_method,
+                                         read_l_mode_only = True, 
+                                         replicate_histogram2 = True
                                          )   
-        corr_l = _compute_corr_matrix(full_data_l, full_data_l.keys(), averaging)
-
         # Calculate H-mode
-        full_data_h = read_all_blob_data(time_range_around_peak=time_range_around_peak,
-                                         min_structure_lifetime=min_structure_lifetime,
-                                         averaging='shot' if calc_mean_distribution else 'no',
-                                         nocalc=nocalc, 
-                                         recalc_tracking=recalc_tracking,
-                                         str_finding_method=str_finding_method,
-                                         read_h_mode_only=True, 
-                                         replicate_histogram2=True
+        full_data_h  =  read_all_blob_data(time_range_around_peak = time_range_around_peak,
+                                         min_structure_lifetime = min_structure_lifetime,
+                                         averaging = 'shot' if calc_mean_distribution else 'no',
+                                         nocalc = nocalc, 
+                                         recalc_tracking = recalc_tracking,
+                                         str_finding_method = str_finding_method,
+                                         read_h_mode_only = True, 
+                                         replicate_histogram2 = True
                                          )
-        corr_h = _compute_corr_matrix(full_data_h, full_data_h.keys(), averaging)
+        
+        # BUG FIX: Handle the dynamic keys properly!
+        plot_keys = analyzed_keys if plot_interesting_only else list(full_data_l.keys())
+        corr_l  =  _compute_corr_matrix(full_data_l, plot_keys, averaging)
+        corr_h = _compute_corr_matrix(full_data_h, plot_keys, averaging)
 
         # Difference
         correlation_matrix = corr_h - corr_l
@@ -754,16 +687,19 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
     if pdf:
         pdf_page = PdfPages(pdf_filename)
 
+    # Use the gpi_labels if plotting the interesting subset, otherwise fallback to the raw keys
+    labels_to_plot = gpi_labels if plot_interesting_only else plot_keys
+
     plot_pearson_matrix(correlation_matrix,
-                        xlabels=full_data_l.keys(),
-                        ylabels=full_data_l.keys(),
-                        colormap=colormap,
-                        figsize=(17/2.54 / (1 + plot_interesting_only), 
-                                 17/2.54 / (1 + plot_interesting_only)),
-                        charsize=15,
-                        plot_large=not plot_interesting_only,
-                        plot_colorbar=not plot_interesting_only,
-                        plot_values=True,
+                        xlabels = labels_to_plot,
+                        ylabels = labels_to_plot,
+                        colormap = colormap,
+                        figsize = (17/2.54 / (1 + plot_interesting_only), 
+                                   17/2.54 / (1 + plot_interesting_only)),
+                        charsize = 15,
+                        plot_large = not plot_interesting_only,
+                        plot_colorbar = not plot_interesting_only,
+                        plot_values = True,
                         )   
 
     if analyze_lh_difference:
@@ -773,63 +709,30 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
         pdf_page.savefig()
         pdf_page.close()
         
-    return correlation_matrix, full_data_l.keys()
+    return correlation_matrix, plot_keys
 
-
-def plot_blob_blob_parameter_trends(pdf=True,
-                                    pdf_filename=None,
-                                    plot_if_correlation_is_higher_than=None,
-                                    plot_if_pps_is_higher_than=None,
-                                    nocalc=True,
-                                    calc_mean_distribution=True,
-                                    min_structure_lifetime=20,
-                                    plot_for_publication=False,
-                                    str_finding_method='watershed',
-                                    recalc_tracking=False,
-                                    averaging='no',
-                                    analyze_l_mode_only=False,
-                                    analyze_h_mode_only=False,
-                                    analyze_lh_difference=False,
-                                    save_data_for_publication=False,
+def plot_blob_blob_parameter_trends(pdf = True,
+                                    pdf_filename = None,
+                                    plot_if_correlation_is_higher_than = None,
+                                    plot_if_pps_is_higher_than = None,
+                                    nocalc = True,
+                                    calc_mean_distribution = True,
+                                    min_structure_lifetime = 20,
+                                    plot_for_publication = False,
+                                    str_finding_method = 'watershed',
+                                    recalc_tracking = False,
+                                    averaging = 'no',
+                                    analyze_l_mode_only = False,
+                                    analyze_h_mode_only = False,
+                                    analyze_lh_difference = False,
+                                    save_data_for_publication = False,
                                     ):
-    """
-    Analyzes and visualizes trends and correlations between blob parameters.
+    import matplotlib
+    if pdf:
+        matplotlib.use('agg')
+    else:
+        matplotlib.use('qt5agg')
 
-    This function calculates both Pearson correlation and Predictive Power Score (PPS) 
-    matrices for tracked blob structures. It can generate comprehensive individual 
-    scatter plots for highly correlated pairs, or a focused multi-panel 2D histogram 
-    figure suitable for publication. It also supports analyzing the difference in 
-    these 2D distributions between H-mode and L-mode plasmas.
-
-    Args:
-        pdf (bool, optional): If True, saves generated plots to a PDF. Defaults to True.
-        pdf_filename (str, optional): Custom output filepath. Defaults to None.
-        plot_if_correlation_is_higher_than (float, optional): Threshold to trigger 
-            individual scatter plots based on Pearson correlation. Defaults to None.
-        plot_if_pps_is_higher_than (float, optional): Threshold to trigger individual 
-            scatter plots based on PPS. Defaults to None.
-        nocalc (bool, optional): If True, attempts to load aggregated blob data 
-            from cache rather than recalculating. Defaults to True.
-        calc_mean_distribution (bool, optional): Controls averaging logic when 
-            loading L-mode vs H-mode data. Defaults to True.
-        min_structure_lifetime (int, optional): Minimum frame lifetime required 
-            for structures to be included. Defaults to 20.
-        plot_for_publication (bool, optional): If True, creates a formatted 5x2 
-            grid of 2D histograms for specific parameter pairs. Defaults to False.
-        str_finding_method (str, optional): Image segmentation method. Defaults to 'watershed'.
-        recalc_tracking (bool, optional): Forces tracking recalculation. Defaults to False.
-        averaging (str, optional): Type of data averaging ('no', 'shot'). Defaults to 'no'.
-        analyze_l_mode_only (bool, optional): Restricts to L-mode data. Defaults to False.
-        analyze_h_mode_only (bool, optional): Restricts to H-mode data. Defaults to False.
-        analyze_lh_difference (bool, optional): Plots the 2D histogram difference 
-            between H-mode and L-mode. Defaults to False.
-        save_data_for_publication (bool, optional): Exports raw 2D histogram bin 
-            data to text files. Defaults to False.
-
-    Returns:
-        None
-    """
-    
     if analyze_h_mode_only:
         plasma_mode = '_h_mode'
     elif analyze_l_mode_only:
@@ -849,22 +752,23 @@ def plot_blob_blob_parameter_trends(pdf=True,
         pdf_filename = f"{wd}/plots/gpi_gpi_trend_8plot_{str_finding_method}{plasma_mode}.pdf"
 
     # --- 1. Data Loading ---
-    def _load_data(l_mode=False, 
-                   h_mode=False):
+    def _load_data(l_mode=False, h_mode=False):
         
         mode_str = 'l_mode' if l_mode else 'h_mode' if h_mode else 'full'
         p_file = f"{wd}/processed_data/gpi_gpi_trends_{str_finding_method}_{averaging}{mode_str}.pickle"
         
         if not os.path.exists(p_file):
-            data = read_all_blob_data(min_structure_lifetime=min_structure_lifetime,
-                                      averaging='shot' if calc_mean_distribution else 'no',
-                                      nocalc=nocalc, recalc_tracking=recalc_tracking,
-                                      str_finding_method=str_finding_method,
-                                      read_l_mode_only=l_mode, read_h_mode_only=h_mode,
-                                      replicate_histogram2=True)
+            data  =  read_all_blob_data(min_structure_lifetime = min_structure_lifetime,
+                                        averaging = 'shot' if calc_mean_distribution else 'no',
+                                        nocalc = nocalc, recalc_tracking = recalc_tracking,
+                                        str_finding_method = str_finding_method,
+                                        read_l_mode_only = l_mode, 
+                                        read_h_mode_only = h_mode,
+                                        replicate_histogram2 = True)
             with open(p_file, 'wb') as f:
                 pickle.dump(data, f)
             return data
+            
         with open(p_file, 'rb') as f:
             return pickle.load(f)
 
@@ -875,15 +779,25 @@ def plot_blob_blob_parameter_trends(pdf=True,
     else:
         full_data = _load_data(l_mode=analyze_l_mode_only, h_mode=analyze_h_mode_only)
 
-    analyzed_keys = read_analyzed_keys()
-    additional_diff_keys = ['Convexity', 'Solidity', 'Roundness', 'Total curvature', 
-                            'Total bending energy', 'Area', 'Elongation']
-    analyzed_keys.extend([f"{k} diff" for k in additional_diff_keys])
+    analyzed_keys = list(full_data.keys())
+    
+    # --- Helper to flatten dict structures ---
+    def _flatten_data(data_dict):
+        flat_dict = {}
+        for k in data_dict.keys():
+            if len(data_dict[k]) == 0: continue
+            if isinstance(data_dict[k][0], dict):
+                flat_dict[k] = np.concatenate([shot['data'] for shot in data_dict[k]])
+            else:
+                flat_dict[k] = np.array(data_dict[k])
+        return flat_dict
+
+    flat_data = _flatten_data(full_data)
 
     # --- 2. Predictive Power Score (PPS) Matrix ---
     pps_pickle = f"{wd}/processed_data/blob_database_full_data_mean_pps_{str_finding_method}.pickle"
     if not nocalc or not os.path.exists(pps_pickle):
-        df = pandas.DataFrame({k: full_data[k] for k in full_data.keys() if len(full_data[k]) > 0})
+        df = pandas.DataFrame(flat_data)
         df = df.dropna(thresh=1)
         
         # Keep rows where absolute Z-score is < 3
@@ -903,17 +817,22 @@ def plot_blob_blob_parameter_trends(pdf=True,
     if not plot_for_publication:
         if pdf: pdf_page = PdfPages(pdf_filename)
         for i, key1 in enumerate(analyzed_keys):
-            valid1 = ~np.isnan(full_data[key1])
+            if key1 not in flat_data: continue
+            valid1 = ~np.isnan(flat_data[key1])
+            
             for j, key2 in enumerate(analyzed_keys):
+                if key2 not in flat_data: continue
+                
                 if key1 != key2 and j > i:
-                    valid_mask = valid1 & ~np.isnan(full_data[key2])
+                    valid_mask = valid1 & ~np.isnan(flat_data[key2])
                     
-                    d1 = full_data[key1][valid_mask]
-                    d2 = full_data[key2][valid_mask]
+                    d1 = flat_data[key1][valid_mask]
+                    d2 = flat_data[key2][valid_mask]
                     
                     d1_4c = d1 - np.mean(d1)
                     d2_4c = d2 - np.mean(d2)
-                    corr = np.sum(d1_4c * d2_4c) / np.sqrt(np.sum(d1_4c**2) * np.sum(d2_4c**2))
+                    denom = np.sqrt(np.sum(d1_4c**2) * np.sum(d2_4c**2))
+                    corr = np.sum(d1_4c * d2_4c) / denom if denom != 0 else 0
                     
                     pps_val = ppscore_matrix[xlabels.index(key1), xlabels.index(key2)] if key1 in xlabels and key2 in xlabels else 0
 
@@ -934,34 +853,33 @@ def plot_blob_blob_parameter_trends(pdf=True,
 
     else:
         # Publication 2D Histograms
-# --- Unified Plotting Configuration ---
         publication_plots = {
             ('Area', 'Convexity'): {
                 'range': [[0, 0.004], [0.92, 1.0]],
                 'x_mult': 1e4,  'x_label': 'Area',                    'x_unit': '[$\\rm cm^2$]',
                 'y_mult': 1,    'y_label': 'Convexity',               'y_unit': '[a.u.]'
             },
-            ('Size radial', 'Convexity'): {
+            ('Size radial fit', 'Convexity'): {
                 'range': [[0.01, 0.07], [0.92, 1.0]],
                 'x_mult': 1e2,  'x_label': '$\\rm d_{rad}$',          'x_unit': '[cm]',
                 'y_mult': 1,    'y_label': 'Convexity',               'y_unit': '[a.u.]'
             },
-            ('Elongation', 'Roundness'): {
+            ('Elongation fit', 'Roundness'): {
                 'range': [[-0.75, 0.5], [0.2, 1.0]],
                 'x_mult': 1,    'x_label': 'Elongation',              'x_unit': '[a.u.]',
                 'y_mult': 1,    'y_label': 'Roundness',               'y_unit': '[a.u.]'
             },
-            ('Position radial', 'Velocity radial position'): {
+            ('Position radial fit', 'Velocity radial position fit'): {
                 'range': [[1.42, 1.6], [-2e3, 2e3]],
                 'x_mult': 1,    'x_label': '$\\rm R_{pos}$',          'x_unit': '[m]',
                 'y_mult': 1e-3, 'y_label': '$\\rm v_{rad}$',          'y_unit': '[km/s]'
             },
-            ('Axes length minor', 'Velocity radial position'): {
+            ('Axes length minor fit', 'Velocity radial position fit'): {
                 'range': [[0, 0.075], [-2e3, 2e3]],
                 'x_mult': 1e2,  'x_label': 'Minor semi-axis',         'x_unit': '[cm]',
                 'y_mult': 1e-3, 'y_label': '$\\rm v_{rad}$',          'y_unit': '[km/s]'
             },
-            ('Axes length major', 'Velocity radial position'): {
+            ('Axes length major fit', 'Velocity radial position fit'): {
                 'range': [[0.0, 0.03], [-2e3, 2e3]],
                 'x_mult': 1e2,  'x_label': 'Major semi-axis',         'x_unit': '[cm]',
                 'y_mult': 1e-3, 'y_label': '$\\rm v_{rad}$',          'y_unit': '[km/s]'
@@ -971,10 +889,11 @@ def plot_blob_blob_parameter_trends(pdf=True,
                 'x_mult': 1e4,  'x_label': '$\\rm\\Delta$Area',       'x_unit': '[$\\rm cm^2$]',
                 'y_mult': 1e3,  'y_label': '$\\rm\\Delta$Roundness',  'y_unit': '[a.u.]'
             },
-            ('Position radial', 'Axes length major'): {
-                'range': [[1.42, 1.6], [0, 0.03]],
-                'x_mult': 1,    'x_label': '$\\rm R_{pos}$',          'x_unit': '[m]',
-                'y_mult': 1e2,  'y_label': 'Major semi-axis',         'y_unit': '[cm]'
+            # BUG FIX: Added the 8th plot pair so the grid completes!
+            ('Area diff', 'Total curvature diff'): {
+                'range': [[-0.05e-2, 0.05e-2], [-0.05, 0.05]],
+                'x_mult': 1e4,  'x_label': '$\\rm\\Delta$Area',       'x_unit': '[$\\rm cm^2$]',
+                'y_mult': 1e3,  'y_label': '$\\rm\\Delta$Curvature',  'y_unit': '[a.u.]'
             }
         }
 
@@ -982,8 +901,12 @@ def plot_blob_blob_parameter_trends(pdf=True,
 
         pdf_page = PdfPages(pdf_filename)
         fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
+        
+        # Ensure we use flattened datasets for histogramming
+        if analyze_lh_difference:
+            flat_l_mode = _flatten_data(full_data_l_mode)
+            flat_h_mode = _flatten_data(full_data_h_mode)
 
-        # Helper function passing the config directly ensures variable safety
         def get_2d_hist(data_dict, k1, k2, cfg):
             valid = ~np.isnan(data_dict[k1]) & ~np.isnan(data_dict[k2])
             d1 = data_dict[k1][valid] * cfg['x_mult']
@@ -994,16 +917,13 @@ def plot_blob_blob_parameter_trends(pdf=True,
             
             return np.histogram2d(d1, d2, bins=[31, 31], range=r)
 
-        # Loop through the dictionary items 
         for ind, ((key1, key2), config) in enumerate(publication_plots.items()):
 
-            # Calculate L-mode (or default full mode)
-            counts_l, xedges, yedges = get_2d_hist(full_data_l_mode if analyze_lh_difference else full_data, key1, key2, config)
+            counts_l, xedges, yedges = get_2d_hist(flat_l_mode if analyze_lh_difference else flat_data, key1, key2, config)
             base_img = (counts_l / np.sum(counts_l)) * 100
 
-            # If diff mode, calculate H-mode and subtract
             if analyze_lh_difference:
-                counts_h, _, _ = get_2d_hist(full_data_h_mode, key1, key2, config)
+                counts_h, _, _ = get_2d_hist(flat_h_mode, key1, key2, config)
                 img_data = (counts_h / np.sum(counts_h)) * 100 - base_img
                 v_args = {'vmin': -0.7, 'vmax': 0.7, 'cmap': 'seismic'}
             else:
@@ -1027,7 +947,6 @@ def plot_blob_blob_parameter_trends(pdf=True,
             ax.text(-0.45, 1.1, f"({labels[ind]})", transform=ax.transAxes, size=9)
             ax.text(1.02, 1.05, '[%]', transform=ax.transAxes, size=6)
             
-            # Apply dynamically combined labels and units
             ax.set_xlabel(f"{config['x_label']} {config['x_unit']}")
             ax.set_ylabel(f"{config['y_label']} {config['y_unit']}")
 
@@ -1036,11 +955,11 @@ def plot_blob_blob_parameter_trends(pdf=True,
         pdf_page.close()
         plt.close(fig)
 
-
 def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
                                                     pdf=True,
                                                     nocalc=True,
-                                                    calc_mean_distribution=True
+                                                    calc_mean_distribution=True,
+                                                    str_finding_method='watershed' # BUG FIX: Added argument
                                                     ):
     """
     Calculates and plots the Predictive Power Score (PPS) matrix for blob parameters.
@@ -1065,28 +984,37 @@ def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
     Returns:
         None
     """
-
+    
     if pdf:
         pdf_pages = PdfPages(wd + '/plots/predictive_power_score_blob_vs_blob.pdf')
 
     # --- 1. File Paths ---
     mean_str = 'mean' if calc_mean_distribution else 'nomean'
-    pickle_filename = f"{wd}/processed_data/blob_database_full_data_{mean_str}.pickle"
-    pickle_filename_pps = f"{wd}/processed_data/blob_blob_predictive_power_score.pickle"
+    # BUG FIX: Inserted str_finding_method into both strings so they match the rest of the suite!
+    pickle_filename = f"{wd}/processed_data/blob_database_full_data_{mean_str}_{str_finding_method}.pickle"
+    pickle_filename_pps = f"{wd}/processed_data/blob_blob_predictive_power_score_{str_finding_method}.pickle"
     
+    if not os.path.exists(pickle_filename):
+        print(f"Error: Could not find raw data cache at {pickle_filename}")
+        return
+
     with open(pickle_filename, 'rb') as f:
         full_blob_data = pickle.load(f)
 
     # --- 2. Data Processing & PPS Calculation ---
     if not nocalc or not os.path.exists(pickle_filename_pps):
-        df = pandas.DataFrame()
-        try:
-            for key in full_blob_data.keys():
-                # Only add lists that actually contain data to prevent dimension errors
-                if len(full_blob_data[key]) > 0:
-                    df[key] = full_blob_data[key]
-        except Exception as e:
-            print(f"Error populating DataFrame: {e}")
+        
+        # BUG FIX: Flatten the dictionary arrays safely!
+        processed_data = {}
+        for key in full_blob_data.keys():
+            if len(full_blob_data[key]) == 0: continue
+            
+            if isinstance(full_blob_data[key][0], dict):
+                processed_data[key] = np.concatenate([shot['data'] for shot in full_blob_data[key]])
+            else:
+                processed_data[key] = np.array(full_blob_data[key])
+                
+        df = pandas.DataFrame(processed_data)
 
         # Drop rows that are entirely NaN
         df = df.dropna(thresh=1)
@@ -1109,6 +1037,7 @@ def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
     # Extract labels directly from the PPS matrix to ensure dimension matching
     xlabels = list(matrix_df.columns)
 
+    # Assuming plot_pearson_matrix is imported
     plot_pearson_matrix(ppscore_matrix_prelim,
                         xlabels=xlabels,
                         ylabels=xlabels,
@@ -1181,8 +1110,6 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
         None
     """
     
-    from matplotlib.patches import Rectangle
-    
     plt.close('all')
     if pdf:
         import matplotlib
@@ -1250,42 +1177,56 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
         for ind1, key1 in enumerate(label_1):
             for ind2, key2 in enumerate(label_2):
                 
-                # Fetch arrays safely depending on structure
-                if averaging == 'shot':
-                    d1 = data1_dict[key1]
-                    d2 = data2_dict[key2]
-                else:
-                    # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
-                    d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
-                    d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
-                    d2 = d2_expanded
+                try:
+                    # Fetch arrays safely depending on structure
+                    if averaging == 'shot':
+                        d1 = data1_dict[key1]
+                        d2 = data2_dict[key2]
+                    else:
+                        # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
+                        d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
+                        d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
+                        d2 = d2_expanded
 
-                valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
-                d1, d2 = d1[valid_mask], d2[valid_mask]
+                    valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
+                    d1, d2 = d1[valid_mask], d2[valid_mask]
 
-                if quantity == 'correlation':
-                    correlation_matrix[ind2, ind1] = correlation(d1, d2, 
-                                                                 threshold_correlation=threshold_corr,
-                                                                 correlation_accept=corr_accept,
-                                                                 confidence_sigma=threshold_multiplier)
-                elif quantity == 'mutual_information':
-                    d1 -= np.mean(d1)
-                    d2 -= np.mean(d2)
-                    correlation_matrix[ind2, ind1] = mutual_information(d1, d2)
+                    if len(d1) == 0 or len(d2) == 0:
+                        correlation_matrix[ind2, ind1] = np.nan
+                        continue
+
+                    if quantity == 'correlation':
+                        correlation_matrix[ind2, ind1] = correlation(d1, d2, 
+                                                                     threshold_correlation=threshold_corr,
+                                                                     correlation_accept=corr_accept,
+                                                                     confidence_sigma=threshold_multiplier)
+                    elif quantity == 'mutual_information':
+                        d1 -= np.mean(d1)
+                        d2 -= np.mean(d2)
+                        correlation_matrix[ind2, ind1] = mutual_information(d1, d2)
+                        
+                except Exception as e:
+                    print(f"Calculation failed for {key1} vs {key2}: {e}")
+                    correlation_matrix[ind2, ind1] = np.nan
 
     elif quantity == 'predictive_power':
         avg_str = 'full' if averaging == 'no' else f"{averaging}_{average}"
         pickle_filename_pps = f"{wd}/processed_data/blob_plasma_predictive_power_score_{avg_str}.pickle"
         
         if not nocalc or not os.path.exists(pickle_filename_pps):
-            df = pandas.DataFrame()
+            
+            # BUG FIX: Construct a standard dictionary first, then cast to DataFrame!
+            raw_df_dict = {}
             
             # Combine blob and plasma data into one flat dataframe
             for key in gpi_labels:
-                df[key] = full_blob_data[key] if averaging == 'shot' else np.concatenate([s['data'] for s in full_blob_data[key]])
+                raw_df_dict[key] = full_blob_data[key] if averaging == 'shot' else np.concatenate([s['data'] for s in full_blob_data[key]])
             for key in plasma_labels:
-                df[key] = full_plasma_data[key] if averaging == 'shot' else np.concatenate([np.full(len(s['data']), full_plasma_data[key][i]) for i, s in enumerate(full_blob_data[gpi_labels[0]])])
+                # Assuming gpi_labels[0] has data we can use to map the lengths
+                ref_key = gpi_labels[0]
+                raw_df_dict[key] = full_plasma_data[key] if averaging == 'shot' else np.concatenate([np.full(len(s['data']), full_plasma_data[key][i]) for i, s in enumerate(full_blob_data[ref_key])])
 
+            df = pandas.DataFrame(raw_df_dict)
             matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
             matrix_df = matrix_df.reindex(index=gpi_labels+plasma_labels, columns=gpi_labels+plasma_labels)
             
@@ -1301,7 +1242,7 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
 
     # --- 5. Plotting ---
     if not plot_full:
-        plot_pearson_matrix(correlation_matrix, xlabels=gpi_labels, ylabels=plasma_labels,
+        plot_pearson_matrix(correlation_matrix, xlabels=label_1, ylabels=label_2,
                             title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
                             figsize=figsize, charsize=charsize, linewidth=linewidth,
                             ticksize=ticksize, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
@@ -1359,8 +1300,6 @@ def plot_all_cross_data_matrix():
                                                                    ticksize=3, 
                                                                    charsize=9)
     
-    
-from string import ascii_lowercase as alc
 
 def plot_blob_plasma_parameter_trends(pdf_filename=None,
                                       nocalc=True,
@@ -1628,12 +1567,12 @@ def plot_blob_experiment_vs_theory_radial_velocity(pdf_filename=None,
     
     # --- 3. Extract and Calculate Velocities ---
     # Experimental Data
-    exp_vrad_pos = np.abs(full_blob_data['Velocity radial position'])
+    exp_vrad_pos = np.abs(full_blob_data['Velocity radial position fit'])
     
     # Theoretical Physics Inputs
     c_s = full_plasma_data['Sound speed']
-    rho_s = full_plasma_data['Larmor radius']
-    blob_size = full_blob_data['Size radial']
+    rho_s = full_plasma_data['Larmor radius sound']
+    blob_size = full_blob_data['Size radial fit']
     
     # Theoretical Scalings
     vrad_inertial = c_s * (rho_s / blob_size)
@@ -1814,25 +1753,25 @@ def plot_well_known_parameter_dependences(pdf_filename=None,
     # --- 3. Derived Dimensionless Calculations ---
     # a_star and v_star scaling
     a_star = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 / 
-              full_blob_data['Velocity radial position']**0.2)
+              np.abs(full_blob_data['Velocity radial position fit'])**0.2)
               
-    v_star = full_plasma_data['Sound speed'] * (a_star / full_blob_data['Position radial'])**0.5
+    v_star = full_plasma_data['Sound speed'] * (a_star / full_blob_data['Position radial fit'])**0.5
     
-    full_blob_data['Velocity radial dimensionless'] = full_blob_data['Velocity radial position'] / v_star
-    full_plasma_data['Inverse A hat squared'] = 1 / (full_blob_data['Size radial'] / a_star)**2
+    full_blob_data['Velocity radial dimensionless'] = full_blob_data['Velocity radial position fit'] / v_star
+    full_plasma_data['Inverse A hat squared'] = 1 / (full_blob_data['Size radial fit'] / a_star)**2
     
     # --- 4. Plotting Configuration ---
     interesting_key_pairs = [
-        ('Angle', 'Connection length'),
-        ('Angular velocity ALI', 'Connection length'),
-        ('Roundness', 'Connection length'),
-        ('Solidity', 'Connection length'),
-        ('Velocity radial dimensionless', 'Connection length'),
-        ('Velocity radial dimensionless', 'Collisionality dimensionless')
+        ('Angle fit',                       'Connection length'),
+        ('Angular velocity ALI',            'Connection length'),
+        ('Roundness',                       'Connection length'),
+        ('Solidity',                        'Connection length'),
+        ('Velocity radial dimensionless',   'Connection length'),
+        ('Velocity radial dimensionless',   'Collisionality dimensionless')
     ]
     
     units = {
-        'Angle':                           ['$\\theta_{blob}$', 'rad', 1],
+        'Angle fit':                       ['$\\theta_{blob}$', 'rad', 1],
         'Angular velocity ALI':            ['$\\omega_{blob}$', 'krad/s', 1e-3],
         'Roundness':                       ['Roundness', '', 1],
         'Solidity':                        ['Solidity', '', 1],
