@@ -23,7 +23,7 @@ flap_nstx.register('NSTX_GPI')
 from flap_nstx.gpi import (normalize_gpi, 
                            identify_structures, track_structures, 
                            calculate_differential_structure_keys,
-                           _plot_ellipses_centers)
+                           remove_orphans)
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
 from flap_nstx.tools import StructureDataset
 
@@ -146,7 +146,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            save_results=True,                    #Save the results into a .pickle file to filename+.pickle
                            nocalc=True,                          #Restore the results from the .pickle file from filename+.pickle
                            recalc_tracking=False,
-                           
+                           calculate_only=False,
                             #Output options:
                            return_results=False,                 #Return the results if set.
                            return_pixel_displacement=False,
@@ -291,6 +291,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
         nocalc (bool, optional): Skip calculation and restore results from the .pickle file. 
             Defaults to True.
         recalc_tracking (bool, optional): Force recalculation of tracking. Defaults to False.
+        calculate_only (bool, optional): Calculation and file saving only, no plotting.
+            Overrides all plotting options. Defaults to False.
         return_results (bool, optional): Return the calculated results dictionary/object. 
             Defaults to False.
         return_pixel_displacement (bool, optional): Return displacement in pixels instead of 
@@ -374,11 +376,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     fit_shape=fit_shape.capitalize()
     hdf5_filename = filename + '.h5'
     
-    if not os.path.exists(hdf5_filename) and nocalc:
-        print(hdf5_filename)
-        print('The HDF5 file does not exist. Recalculating the results.')
+    if not os.path.exists(hdf5_filename) and not os.path.exists(hdf5_filename.replace('.h5','.pickle')) and nocalc:
+        print(f'The HDF5 or pickle file {hdf5_filename.replace(".h5",".*")} does not exist. Recalculating the results.')
         nocalc = False
-
+        
     if ((not test and not test_structures) or
         (not test and not plot_results and structure_pdf_save and test_structures)):
         import matplotlib
@@ -622,42 +623,61 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 
             if structure_pdf_save:
                 pdf_structures.close()
-                
-            print(f"Saving untracked dataset to HDF5: {hdf5_filename}")
-            raw_dataset.save_hdf5(hdf5_filename)
+                    
+            """
+            Structure tracking
+            """
+            
+            tracked_dataset = track_structures(dataset=raw_dataset,
+                                                max_gap=max_gap,
+                                                time_range=time_range,
+                                                tracking=tracking,
+                                                tracking_assignment=tracking_assignment,
+                                                matrix_weight=matrix_weight,
+                                                test=test,
+                                                prev_str_weighting=prev_str_weighting,
+                                                calculate_rough_diff_velocities=calculate_rough_diff_velocities,
+                                                weighting=weighting,
+                                                maxing=maxing,
+                                                nocalc=nocalc,
+                                                recalc_tracking=recalc_tracking,
+                                                smooth_contours=smooth_contours,
+                                                comment=comment)            
+            
+            print(f"Saving dataset to HDF5: {hdf5_filename}")
+            tracked_dataset.save_hdf5(hdf5_filename)
+            with open(hdf5_filename.replace('.h5', '.pickle'), 'wb') as f:
+                print("Saving dataset to pickle:"+hdf5_filename.replace('.h5', '.pickle'))
+                pickle.dump(tracked_dataset, f)
             if test: plt.close()
         else:
-            print('\n\n--- Loading data from the HDF5 file ---')
-            raw_dataset = StructureDataset.load_hdf5(hdf5_filename)
+            pickle_filename=hdf5_filename.replace('.h5', '.pickle')
+            try:
+                
+                 with open(pickle_filename,'rb') as f:
+                     tracked_dataset=pickle.load(f)
+            except Exception as e:
+                print(f'Exception in analyze_gpi_structures.py L661: {e}')
+                print('Pickle file cannot be loaded, trying hdf5 instead.')
+                print('\n\n--- Loading data from the HDF5 file ---')
+                tracked_dataset = StructureDataset.load_hdf5(hdf5_filename)
     else:
-        print('\n\n--- Loading data from the HDF5 file ---')
-        raw_dataset = StructureDataset.load_hdf5(hdf5_filename)
-        
-    """
-    Structure tracking
-    """
+        pickle_filename=hdf5_filename.replace('.h5', '.pickle')
+        try:
+             print("Loading data from the pickle file")
+             with open(pickle_filename,'rb') as f:
+                 tracked_dataset=pickle.load(f)
+        except Exception as e:
+            print(f'Exception in analyze_gpi_structures.py L661: {e}')
+            print('Pickle file cannot be loaded, trying hdf5 instead.')
+            print('\n\n--- Loading data from the HDF5 file ---')
+            tracked_dataset = StructureDataset.load_hdf5(hdf5_filename)
+    if calculate_only: return True
+    
+    if remove_orphans:
+        tracked_dataset = remove_orphans(tracked_dataset, test, min_structure_lifetime)
 
-    tracked_dataset = track_structures(dataset=raw_dataset,
-                                        max_gap=max_gap,
-                                        time_range=time_range,
-                                        tracking=tracking,
-                                        tracking_assignment=tracking_assignment,
-                                        matrix_weight=matrix_weight,
-                                        test=test,
-                                        prev_str_weighting=prev_str_weighting,
-                                        calculate_rough_diff_velocities=calculate_rough_diff_velocities,
-                                        weighting=weighting,
-                                        maxing=maxing,
-                                        remove_orphans=remove_orphans,
-                                        min_structure_lifetime=min_structure_lifetime,
-                                        nocalc=nocalc,
-                                        recalc_tracking=recalc_tracking,
-                                        smooth_contours=smooth_contours,
-                                        comment=comment,
-                                        hdf5_filename=hdf5_filename)
-    
-    tracked_dataset = calculate_differential_structure_keys(tracked_dataset)
-    
+
     """
     PLOTTING THE RESULTS
     """
@@ -688,7 +708,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                               plot_separatrix=plot_separatrix,
                               str_finding_method=str_finding_method,
                               video_framerate=video_framerate,
-                              dataset=raw_dataset,
+                              dataset=tracked_dataset,
                               colortable=colortable,
                               wd=wd,
                               n_color=n_color,
@@ -705,7 +725,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                        plot_nframe=plot_nframe,
                                        plot_ncol=plot_ncol,
                                        levels=levels,
-                                       dataset=raw_dataset,
+                                       dataset=tracked_dataset,
                                        plot_example_structure_frames=plot_example_structure_frames,
                                        plot_separatrix=plot_separatrix,
                                        separatrix_coordinates=(d_sep_x,d_sep_y),
@@ -1012,7 +1032,7 @@ def _plot_example_structure_frames(exp_id=None,
                 if not np.isnan(struct.fit_angle):
                     
                     # BUG FIX: Rotate 90 degrees to draw the major axis correctly!
-                    phi = struct.fit_angle + (np.pi / 2)
+                    phi = struct.fit_angle
                     a, b = struct.fit_axes_length[1], struct.fit_axes_length[0] # major, minor
                     cx, cy = struct.fit_center[0], struct.fit_center[1]
 
@@ -1375,8 +1395,8 @@ def _structure_video_save(sample_0=None,
                 if not np.isnan(struct.fit_angle):
 
                     # BUG FIX: Rotate 90 degrees to draw the major axis correctly!
-                    phi = struct.fit_angle + (np.pi / 2)
-                    a, b = struct.fit_axes_length[1], struct.fit_axes_length[0] # major, minor
+                    phi = struct.fit_angle
+                    a, b = struct.fit_axes_length[0], struct.fit_axes_length[0] # major, minor
 
                     cx, cy = struct.fit_center[0], struct.fit_center[1]
 
@@ -1504,7 +1524,7 @@ def _plot_str_by_str(dataset=None,
         print("No tracked structures found to plot.")
         return
 
-    # Use the first structure to get the available keys
+    # Use the first existing structure to get the available keys
     for struct in tracked_structs:
         if struct:
             param_groups = [
@@ -1512,7 +1532,7 @@ def _plot_str_by_str(dataset=None,
                 ('Differential parameters', struct.differential_parameters.keys())
                 ]
             break
-    print(tracked_structs)
+        
     for param_type, keys in param_groups:
         for key in keys:
             
@@ -1569,3 +1589,29 @@ def _plot_str_by_str(dataset=None,
             if pdf:
                 pdf_pages.savefig()
             plt.close(fig)
+
+def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse, 
+                           struct, polygon_color=None, ellipse_color=None,
+                           polygon_linewidth=1, ellipse_linewidth=1,
+                           semiaxis_linewidth=1, plot_structure_mid=False):
+    """Internal helper to overlay geometric fits on frame axes using OOP structures."""
+    poly_args = {'color': polygon_color} if polygon_color else {}
+    el_args = {'color': ellipse_color} if ellipse_color else {}
+    
+    ax_cur.plot(x_polygon, y_polygon, linewidth=polygon_linewidth, **poly_args)
+    ax_cur.plot(x_ellipse, y_ellipse, linewidth=ellipse_linewidth, **el_args)
+
+    cx, cy = struct.fit_center[0], struct.fit_center[1]
+    b, angle = struct.fit_axes_length[0], struct.fit_angle
+    
+    # BUG FIX: Rotate the angle 90 degrees to align with the major axis
+    angle_major = angle+np.pi/2
+    
+    if not (np.isnan(cx) or np.isnan(cy) or np.isnan(b) or np.isnan(angle_major)):
+        ax_cur.plot([cx - b*np.cos(angle_major), cx + b*np.cos(angle_major)],
+                    [cy - b*np.sin(angle_major), cy + b*np.sin(angle_major)],
+                    color='magenta', linewidth=semiaxis_linewidth)
+    
+    if plot_structure_mid:
+        ax_cur.scatter(struct.centroid[0], struct.centroid[1], color='yellow')
+        ax_cur.scatter(struct.center_of_gravity[0], struct.center_of_gravity[1], color='red')

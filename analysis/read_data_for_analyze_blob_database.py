@@ -92,7 +92,7 @@ def read_all_blob_data(time_range_around_peak=5e-3,
         
         for ind in range(ncalc):
             shot = blob_database['shot'][ind]
-            
+            if shot == 137651: continue
             if isinstance(blob_database['time'][ind], (list, np.ndarray)):
                 time_range = blob_database['time'][ind]
             else:
@@ -258,8 +258,8 @@ def read_blob_data(shot,
               execution, returns None.
     """
     
-    # try:
-    if True:
+    try:
+    # if True:
         blob_results = analyze_gpi_structures(exp_id=shot,
                                               time_range=time_range,
                                               normalize='simple',
@@ -285,7 +285,7 @@ def read_blob_data(shot,
                                               
                                               test_structures=False,
                                               return_results=not calculate_only,
-                                              
+                                              calculate_only=calculate_only,
                                               plot=plot,
                                               plot_str_by_str=True,
                                               plot_scatter=True,
@@ -303,10 +303,10 @@ def read_blob_data(shot,
         if not calculate_only:
             return blob_results
 
-    # except Exception as e:
-    #    print('Exception in read_data_for_analyze_blob_database.py line 345.')
-    #    print(e)
-    #    print(f"Couldn't calculate {shot}, at {time_range} seconds.")
+    except Exception as e:
+       print('Exception in read_data_for_analyze_blob_database.py line 345.')
+       print(e)
+       print(f"Couldn't calculate {shot}, at {time_range} seconds.")
        
     if not calculate_only:
         return None

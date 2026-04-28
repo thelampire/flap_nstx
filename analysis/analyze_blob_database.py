@@ -54,7 +54,6 @@ fig_dir='/plots'
 
 
 def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
-                               min_structure_lifetime=20,
                                str_finding_method='watershed',
                                plot=False,
                                pdf=False,
@@ -169,10 +168,9 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                pdf=pdf,
                                plot=plot,
                                recalc_tracking=recalc_tracking,
-                               min_structure_lifetime=min_structure_lifetime,
                                str_finding_method=str_finding_method,
                                max_gap=2 if calculate_for_lh_study else 1,
-                               calculate_only=True if calculate_for_lh_study else False)
+                               calculate_only=True)
 
             # Cleanup
             flap.delete_data_object('*')
@@ -324,7 +322,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     else:
         with open(pickle_filename, 'rb') as f:
             full_data = pickle.load(f)
-
+    return full_data
     # --- 4. Plotting & Export ---
     if plot:
         ranges = {

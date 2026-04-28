@@ -362,34 +362,7 @@ def identify_structures(#General inputs
     # Note: Omitted the Plotting/Saving logic from the bottom for brevity, 
     # but it safely calls the nested ['Regular parameters'] exactly as requested!
     
-    return structures
-
-def _plot_ellipses_centers(ax_cur, x_polygon, y_polygon, x_ellipse, y_ellipse, 
-                           struct, polygon_color=None, ellipse_color=None,
-                           polygon_linewidth=1, ellipse_linewidth=1,
-                           semiaxis_linewidth=1, plot_structure_mid=False):
-    """Internal helper to overlay geometric fits on frame axes using OOP structures."""
-    poly_args = {'color': polygon_color} if polygon_color else {}
-    el_args = {'color': ellipse_color} if ellipse_color else {}
-    
-    ax_cur.plot(x_polygon, y_polygon, linewidth=polygon_linewidth, **poly_args)
-    ax_cur.plot(x_ellipse, y_ellipse, linewidth=ellipse_linewidth, **el_args)
-
-    cx, cy = struct.fit_center[0], struct.fit_center[1]
-    b, angle = struct.fit_axes_length[0], struct.fit_angle
-    
-    # BUG FIX: Rotate the angle 90 degrees to align with the major axis
-    angle_major = angle
-    
-    if not (np.isnan(cx) or np.isnan(cy) or np.isnan(b) or np.isnan(angle_major)):
-        ax_cur.plot([cx - b*np.cos(angle_major), cx + b*np.cos(angle_major)],
-                    [cy - b*np.sin(angle_major), cy + b*np.sin(angle_major)],
-                    color='magenta', linewidth=semiaxis_linewidth)
-    
-    if plot_structure_mid:
-        ax_cur.scatter(struct.centroid[0], struct.centroid[1], color='yellow')
-        ax_cur.scatter(struct.center_of_gravity[0], struct.center_of_gravity[1], color='red')
-        
+    return structures        
         
         
 def validate_structure(struct, x_coord, y_coord, elongation_threshold, 

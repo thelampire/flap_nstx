@@ -623,31 +623,7 @@ class StructureDataset:
                 
         # Case C: It's a standard variable (e.g., .label) missing from METADATA
         return np.array(harvested)
-    
-    #separate saving
-    def save_hdf5_2(self, filename):
-        """Master save function to write the entire dataset to an HDF5 file."""
-        with h5py.File(filename, 'w') as f:
-            f.attrs['mode'] = self.mode
-            f.attrs['exp_id'] = self.exp_id if self.exp_id is not None else "NONE_TYPE_FLAG"
-            f.create_dataset('frame_times', data=np.array(self.frame_times))
 
-            if self.mode == 'untracked':
-                frames_grp = f.create_group('frames')
-                for i_frame, frame_structures in enumerate(self.frames):
-                    frame_grp = frames_grp.create_group(f"frame_{i_frame}")
-                    for j_str, struct in enumerate(frame_structures):
-                        str_grp = frame_grp.create_group(f"struct_{j_str}")
-                        struct.save_hdf5(str_grp)
-
-            elif self.mode == 'tracked':
-                tracked_grp = f.create_group('tracked_structures')
-                # BUG FIX: Iterate over the list, not a dictionary!
-                for i, tracked_blob in enumerate(self.tracked_structures):
-                    # Extract the label from the object (fallback to the index 'i' just in case)
-                    label = getattr(tracked_blob, 'label', i)
-                    blob_grp = tracked_grp.create_group(f"blob_{label}")
-                    tracked_blob.save_hdf5(blob_grp)
     #Unified saving
     def save_hdf5(self, filename):
         """Master save function for fully Unified HDF5 files."""
@@ -741,7 +717,32 @@ class StructureDataset:
                 dataset.tracked_structures.sort(key=lambda b: getattr(b, 'label', 0))
 
         return dataset
-    
+        
+    #separate saving
+    def save_hdf5_2(self, filename):
+        """Master save function to write the entire dataset to an HDF5 file."""
+        with h5py.File(filename, 'w') as f:
+            f.attrs['mode'] = self.mode
+            f.attrs['exp_id'] = self.exp_id if self.exp_id is not None else "NONE_TYPE_FLAG"
+            f.create_dataset('frame_times', data=np.array(self.frame_times))
+
+            if self.mode == 'untracked':
+                frames_grp = f.create_group('frames')
+                for i_frame, frame_structures in enumerate(self.frames):
+                    frame_grp = frames_grp.create_group(f"frame_{i_frame}")
+                    for j_str, struct in enumerate(frame_structures):
+                        str_grp = frame_grp.create_group(f"struct_{j_str}")
+                        struct.save_hdf5(str_grp)
+
+            elif self.mode == 'tracked':
+                tracked_grp = f.create_group('tracked_structures')
+                # BUG FIX: Iterate over the list, not a dictionary!
+                for i, tracked_blob in enumerate(self.tracked_structures):
+                    # Extract the label from the object (fallback to the index 'i' just in case)
+                    label = getattr(tracked_blob, 'label', i)
+                    blob_grp = tracked_grp.create_group(f"blob_{label}")
+                    tracked_blob.save_hdf5(blob_grp)
+                    
     #Separate loader
     @classmethod
     def load_hdf5_2(cls, filename):
