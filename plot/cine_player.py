@@ -7,7 +7,13 @@ import time
 import sys
 import matplotlib
 import matplotlib.cm as cm
-import cv2
+try:
+    import cv2
+    cv2_installed=True
+except:
+    cv2 = None
+    print('OpenCV not installed. True color won\'t be available')
+    cv2_installed=False
 
 class CinePlayer:
     def __init__(self, root):
@@ -80,8 +86,11 @@ class CinePlayer:
 
         tk.Label(self.controls_frame, text="Color/Map:").pack(side=tk.LEFT, padx=(10, 0))
         self.cmap_var = tk.StringVar(value="Grayscale")
-        
-        cmap_options = ["Grayscale", "True Color (Debayer)", "Viridis", "Plasma", "Inferno", "Magma", "Jet", "Hot"]
+        if cv2_installed:
+            cmap_options = ["Grayscale", "True Color (Debayer)", "Viridis", "Plasma", "Inferno", "Magma", "Jet", "Hot"]
+        else:
+            cmap_options = ["Grayscale", "Viridis", "Plasma", "Inferno", "Magma", "Jet", "Hot"]
+            
         self.cmap_dropdown = tk.OptionMenu(self.controls_frame, self.cmap_var, *cmap_options, command=self.on_cmap_change)
         self.cmap_dropdown.config(state=tk.DISABLED)
         self.cmap_dropdown.pack(side=tk.LEFT, padx=5)
