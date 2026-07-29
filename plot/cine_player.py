@@ -12,7 +12,6 @@ class CinePlayer:
     def __init__(self, root):
         self.root = root
         self.root.title("Cine Video Player (PIMS)")
-        # Increased window size by 1.5x
         self.root.geometry("1575x975") 
 
         # Player State
@@ -62,15 +61,11 @@ class CinePlayer:
         self.controls_frame = tk.Frame(self.root, pady=10, padx=10)
         self.controls_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # Open button on the left
         self.open_btn = tk.Button(self.controls_frame, text="Open .cine", command=self.open_file)
         self.open_btn.pack(side=tk.LEFT, padx=5)
         
-        # Explicit Close Button pushed to the lower right corner
-        self.close_btn = tk.Button(self.controls_frame, text="Close App", command=self.on_closing, fg="red")
-        self.close_btn.pack(side=tk.RIGHT, padx=10)
+        # New Explicit Close Button
 
-        # The rest of the controls pack sequentially to the left
         self.play_btn = tk.Button(self.controls_frame, text="Play", command=self.toggle_play, state=tk.DISABLED)
         self.play_btn.pack(side=tk.LEFT, padx=5)
 
@@ -107,7 +102,9 @@ class CinePlayer:
         self.speed_label = tk.Label(self.controls_frame, text="1.00x", width=5)
         self.speed_label.pack(side=tk.LEFT)
 
-        # 2. Pack the video frame SECOND
+        self.close_btn = tk.Button(self.controls_frame, text="Close App", command=self.on_closing, fg="red")
+        self.close_btn.pack(side=tk.LEFT, padx=5)
+
         self.video_frame = tk.Frame(self.root, bg="black")
         self.video_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.video_frame.pack_propagate(False)
