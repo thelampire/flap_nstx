@@ -280,7 +280,7 @@ class CinePlayer:
                     flat_data = np.squeeze(norm_data)
                     
                     if flat_data.ndim == 2:
-                        colored_data = cv2.cvtColor(flat_data, cv2.COLOR_BAYER_BG2RGB)
+                        colored_data = cv2.cvtColor(flat_data, cv2.COLOR_BAYER_GB2BGR)
                         img = Image.fromarray(colored_data, 'RGB')
                     else:
                         # If it is already a 3D matrix (e.g., standard color video), just pass it
