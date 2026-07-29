@@ -4,9 +4,10 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import numpy as np
 import pims
 import time
+import sys
 import matplotlib
 import matplotlib.cm as cm
-
+import cv2
 
 class CinePlayer:
     def __init__(self, root):
@@ -30,7 +31,6 @@ class CinePlayer:
         self._interaction_paused = False
         self._interaction_playing_state = False
         
-        # Intercept the window native close event ('X' button)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         self.setup_font()
@@ -38,7 +38,6 @@ class CinePlayer:
         self.force_foreground()
 
     def force_foreground(self):
-        """Forces the window to pop up on top of all other windows on macOS."""
         self.root.lift()
         self.root.attributes('-topmost', True)
         self.root.focus_force()
@@ -64,7 +63,8 @@ class CinePlayer:
         self.open_btn = tk.Button(self.controls_frame, text="Open .cine", command=self.open_file)
         self.open_btn.pack(side=tk.LEFT, padx=5)
         
-        # New Explicit Close Button
+        self.close_btn = tk.Button(self.controls_frame, text="Close App", command=self.on_closing, fg="red")
+        self.close_btn.pack(side=tk.RIGHT, padx=10)
 
         self.play_btn = tk.Button(self.controls_frame, text="Play", command=self.toggle_play, state=tk.DISABLED)
         self.play_btn.pack(side=tk.LEFT, padx=5)
@@ -78,9 +78,10 @@ class CinePlayer:
         self.mirror_btn = tk.Button(self.controls_frame, text="Mirror", command=self.mirror_video, state=tk.DISABLED)
         self.mirror_btn.pack(side=tk.LEFT, padx=5)
 
-        tk.Label(self.controls_frame, text="Colormap:").pack(side=tk.LEFT, padx=(10, 0))
+        tk.Label(self.controls_frame, text="Color/Map:").pack(side=tk.LEFT, padx=(10, 0))
         self.cmap_var = tk.StringVar(value="Grayscale")
-        cmap_options = ["Grayscale", "Viridis", "Plasma", "Inferno", "Magma", "Jet", "Hot"]
+        
+        cmap_options = ["Grayscale", "True Color (Debayer)", "Viridis", "Plasma", "Inferno", "Magma", "Jet", "Hot"]
         self.cmap_dropdown = tk.OptionMenu(self.controls_frame, self.cmap_var, *cmap_options, command=self.on_cmap_change)
         self.cmap_dropdown.config(state=tk.DISABLED)
         self.cmap_dropdown.pack(side=tk.LEFT, padx=5)
@@ -102,9 +103,6 @@ class CinePlayer:
         self.speed_label = tk.Label(self.controls_frame, text="1.00x", width=5)
         self.speed_label.pack(side=tk.LEFT)
 
-        self.close_btn = tk.Button(self.controls_frame, text="Close App", command=self.on_closing, fg="red")
-        self.close_btn.pack(side=tk.LEFT, padx=5)
-
         self.video_frame = tk.Frame(self.root, bg="black")
         self.video_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.video_frame.pack_propagate(False)
@@ -114,7 +112,6 @@ class CinePlayer:
         
         self.video_frame.bind("<Configure>", self.on_window_resize)
         
-        # Apply the pause-on-click interaction to UI elements
         self.make_interactive(self.slider)
         self.make_interactive(self.speed_scale)
         self.make_interactive(self.cmap_dropdown)
@@ -123,14 +120,12 @@ class CinePlayer:
         self.make_interactive(self.restart_btn)
 
     def make_interactive(self, widget):
-        """Binds mouse press and release events to handle auto-pausing"""
         widget.bind("<ButtonPress-1>", self.pause_for_interaction)
         widget.bind("<ButtonRelease-1>", self.resume_after_interaction)
 
     def pause_for_interaction(self, event=None):
         if self._is_closing: return
         
-        # Lock in the state only once per interaction
         if not self._interaction_paused:
             self._interaction_playing_state = self.is_playing
             self._interaction_paused = True
@@ -144,7 +139,6 @@ class CinePlayer:
 
     def resume_after_interaction(self, event=None):
         if self._is_closing: return
-        # Schedule the resume shortly after so widget commands have time to fire first
         self.root.after(100, self._do_resume)
 
     def _do_resume(self):
@@ -152,7 +146,6 @@ class CinePlayer:
         
         if self._interaction_paused:
             self._interaction_paused = False
-            # Only resume if the video was actually playing before they clicked
             if self._interaction_playing_state and not self.is_playing:
                 self.is_playing = True
                 self.play_btn.config(text="Pause")
@@ -164,14 +157,15 @@ class CinePlayer:
             return
 
         try:
-        
             if self.reader is not None:
                 self.reader.close()
 
             self.reader = pims.Cine(file_path)
-            if 3 not in self.reader.shape and self.reader.setup_fields_dict['cfa'] != 0:
-                self.reader.setup_fields_dict['cfa']=0
-                self.reader.header_dict['compression']=0
+            
+            if 3 not in self.reader.shape and self.reader.setup_fields_dict.get('cfa', 0) != 0:
+                self.reader.setup_fields_dict['cfa'] = 0
+                self.reader.header_dict['compression'] = 0
+
             self.total_frames = len(self.reader)
             self.base_fps = 30
 
@@ -239,7 +233,6 @@ class CinePlayer:
         val = int(val)
         if val != self.current_frame:
             self.current_frame = val
-            # Update the frame explicitly when manually scrubbing while paused
             if not self.is_playing:
                 self.show_frame(self.current_frame)
 
@@ -270,24 +263,52 @@ class CinePlayer:
                 norm_data = frame_data
 
             cmap_name = self.cmap_var.get()
-            if cmap_name != "Grayscale":
+            
+            if cmap_name == "True Color (Debayer)":
                 try:
-                    colormap = matplotlib.colormaps[cmap_name.lower()]
-                except AttributeError:
-                    colormap = cm.get_cmap(cmap_name.lower())
+                    # SAFETY CHECK: Only debayer if the image is strictly 2D. 
+                    # np.squeeze() removes any ghost dimensions (like 1280x720x1).
+                    flat_data = np.squeeze(norm_data)
                     
-                colored_data = colormap(norm_data / 255.0)
-                colored_data = (colored_data[:, :, :3] * 255).astype(np.uint8)
-                img = Image.fromarray(colored_data, 'RGB')
+                    if flat_data.ndim == 2:
+                        colored_data = cv2.cvtColor(flat_data, cv2.COLOR_BAYER_BG2RGB)
+                        img = Image.fromarray(colored_data, 'RGB')
+                    else:
+                        # If it is already a 3D matrix (e.g., standard color video), just pass it
+                        if norm_data.shape[-1] == 3:
+                            img = Image.fromarray(norm_data, 'RGB')
+                        else:
+                            img = Image.fromarray(norm_data)
+                except Exception as e:
+                    print(f"Debayer fallback due to error: {e}")
+                    img = Image.fromarray(norm_data)
+                    
+            elif cmap_name != "Grayscale":
+                # Ensure the data is strictly 2D before applying Matplotlib colormaps
+                flat_data = np.squeeze(norm_data)
+                if flat_data.ndim == 2:
+                    try:
+                        colormap = matplotlib.colormaps[cmap_name.lower()]
+                    except AttributeError:
+                        colormap = cm.get_cmap(cmap_name.lower())
+                        
+                    colored_data = colormap(flat_data / 255.0)
+                    colored_data = (colored_data[:, :, :3] * 255).astype(np.uint8)
+                    img = Image.fromarray(colored_data, 'RGB')
+                else:
+                    # It already has colors; just display it
+                    img = Image.fromarray(norm_data)
             else:
                 img = Image.fromarray(norm_data)
 
+            # Apply orientation modifications
             if self.is_mirrored:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
             if self.rotation_angle != 0:
                 img = img.rotate(self.rotation_angle, expand=True)
             
+            # Scale dynamically to window
             win_w = self.video_frame.winfo_width()
             win_h = self.video_frame.winfo_height()
             
@@ -298,6 +319,7 @@ class CinePlayer:
                 new_h = int(img_h * scale)
                 img = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
             
+            # Timestamp Logic
             try:
                 first_img_no = self.reader.header_dict['first_image_no']
             except (AttributeError, KeyError):
@@ -360,11 +382,9 @@ class CinePlayer:
         self._play_job = self.root.after(actual_delay, self.play_loop)
 
     def on_closing(self):
-        """Safely clean up running processes before shutting down the app."""
         self._is_closing = True
         self.is_playing = False
         
-        # Cancel the pending loop tasks safely
         if self._play_job:
             try:
                 self.root.after_cancel(self._play_job)
@@ -372,14 +392,12 @@ class CinePlayer:
             except Exception:
                 pass
             
-        # Free up the file from memory
         if self.reader is not None:
             try:
                 self.reader.close()
             except Exception:
                 pass
                 
-        # Completely terminate Tkinter processes
         try:
             self.root.quit()
             self.root.destroy()
