@@ -5,9 +5,9 @@ Created on Fri Aug 29 16:41:06 2025
 
 @author: mlampert
 """
-
 #Core modules
 import os
+
 import copy
 import time as time_mod
 import pickle
@@ -20,6 +20,7 @@ flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.gpi import analyze_gpi_structures
 from flap_nstx.thomson import get_fit_nstx_thomson_profiles
+from flap_nstx.tools import get_flux_coord
 
 import flap_mdsplus
 
@@ -39,7 +40,7 @@ import pandas
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
-def read_all_blob_data(time_range_around_peak=5e-3, 
+def read_all_blob_data(time_range_around_peak=[-5e-3,15e-3], 
                        nocalc=False,
                        recalc_tracking=False,
                        min_structure_lifetime=20,
@@ -53,6 +54,59 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                        read_l_mode_only=False,
                        read_h_mode_only=False,
                        filtered_blob_db=False):
+    
+    """
+    Reads, processes, and aggregates Gas Puff Imaging (GPI) blob tracking data across a database of experimental shots.
+
+    This function loads blob database files (optionally filtered by L-mode or H-mode), extracts tracked 
+    structure parameters (both regular and differential), and computes derived quantities such as the 
+    normalized flux coordinate, poloidal angle, and lifetime. The resulting parameter distributions are 
+    aggregated based on the chosen averaging method (e.g., shot-by-shot or blob-by-blob) and cached to a 
+    Pickle file to accelerate future execution.
+
+    Args:
+        time_range_around_peak (list or float, optional): The time window relative to the peak time 
+            to extract data. Defaults to [-5e-3, 15e-3]. If L/H mode specific reading is not set, 
+            this is forced to a scalar (5e-3).
+        nocalc (bool, optional): If True, attempts to load the processed data from a cached Pickle 
+            file instead of recalculating. Defaults to False.
+        recalc_tracking (bool, optional): If True, forces the underlying blob tracker to recalculate 
+            structure trajectories instead of using cached tracking results. Defaults to False.
+        min_structure_lifetime (int, optional): Minimum required lifespan (in frames) for a tracked 
+            structure to be included in the analysis. Defaults to 20.
+        str_finding_method (str, optional): The segmentation algorithm used to identify blobs 
+            (e.g., 'watershed', 'contour'). Defaults to 'watershed'.
+        fix_angle_for_correlation (bool, optional): Legacy parameter for angle normalization. Defaults to False.
+        read_mean_results (bool, optional): If True, forces `averaging` to 'shot'. Defaults to False.
+        averaging (str, optional): The data aggregation level. Options include 'shot' (averages all blobs 
+            in a shot), 'blob' (retains blob-by-blob arrays), or 'no' (flattens all raw data points). 
+            Defaults to 'shot'.
+        average (str, optional): The statistical moment to extract when aggregating. Options are 'avg' 
+            (mean), 'std' (standard deviation), or 'max' (maximum). Defaults to 'avg'.
+        replicate_histogram2 (bool, optional): Compatibility flag. If True, shifts differential data arrays 
+            by dropping the first element to match older pipeline logic. Defaults to False.
+        replicate_old_read_blob_data (bool, optional): Compatibility flag. If True, duplicates the last 
+            element of differential arrays to match older pipeline logic. Defaults to False.
+        read_l_mode_only (bool, optional): If True, filters the database to analyze only L-mode shots. 
+            Defaults to False.
+        read_h_mode_only (bool, optional): If True, filters the database to analyze only H-mode shots. 
+            Defaults to False.
+        filtered_blob_db (bool, optional): If True, reads from a specifically pre-filtered sub-database 
+            of shots rather than the global list. Defaults to False.
+
+    Returns:
+        dict: A dictionary containing the aggregated blob parameters. 
+            - If `averaging == 'shot'`, values are lists of scalar floats (one per shot).
+            - If `averaging == 'blob'` or `'no'`, values are lists of dictionaries containing the `shot` 
+              number and the un-averaged `data` array.
+            Missing or failed shots are represented with `np.nan`.
+
+    Notes:
+        - The function dynamically extracts parameter keys from the first valid tracked structure it finds, 
+          ensuring future additions to the tracking code are automatically captured.
+        - Data is automatically saved to `<working_directory>/processed_data/` using a dynamically generated 
+          filename based on the input flags.
+    """
     
     if read_mean_results:
         averaging='shot'
@@ -75,7 +129,8 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                                                         time_range_around_peak=time_range_around_peak)
     else:
         if not isinstance(time_range_around_peak, (int, float)):
-            raise ValueError('time_range_around_peak needs to be a single number if l_mode or h_mode reading is not set.')
+            print('time_range_around_peak needs to be a single number if l_mode or h_mode reading is not set. Setting it to 5e-3')
+        time_range_around_peak=5e-3
         blob_database = read_blob_database_file(time_range_around_peak=time_range_around_peak)
         
     ncalc = len(blob_database['shot'])
@@ -89,16 +144,20 @@ def read_all_blob_data(time_range_around_peak=5e-3,
         start_time = time_mod.time()
         keys_initialized = False
         analyzed_keys = []
-        
+        failed_shots={'shot':[],'index':[]}
         for ind in range(ncalc):
             shot = blob_database['shot'][ind]
-            if shot == 137651: continue
+            if shot in [137651, 139435, 139434]:
+                failed_shots['shot'].append(shot)
+                failed_shots['index'].append(ind)
+                continue
+            
             if isinstance(blob_database['time'][ind], (list, np.ndarray)):
                 time_range = blob_database['time'][ind]
             else:
                 time_range = [blob_database['time'][ind] - time_range_around_peak,
                               blob_database['time'][ind] + time_range_around_peak]
-                
+
             blob_results = read_blob_data(shot,
                                           time_range,
                                           nocalc=True,
@@ -108,6 +167,8 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                                           
             # Skip invalid shots or shots with no structures
             if blob_results is None or blob_results.mode != 'tracked' or not blob_results.tracked_structures: 
+                failed_shots['shot'].append(shot)
+                failed_shots['index'].append(ind)
                 continue
         
             # --- DYNAMIC DICTIONARY GENERATION ---
@@ -116,7 +177,9 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                 
                 # Combine keys from both dictionaries dynamically
                 analyzed_keys = list(first_struct.regular_parameters.keys()) + list(first_struct.differential_parameters.keys())
-                
+                if 'Lifetime' not in analyzed_keys:
+                    analyzed_keys += ['Normalized flux coordinate', 'Poloidal angle', 'Lifetime']                    
+                    
                 full_blob_db_data = {key: [] for key in analyzed_keys}
                 full_blob_db_error = {key: [] for key in analyzed_keys}
                 keys_initialized = True
@@ -133,12 +196,43 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                 for key in analyzed_keys:
                     
                     is_differential = False
-                    
+                    #Fit axes are accidentally interchanged
+                    if key == 'Axes length minor fit':
+                        new_key = 'Axes length major fit'
+                    elif key == 'Axes length major fit':
+                        new_key = 'Axes length minor fit'
+                    else:
+                        new_key=key
+                    #Manually added new parameters because recalculating everything takes forever
+                    #Eventually these need to be added to the database.
+                    if key == 'Normalized flux coordinate' or key == 'Poloidal angle':
+                        if key == 'Normalized flux coordinate':
+                            try:
+                                norm_flux_failed=False
+                                psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
+                                                                                   time=np.mean(blob_database['time'][ind]),
+                                                                                   R_target=structure.regular_parameters['Centroid radial'].value,
+                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value)
+                                raw_data = psi_norm_target
+                            except Exception as e:
+                                print(f'Exception occurred at read_data_for_analyze_blob_database.py at line 157: {e}')
+                                raw_data = copy.deepcopy(structure.regular_parameters['Intensity'].value)
+                                raw_data[:]=np.nan
+                                norm_flux_failed=True
+                        else:
+                            if norm_flux_failed:
+                                raw_data = copy.deepcopy(structure.regular_parameters['Intensity'].value)
+                                raw_data[:]=np.nan
+                            else:
+                                raw_data = theta_arc_target
+                            
+                    elif key == 'Lifetime':
+                        raw_data = np.arange(len(structure.regular_parameters['Intensity'].value))*2.5e-6
                     # Safely extract the raw NumPy array and determine its type natively
-                    if key in structure.regular_parameters:
-                        raw_data = structure.regular_parameters[key].value
+                    elif key in structure.regular_parameters:
+                        raw_data = structure.regular_parameters[new_key].value
                     elif key in structure.differential_parameters:
-                        raw_data = structure.differential_parameters[key].value
+                        raw_data = structure.differential_parameters[new_key].value
                         is_differential = True
                     else:
                         continue 
@@ -159,31 +253,54 @@ def read_all_blob_data(time_range_around_peak=5e-3,
                         
                     str_key_data = np.asarray(str_key_data)
                     
+                    
+                    
                     if averaging == 'no':
-                        curr_shot_data[key].append(str_key_data) 
+                        curr_shot_data[new_key]=np.append(curr_shot_data[new_key],np.ravel(str_key_data))
                         
                     elif averaging in ['shot', 'blob']:
                         str_key_data = str_key_data[~np.isnan(str_key_data)]
                         if len(str_key_data) == 0: continue
                         
                         if averaging == 'shot':
-                            curr_shot_error[key].append(np.sqrt(np.var(str_key_data)))
+                            curr_shot_error[new_key].append(np.sqrt(np.var(str_key_data)))
                                 
                         if average == 'avg':
-                            curr_shot_data[key].append(np.mean(str_key_data))
+                            curr_shot_data[new_key].append(np.mean(str_key_data))
                         elif average == 'std':
-                            curr_shot_data[key].append(np.sqrt(np.var(str_key_data)))
+                            curr_shot_data[new_key].append(np.sqrt(np.var(str_key_data)))
                         elif average == 'max':
-                            curr_shot_data[key].append(np.max(str_key_data))
-                                        
-            for key in full_blob_db_data.keys():
-                if len(curr_shot_data[key]) == 0: continue
+                            curr_shot_data[new_key].append(np.max(str_key_data))
+                    elif averaging == 'conditional':
+                        curr_shot_data[new_key].append(str_key_data)
+                        
+            if averaging != 'conditional':
+                for key in analyzed_keys:
+                    try:
+                        curr_shot_data[key]=np.concatenate(curr_shot_data[key])
+                    except:
+                        pass
                 
-                if averaging == 'shot':
-                    full_blob_db_data[key].append(np.mean(curr_shot_data[key]))
-                    full_blob_db_error[key].append(np.mean(curr_shot_error[key]) / np.sqrt(len(curr_shot_error[key])))
+            for key in full_blob_db_data.keys():
+                if len(curr_shot_data[key]) == 0: 
+                    print(f"{shot} dropped from the calculation")
+                    if averaging == 'shot':
+                        full_blob_db_data[key].append(np.nan)
+                        full_blob_db_error[key].append(np.nan)
+                    
+                    elif averaging in ['no', 'blob']:
+                        full_blob_db_data[key].append({'shot': shot, 'data': np.nan})
+                    
+                    elif averaging == 'conditional':
+                        pass
                 else:
-                    full_blob_db_data[key].append({'shot': shot, 'data': curr_shot_data[key]})
+                    if averaging == 'shot':
+                        full_blob_db_data[key].append(np.mean(curr_shot_data[key]))
+                        full_blob_db_error[key].append(np.mean(curr_shot_error[key]) / np.sqrt(len(curr_shot_error[key])))
+                    elif averaging in ['no', 'blob']:
+                        full_blob_db_data[key].append({'shot': shot, 'data': curr_shot_data[key]})
+                    elif averaging == 'conditional':
+                        pass                    
             
             elapsed_time = time_mod.time() - start_time
             avg_time_per_shot = elapsed_time / (ind + 1)
@@ -196,6 +313,15 @@ def read_all_blob_data(time_range_around_peak=5e-3,
             print(f'\rRemaining time from the calculation: {hours}h {minutes:02}min {seconds:02}sec', end="", flush=True)
             
         print(f'\nTotal number of structures: {n_str}')
+        
+        if len(failed_shots['shot']) > 0:
+            for ind, shot in enumerate(failed_shots['shot']):
+                for key in full_blob_db_data.keys():
+                    if averaging == 'shot':
+                        full_blob_db_data[key].insert(ind, np.nan)
+                        full_blob_db_error[key].insert(ind, np.nan)
+                    else:
+                        full_blob_db_data[key].append({'shot': shot, 'data': np.nan})
         
         with open(pickle_filename, 'wb') as f:
             pickle.dump(full_blob_db_data, f)
@@ -583,9 +709,11 @@ def read_all_plasma_data(time_range_around_peak=[-5e-3,15e-3],
     # pickle_filename=wd+'/processed_data/blob_database_shot_by_shot_plasma.pickle'
     if read_l_mode_only:
         blob_database=read_blob_lh_mode_database_file(l_mode=True,
+                                                      filtered_blob_db=False,
                                                       time_range_around_peak=time_range_around_peak)
     elif read_h_mode_only:
         blob_database=read_blob_lh_mode_database_file(h_mode=True,
+                                                      filtered_blob_db=False,
                                                       time_range_around_peak=time_range_around_peak)
     else:
         blob_database=read_blob_database_file(time_range_around_peak=time_range_around_peak,)
@@ -595,24 +723,28 @@ def read_all_plasma_data(time_range_around_peak=[-5e-3,15e-3],
         
     # if True:
         ncalc=len(blob_database['shot'])
-
         curr_plasma_data=read_plasma_data(exp_id=blob_database['shot'][0],
-                                          time=blob_database['time'][0],
+                                          time=np.mean(blob_database['time'][0]),
                                           calculate_parameters_in_sol=calculate_parameters_in_sol)
         full_plasma_data={}
         for key in curr_plasma_data:
             full_plasma_data[key]=[]
 
         for ind in range(ncalc):
-            blob_time=blob_database['time'][ind]
+            blob_time=np.mean(blob_database['time'][ind])
             shot=blob_database['shot'][ind]
-
-            curr_plasma_data=read_plasma_data(exp_id=shot,
-                                              time=blob_time,
-                                              calculate_parameters_in_sol=calculate_parameters_in_sol)
-            for key in curr_plasma_data.keys():
-                full_plasma_data[key]=np.append(full_plasma_data[key],
-                                                curr_plasma_data[key])
+            try:
+                curr_plasma_data=read_plasma_data(exp_id=shot,
+                                                  time=blob_time,
+                                                  calculate_parameters_in_sol=calculate_parameters_in_sol)
+                for key in curr_plasma_data.keys():
+                    full_plasma_data[key]=np.append(full_plasma_data[key],
+                                                    curr_plasma_data[key])
+            except Exception as e:
+                print(f'Exception in read_all_plasma_data line 659: {e}')
+                for key in full_plasma_data.keys():
+                    full_plasma_data[key]=np.append(full_plasma_data[key],
+                                                    np.nan)
                 
         
         pickle.dump(full_plasma_data,open(pickle_filename,'wb'))

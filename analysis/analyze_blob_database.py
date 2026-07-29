@@ -9,6 +9,7 @@ Created on Tue Aug 29 13:52:23 2023
 import os
 import time as time_mod
 import pickle
+import copy
 
 from string import ascii_lowercase as alc
 
@@ -24,7 +25,7 @@ from flap_nstx.analysis import read_blob_database_file, read_blob_lh_mode_databa
 from flap_nstx.analysis import return_interesting_key_pairs
 
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
-from flap_nstx.tools import correlation, mutual_information
+from flap_nstx.tools import correlation, mutual_information, get_flux_coord
 
 import flap_mdsplus
 
@@ -225,7 +226,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     if analyze_l_mode_only: pickle_filename += '_l_mode'
     elif analyze_h_mode_only: pickle_filename += '_h_mode'
     pickle_filename += '.pickle'
-
+    print(pickle_filename)
     # --- 2. Data Extraction & Aggregation ---
     if not os.path.exists(pickle_filename) or not nocalc:
         
@@ -251,7 +252,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
         for ind in range(ncalc):
             start_time = time_mod.time()
-            
+            shot=int(blob_database['shot'][ind])
             if analyze_h_mode_only or analyze_l_mode_only:
                 _time_range = list(blob_database['time'][ind])
             else:
@@ -260,7 +261,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                blob_time + time_range_around_peak[1]]
             try:
                 # Assumes read_blob_data returns the new StructureDataset object
-                blob_results = read_blob_data(int(blob_database['shot'][ind]),
+                blob_results = read_blob_data(shot,
                                               _time_range,
                                               nocalc=True,
                                               recalc_tracking=recalc_tracking,
@@ -280,16 +281,42 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             if not keys_initialized:
                 first_struct = blob_results.tracked_structures[0]
                 analyzed_keys = list(first_struct.regular_parameters.keys()) + list(first_struct.differential_parameters.keys())
+                if 'Lifetime' not in analyzed_keys:
+                    analyzed_keys += ['Normalized flux coordinate', 'Poloidal angle', 'Lifetime']   
                 full_data = {key: [] for key in analyzed_keys}
                 keys_initialized = True
-
             # --- OOP DATA EXTRACTION ---
             for structure in blob_results.tracked_structures:
                 n_str += 1
                 for key in analyzed_keys:
                     
                     # Safely extract the data and dynamically check if it's differential
-                    if key in structure.regular_parameters:
+                    if key == 'Normalized flux coordinate' or key == 'Poloidal angle':
+                        if key == 'Normalized flux coordinate':
+                            try:
+                                norm_flux_failed=False
+                                psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
+                                                                                   time=np.mean(blob_database['time'][ind]),
+                                                                                   R_target=structure.regular_parameters['Centroid radial'].value,
+                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value)
+                                theta_arc_target = (theta_arc_target + np.pi) % (2 * np.pi) - np.pi
+                                raw_data = psi_norm_target
+                            except Exception as e:
+                                print(f'Exception occurred at read_data_for_analyze_blob_database.py at line 157: {e}')
+                                raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
+                                raw_data[:]=np.nan
+                                print(shot,np.mean(blob_database['time'][ind]))
+                                norm_flux_failed=True
+                        else:
+                            if norm_flux_failed:
+                                raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
+                                raw_data[:]=np.nan
+                            else:
+                                raw_data = theta_arc_target
+                            
+                    elif key == 'Lifetime':
+                        raw_data = np.arange(len(structure.regular_parameters['Centroid radial'].value))*2.5e-6
+                    elif key in structure.regular_parameters:
                         raw_data = structure.regular_parameters[key].value
                         is_differential = False
                     elif key in structure.differential_parameters:
@@ -322,31 +349,71 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     else:
         with open(pickle_filename, 'rb') as f:
             full_data = pickle.load(f)
-    return full_data
+            
+            
+    #return full_data #This is here for some reason. Might cause trouble with other codes.
+    
+    
     # --- 4. Plotting & Export ---
     if plot:
         ranges = {
-            'Position radial fit': [1.4, 1.6], 
-            'Position poloidal fit': [0.15, 0.35],
-            'Velocity radial position fit': [-3e3, 3e3], 
-            'Velocity poloidal position fit': [-10e3, 10e3],
-            'Expansion fraction axes fit': [0.75, 1.25], 
-            'Elongation fit diff': [-0.075, 0.075], 
-            'Angular velocity angle fit': [-250e3, 250e3],
-            
-            'Area': [0, 0.006], 
-            'Expansion fraction area': [0.75, 1.25], 
-            'Convexity': [0.9, 1.0],
-            'Solidity': [0.75, 1.0], 
-            'Total curvature': [0.9, 1.0],
-            'Total bending energy': [0e8, 1.5e8], 
-            
-            'Convexity diff': [-0.01, 0.01],
-            'Solidity diff': [-0.25, 0.25], 
-            'Total curvature diff': [-0.05, 0.05],
-            'Total bending energy diff': [-0.3e8, 0.3e8], 
-            'Area diff': [-0.0015, 0.0015],
-        }
+                'Axes length minor': [0.0, 0.1],
+                'Axes length minor diff': [-10e3,10e3],
+                'Axes length major': [0.0, 0.2],
+                'Axes length major diff': [-25e3,25e3],
+                'Size radial': [0., 0.25],
+                'Size radial diff': [-30e3,30e3],
+                'Size poloidal': [0., 0.15],
+                'Size poloidal diff': [-25e3, 25e3],
+                'Intensity':[0,2000],
+                'Signed area':[-0.01, 0.01],
+                'Angle ALI': [-np.pi,np.pi],
+                'Curvature':[0, 1000],
+                'Angle fit': [-np.pi,np.pi],
+                
+                'Position radial fit': [1.4, 1.7], 
+                'Position poloidal fit': [0., 0.35],
+                'Velocity radial COG': [-10e3,10e3],
+                'Velocity poloidal COG': [-20e3,20e3],
+                'Velocity radial centroid': [-10e3,10e3],
+                'Velocity poloidal centroid': [-20e3,20e3],
+                'Velocity radial position fit': [-5e3, 5e3], 
+                'Velocity poloidal position fit': [-20e3, 20e3],
+                'Expansion fraction axes fit': [0.25, 2], 
+                #'Elongation fit diff': [-0.075, 0.075], 
+                'Angular velocity angle fit': [-250e3, 250e3],
+                'Angular velocity ALI': [-250e3, 250e3],
+                'Poloidal angle':[-0.2,0.8],
+                'Area': [0, 0.006], 
+                'Area diff': [-1.5e3, 1.5e3], 
+                'Expansion fraction area': [0.25, 2], 
+                'Convexity': [0.9, 1.0],
+                'Convexity diff': [-50e3,50e3],
+                'Solidity': [0.5, 1.0], 
+                'Solidity diff': [-100e3, 100e3], 
+                #'Total curvature': [0.9, 1.0],
+                'Total bending energy': [0e8, 1.5e8], 
+                'Total bending energy diff': [-1e14, 1e14], 
+                
+                #'Convexity diff': [-0.01, 0.01],
+                #'Solidity diff': [-0.25, 0.25], 
+                #'Total curvature diff': [-0.05, 0.05],
+                #'Total bending energy diff': [-0.3e8, 0.3e8], 
+                #'Area diff': [-0.0015, 0.0015],
+                }   
+
+        discrete_step_size={'Axes length minor':0.00375, 
+                            'Axes length major':0.00375,
+                            'Angle envelope':np.pi/51,
+                            'Size radial':0.00375, 
+                            'Size poloidal':0.00375,
+                            'Axes length minor diff':0.00375/2.5e-6, 
+                            'Axes length major diff':0.00375/2.5e-6,
+                            'Angle envelope diff':np.pi/64/2.5e-6,
+                            'Size radial diff':0.00375/2.5e-6, 
+                            'Size poloidal diff':0.00375/2.5e-6,
+                            'Lifetime':2.5e-6,
+                            }
 
         if plot_for_publication:
             multiplier = {
@@ -382,14 +449,14 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
             if not plot_LH_diff:
                 suffix = '_L_mode' if analyze_l_mode_only else '_H_mode' if analyze_h_mode_only else ''
-                pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}{suffix}.pdf")
+                pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}_{suffix}.pdf")
                 fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
 
                 for ind, key in enumerate(target_keys):
                     data = full_data[key][~np.isnan(full_data[key])] * multiplier[key]
                     ax = axes[ind // 2, ind % 2]
                     
-                    if key == 'Angle fit':
+                    if key == 'Angle fit' or key == 'Angle ALI':
                         data = np.mod(data, np.pi)
 
                     hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
@@ -431,7 +498,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                     l_data = data_l_mode[key][~np.isnan(data_l_mode[key])] * multiplier[key]
                     h_data = data_h_mode[key][~np.isnan(data_h_mode[key])] * multiplier[key]
 
-                    if key == 'Angle fit':
+                    if key == 'Angle fit' or key == 'Angle ALI':
                         l_data = np.mod(l_data.astype(float), np.pi)
                         h_data = np.mod(h_data.astype(float), np.pi)
 
@@ -449,12 +516,32 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
 
                     # Loop through L and H mode for concise plotting
                     for mode_name, dataset in [('L mode', l_data), ('H mode', h_data)]:
-                        ax.hist(dataset, 
-                                bins=51, 
-                                weights=np.ones_like(dataset)/len(dataset),
-                                range=hist_range, 
-                                alpha=0.5, 
-                                label=mode_name)
+                        if key in discrete_step_size.keys():
+                            step_size = discrete_step_size[key]  
+                            
+                            # Find the absolute min and max of your data
+                            min_val = np.floor(np.min(dataset))
+                            max_val = np.ceil(np.max(dataset))
+                            
+                            # Generate explicit bin edges shifted by half a step
+                            discrete_bins = np.arange(min_val - step_size/2, max_val + step_size, step_size)
+                            if len(discrete_bins) > 101:
+                                discrete_bins=discrete_bins[0:101]
+                            # Pass the array to the 'bins' argument instead of an integer!
+                            ax.hist(dataset, 
+                                    bins=discrete_bins, 
+                                    weights=np.ones_like(dataset)/len(dataset),
+                                    range=hist_range, 
+                                    alpha=0.5,
+                                    label=mode_name)
+                        else:
+                            ax.hist(dataset, 
+                                    bins=51, 
+                                    weights=np.ones_like(dataset)/len(dataset),
+                                    range=hist_range, 
+                                    alpha=0.5, 
+                                    label=mode_name)
+
 
                     plt.locator_params(axis='y', nbins=5)
                     ax.set_xlabel(f"{xlabel[key][0]} {xlabel[key][1]}")
@@ -474,30 +561,116 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             # Standard single plots
             if pdf:
                 pdf_page = PdfPages(pdf_filename)
-            
-            # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
-            keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(full_data.keys())
-            
-            for key in keys_to_plot:
-                clean_data = full_data[key][~np.isnan(full_data[key])]
+            if not plot_LH_diff:
+                # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
+                keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(full_data.keys())
+                
+                for key in keys_to_plot:
+                    clean_data = full_data[key][~np.isnan(full_data[key])]
+                    try:
+                        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+                        ax.hist(clean_data, 
+                                bins=51)
+                        ax.set_xlabel(f"{key} bins")
+                        ax.set_ylabel('Relative frequency')
+                        ax.set_title(f"Histogram of {key}")
+                        if key in ranges:
+                            ax.set_xlim(ranges[key])
+                        
+                        if pdf:
+                            pdf_page.savefig()
+                        plt.close(fig)
+                    except Exception:
+                        print(f"Failed to plot {key}")
+                
+                if pdf:
+                    pdf_page.close()
+            else:
+                # Standard single plots with L-mode and H-mode overlapping for ALL keys
+                l_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_l_mode.pickle"
+                h_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_h_mode.pickle"
+                
                 try:
-                    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-                    ax.hist(clean_data, 
-                            bins=51)
-                    ax.set_xlabel(f"{key} bins")
-                    ax.set_ylabel('Relative frequency')
-                    ax.set_title(f"Histogram of {key}")
-                    if key in ranges:
-                        ax.set_xlim(ranges[key])
-                    
-                    if pdf:
-                        pdf_page.savefig()
-                    plt.close(fig)
-                except Exception:
-                    print(f"Failed to plot {key}")
-            
-            if pdf:
-                pdf_page.close()
+                    with open(l_file, 'rb') as f: data_l_mode = pickle.load(f)
+                    with open(h_file, 'rb') as f: data_h_mode = pickle.load(f)
+                except FileNotFoundError as e:
+                    print(f"Could not load L/H mode comparison files for single plotting: {e}")
+                    return full_data
+    
+                if pdf:
+                    pdf_page = PdfPages(pdf_filename)
+                
+                # Safe fallback to iterate through absolutely every key available
+                keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(data_l_mode.keys())
+                
+                for key in keys_to_plot:
+                    if key not in data_l_mode or key not in data_h_mode:
+                        continue
+    
+                    # Strip NaNs
+                    l_data = data_l_mode[key][~np.isnan(data_l_mode[key])]
+                    h_data = data_h_mode[key][~np.isnan(data_h_mode[key])]
+    
+                    # Ensure all angular keys are properly wrapped to [0, pi]
+                    # if 'Angle' in key:
+                    #     l_data = np.mod(l_data.astype(float), np.pi)
+                    #     h_data = np.mod(h_data.astype(float), np.pi)
+    
+                    try:
+                        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+                        hist_range = ranges[key] if key in ranges else None
+    
+                        # Loop through L and H mode for concise overlapping plotting
+                        for mode_name, dataset, color in [('L mode', l_data, 'blue'), ('H mode', h_data, 'orange')]:
+                            if key in discrete_step_size.keys():
+                                step_size = discrete_step_size[key]  
+                                
+                                # Find the absolute min and max of your data
+                                min_val = np.floor(np.min(dataset))
+                                max_val = np.ceil(np.max(dataset))
+                                
+                                # Generate explicit bin edges shifted by half a step
+                                discrete_bins = np.arange(min_val - step_size/2, max_val + step_size, step_size)
+                                if len(discrete_bins) > 101:
+                                    discrete_bins=discrete_bins[0:101]
+                                # Pass the array to the 'bins' argument instead of an integer!
+                                ax.hist(dataset, 
+                                        bins=discrete_bins, 
+                                        weights=np.ones_like(dataset)/len(dataset),
+                                        range=hist_range, 
+                                        alpha=0.5,
+                                        color=color,
+                                        label=mode_name)
+                            else:
+                                if len(dataset) > 0:
+                                    ax.hist(dataset, 
+                                            bins=51, 
+                                            weights=np.ones_like(dataset)/len(dataset),
+                                            range=hist_range, 
+                                            alpha=0.5,
+                                            color=color,
+                                            label=mode_name)
+
+    
+                        ax.set_xlabel(f"{key} bins")
+                        ax.set_ylabel('Relative frequency')
+                        ax.set_title(f"Histogram of {key}")
+                        ax.legend(fontsize=7)
+                        
+                        if key in ranges:
+                            ax.set_xlim(ranges[key])
+                        
+                        plt.tight_layout(pad=0.1)
+                        if pdf:
+                            pdf_page.savefig(fig)
+                        plt.close(fig)
+                        
+                    except Exception as e:
+                        print(f"Failed to plot {key}: {e}")
+                
+                if pdf:
+                    pdf_page.close()
+
 
     return full_data
 
@@ -587,7 +760,12 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                 # Data is a list of dictionaries [{'shot':123, 'data':[1,2,3]}, ...]
                 # Flatten it into a 1D array
                 if len(data_dict[key]) > 0 and isinstance(data_dict[key][0], dict):
-                    processed_data[key] = np.concatenate([shot_dict['data'] for shot_dict in data_dict[key]])
+                    try:
+                        processed_data[key] = np.concatenate([shot_dict['data'] for shot_dict in data_dict[key]])
+                    except Exception as e:
+                        print(e)
+                        print(key, data_dict[key])
+                        raise ValueError
                 else:
                     processed_data[key] = np.array(data_dict[key])
             else:
@@ -646,6 +824,7 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                                        )
         # BUG FIX: Handle the dynamic keys properly!
         plot_keys = analyzed_keys if plot_interesting_only else list(full_data.keys())
+        
         correlation_matrix = _compute_corr_matrix(full_data, plot_keys, averaging)
         colormap = 'seismic'
         
@@ -689,14 +868,18 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
 
     # Use the gpi_labels if plotting the interesting subset, otherwise fallback to the raw keys
     labels_to_plot = gpi_labels if plot_interesting_only else plot_keys
-
+    if not plot_interesting_only:
+        charsize=5
+    else:
+        charsize=15
     plot_pearson_matrix(correlation_matrix,
                         xlabels = labels_to_plot,
                         ylabels = labels_to_plot,
                         colormap = colormap,
                         figsize = (17/2.54 / (1 + plot_interesting_only), 
                                    17/2.54 / (1 + plot_interesting_only)),
-                        charsize = 15,
+                        charsize = charsize,
+                        charsize_score=charsize/1.5,
                         plot_large = not plot_interesting_only,
                         plot_colorbar = not plot_interesting_only,
                         plot_values = True,
@@ -713,6 +896,7 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
 
 def plot_blob_blob_parameter_trends(pdf = True,
                                     pdf_filename = None,
+                                    time_range_around_peak=5e-3,
                                     plot_if_correlation_is_higher_than = None,
                                     plot_if_pps_is_higher_than = None,
                                     nocalc = True,
@@ -752,15 +936,16 @@ def plot_blob_blob_parameter_trends(pdf = True,
         pdf_filename = f"{wd}/plots/gpi_gpi_trend_8plot_{str_finding_method}{plasma_mode}.pdf"
 
     # --- 1. Data Loading ---
-    def _load_data(l_mode=False, h_mode=False):
+    def _load_blob_data(l_mode=False, h_mode=False):
         
         mode_str = 'l_mode' if l_mode else 'h_mode' if h_mode else 'full'
-        p_file = f"{wd}/processed_data/gpi_gpi_trends_{str_finding_method}_{averaging}{mode_str}.pickle"
+        p_file = f"{wd}/processed_data/gpi_gpi_trends_{str_finding_method}_{averaging}_{mode_str}.pickle"
         
-        if not os.path.exists(p_file):
+        if not os.path.exists(p_file) or not nocalc:
             data  =  read_all_blob_data(min_structure_lifetime = min_structure_lifetime,
+                                        time_range_around_peak=time_range_around_peak,
                                         averaging = 'shot' if calc_mean_distribution else 'no',
-                                        nocalc = nocalc, recalc_tracking = recalc_tracking,
+                                        nocalc = True, recalc_tracking = recalc_tracking,
                                         str_finding_method = str_finding_method,
                                         read_l_mode_only = l_mode, 
                                         read_h_mode_only = h_mode,
@@ -773,11 +958,11 @@ def plot_blob_blob_parameter_trends(pdf = True,
             return pickle.load(f)
 
     if analyze_lh_difference:
-        full_data_l_mode = _load_data(l_mode=True)
-        full_data_h_mode = _load_data(h_mode=True)
+        full_data_l_mode = _load_blob_data(l_mode=True)
+        full_data_h_mode = _load_blob_data(h_mode=True)
         full_data = full_data_l_mode # Default reference
     else:
-        full_data = _load_data(l_mode=analyze_l_mode_only, h_mode=analyze_h_mode_only)
+        full_data = _load_blob_data(l_mode=analyze_l_mode_only, h_mode=analyze_h_mode_only)
 
     analyzed_keys = list(full_data.keys())
     
@@ -793,62 +978,218 @@ def plot_blob_blob_parameter_trends(pdf = True,
         return flat_dict
 
     flat_data = _flatten_data(full_data)
-
-    # --- 2. Predictive Power Score (PPS) Matrix ---
-    pps_pickle = f"{wd}/processed_data/blob_database_full_data_mean_pps_{str_finding_method}.pickle"
-    if not nocalc or not os.path.exists(pps_pickle):
-        df = pandas.DataFrame(flat_data)
-        df = df.dropna(thresh=1)
-        
-        # Keep rows where absolute Z-score is < 3
-        df = df[(np.abs(scipy.stats.zscore(df)) < 3).all(axis=1)]
-        
-        matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
-        with open(pps_pickle, 'wb') as f:
-            pickle.dump(matrix_df, f)
-    else:
-        with open(pps_pickle, 'rb') as f:
-            matrix_df = pickle.load(f)
-
-    ppscore_matrix = np.asarray(matrix_df).T
-    xlabels = list(matrix_df.columns)
+    
+    if analyze_lh_difference:
+        flat_data_l = flat_data # Already flattened L-mode
+        flat_data_h = _flatten_data(full_data_h_mode)
 
     # --- 3. Plotting Logic ---
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    import sys
+    
+    discrete_step_size={'Axes length minor':0.00375, 
+                        'Axes length major':0.00375,
+                        'Angle envelope':np.pi/51,
+                        'Size radial':0.00375, 
+                        'Size poloidal':0.00375,
+                        'Axes length minor diff':0.00375/2.5e-6, 
+                        'Axes length major diff':0.00375/2.5e-6,
+                        'Angle envelope diff':np.pi/64/2.5e-6,
+                        'Size radial diff':0.00375/2.5e-6, 
+                        'Size poloidal diff':0.00375/2.5e-6,
+                        'Lifetime':2.5e-6,
+                        }
+    
     if not plot_for_publication:
+        
+        total_keys = len(analyzed_keys)
+        #total_pairs = (total_keys * (total_keys - 1)) // 2
+        total_pairs = total_keys**2
+        processed_pairs = 0
+        
         if pdf: pdf_page = PdfPages(pdf_filename)
+        
         for i, key1 in enumerate(analyzed_keys):
-            if key1 not in flat_data: continue
+            if key1 not in flat_data: 
+                processed_pairs += (total_keys - i - 1)
+                continue
+                
             valid1 = ~np.isnan(flat_data[key1])
             
             for j, key2 in enumerate(analyzed_keys):
-                if key2 not in flat_data: continue
-                
-                if key1 != key2 and j > i:
-                    valid_mask = valid1 & ~np.isnan(flat_data[key2])
+                #if key1 != key2 and j > i:
+                if True:
+                    processed_pairs += 1
                     
+                    pct = (processed_pairs / total_pairs) * 100
+                    sys.stdout.write(f"\rPlotting progress: {pct:.1f}% complete")
+                    sys.stdout.flush()
+                    
+                    if key2 not in flat_data: continue
+                    
+                    valid_mask = valid1 & ~np.isnan(flat_data[key2])
                     d1 = flat_data[key1][valid_mask]
                     d2 = flat_data[key2][valid_mask]
                     
+                    if len(d1) == 0: continue
+                    
+                    # Calculate Correlation for filtering (using the reference flat_data)
                     d1_4c = d1 - np.mean(d1)
                     d2_4c = d2 - np.mean(d2)
                     denom = np.sqrt(np.sum(d1_4c**2) * np.sum(d2_4c**2))
                     corr = np.sum(d1_4c * d2_4c) / denom if denom != 0 else 0
                     
-                    pps_val = ppscore_matrix[xlabels.index(key1), xlabels.index(key2)] if key1 in xlabels and key2 in xlabels else 0
-
                     do_plot = False
                     if plot_if_correlation_is_higher_than and abs(corr) > plot_if_correlation_is_higher_than: do_plot = True
-                    elif plot_if_pps_is_higher_than and pps_val > plot_if_pps_is_higher_than: do_plot = True
                     elif not plot_if_correlation_is_higher_than and not plot_if_pps_is_higher_than: do_plot = True
-
+        
                     if do_plot:
-                        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-                        ax.scatter(d1, d2, s=0.5)
-                        ax.set_xlabel(key1)
-                        ax.set_ylabel(key2)
-                        ax.set_title(f"{key1} vs {key2}")
-                        if pdf: pdf_page.savefig()
+                        # Determine plotting bounds across BOTH datasets to ensure the bins align perfectly
+                        if analyze_lh_difference and key1 in flat_data_h and key2 in flat_data_h:
+                            valid_h = ~np.isnan(flat_data_h[key1]) & ~np.isnan(flat_data_h[key2])
+                            d1_h = flat_data_h[key1][valid_h]
+                            d2_h = flat_data_h[key2][valid_h]
+                            
+                            all_d1 = np.concatenate([d1, d1_h])
+                            all_d2 = np.concatenate([d2, d2_h])
+                            if key1 == 'Poloidal angle':
+                                r_x=[0,np.pi/8]
+                            else:
+                                r_x = [np.percentile(all_d1, 1), np.percentile(all_d1, 99)]
+                            if key2 == 'Poloidal angle':
+                                r_y=[0,np.pi/8]
+                            else:
+                                r_y = [np.percentile(all_d2, 1), np.percentile(all_d2, 99)]
+                        else:
+                            r_x = [np.percentile(d1, 1), np.percentile(d1, 99)]
+                            r_y = [np.percentile(d2, 1), np.percentile(d2, 99)]
+                            d1_h, d2_h = None, None # Fallback
+
+                        # ---------------------------------------------------------
+                        # BRANCH A: Plot Difference Maps (L vs H vs Diff)
+                        # ---------------------------------------------------------
+                        if analyze_lh_difference and d1_h is not None and len(d1_h) > 0:
+                            fig, axes = plt.subplots(1, 3, figsize=(25/2.54, 8.5/2.54))
+                            
+                            if key1 in discrete_step_size.keys():
+                                step_size = discrete_step_size[key1]  
+                                
+                                # Find the absolute min and max of your data
+                                min_val = np.floor(np.min(d1))
+                                max_val = np.ceil(np.max(d1))
+                                
+                                # Generate explicit bin edges shifted by half a step
+                                discrete_bins_x = np.arange(min_val - step_size/2, max_val + step_size, step_size)
+                                if len(discrete_bins_x) > 101:
+                                    discrete_bins_x=discrete_bins_x[0:101]
+                                # Pass the array to the 'bins' argument instead of an integer!
+                            else:
+                                discrete_bins_x=51
+                            if key2 in discrete_step_size.keys():
+                                step_size = discrete_step_size[key2]  
+                                                                
+                                # Find the absolute min and max of your data
+                                min_val = np.floor(np.min(d2))
+                                max_val = np.ceil(np.max(d2))
+                                
+                                # Generate explicit bin edges shifted by half a step
+                                discrete_bins_y = np.arange(min_val - step_size/2, max_val + step_size, step_size)
+                                if len(discrete_bins_y) > 101:
+                                    discrete_bins_y=discrete_bins_y[0:101]
+                                # Pass the array to the 'bins' argument instead of an integer!
+                            else:
+                                discrete_bins_y=51
+                                
+                            bins=[discrete_bins_x, discrete_bins_y]
+                            
+                            # 1. Calculate L-mode Histogram
+                            counts_l, xedges, yedges = np.histogram2d(d1, d2, bins=bins, range=[r_x, r_y])
+                            img_l = (counts_l / np.sum(counts_l) * 100) if np.sum(counts_l) > 0 else counts_l
+                            
+                            # 2. Calculate H-mode Histogram (using exact same bins)
+                            counts_h, _, _ = np.histogram2d(d1_h, d2_h, bins=[xedges, yedges])
+                            img_h = (counts_h / np.sum(counts_h) * 100) if np.sum(counts_h) > 0 else counts_h
+                            
+                            # 3. Calculate Difference (L - H)
+                            img_diff = img_l - img_h
+                            
+                            # --- Calculate Statistics for L-Mode and H-Mode ---
+                            slope_l, intercept_l, r_value_l, _, _ = linregress(d1, d2)
+                            slope_h, intercept_h, r_value_h, _, _ = linregress(d1_h, d2_h)
+                            
+                            props = dict(boxstyle='round', facecolor='white', alpha=0.8)
+                            
+                            # Plot L-Mode
+                            im0 = axes[0].imshow(img_l.T, origin="lower", aspect="auto", extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], cmap='viridis')
+                            axes[0].set_title(f"L-Mode: {key1} vs {key2}", fontsize=9)
+                            axes[0].set_xlabel(key1)
+                            axes[0].set_ylabel(key2)
+                            axes[0].text(0.05, 0.95, f"$r = {r_value_l:.3f}$\n$R^2 = {r_value_l**2:.3f}$", transform=axes[0].transAxes, fontsize=8, verticalalignment='top', bbox=props)
+                            best_fit_x = np.array([r_x[0], r_x[1]])
+                            best_fit_y = slope_l * best_fit_x + intercept_l
+                            axes[0].plot(best_fit_x, best_fit_y, color='red', linestyle='--', linewidth=1.5, alpha=0.8)
+                            # Plot H-Mode
+                            im1 = axes[1].imshow(img_h.T, origin="lower", aspect="auto", extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], cmap='viridis')
+                            
+                            axes[1].set_title("H-Mode", fontsize=9)
+                            axes[1].set_xlabel(key1)
+                            axes[1].text(0.05, 0.95, f"$r = {r_value_h:.3f}$\n$R^2 = {r_value_h**2:.3f}$", transform=axes[1].transAxes, fontsize=8, verticalalignment='top', bbox=props)
+                            best_fit_x = np.array([r_x[0], r_x[1]])
+                            best_fit_y = slope_h * best_fit_x + intercept_h
+                            axes[1].plot(best_fit_x, best_fit_y, color='red', linestyle='--', linewidth=1.5, alpha=0.8)
+                            
+                            # Plot Difference (centered colormap)
+                            vmax = np.max(np.abs(img_diff))
+                            im2 = axes[2].imshow(img_diff.T, origin="lower", aspect="auto", extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], cmap='RdBu_r', vmin=-vmax, vmax=vmax)
+                            axes[2].set_title("Difference (L - H)", fontsize=9)
+                            axes[2].set_xlabel(key1)
+                            
+                            # Add colorbars
+                            for ax, im in zip(axes, [im0, im1, im2]):
+                                divider = make_axes_locatable(ax)
+                                cax = divider.append_axes('right', size='5%', pad=0.05)
+                                fig.colorbar(im, cax=cax)
+
+                        # ---------------------------------------------------------
+                        # BRANCH B: Standard Single Histogram
+                        # ---------------------------------------------------------
+                        else:
+                            fig, ax_hist = plt.subplots(1, 1, figsize=(17/2.54, 8.5/2.54))
+                            
+                            counts, xedges, yedges = np.histogram2d(d1, d2, bins=[51, 51], range=[r_x, r_y])
+                            img_data = (counts / np.sum(counts)) * 100 if np.sum(counts) > 0 else counts
+                            
+                            im = ax_hist.imshow(img_data.T, origin="lower", aspect="auto",
+                                                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], 
+                                                cmap='viridis')
+                            
+                            ax_hist.set_xlabel(key1)
+                            ax_hist.set_ylabel(key2)
+                            ax_hist.set_title(f"Density: {key1} vs {key2}", fontsize=9)
+
+                            slope, intercept, r_value, p_value, std_err = linregress(d1, d2)
+                            r_squared = r_value ** 2
+
+                            best_fit_x = np.array([r_x[0], r_x[1]])
+                            best_fit_y = slope * best_fit_x + intercept
+                            
+                            ax_hist.plot(best_fit_x, best_fit_y, color='red', linestyle='--', linewidth=1.5, alpha=0.8)
+                            
+                            # Fixed `corr` to `r_value` to avoid NameError
+                            stats_text = f"$r = {r_value:.3f}$\n$R^2 = {r_squared:.3f}$"
+                            props = dict(boxstyle='round', facecolor='white', alpha=0.8)
+                            ax_hist.text(0.05, 0.95, stats_text, transform=ax_hist.transAxes, fontsize=8, verticalalignment='top', bbox=props)
+                            
+                            divider = make_axes_locatable(ax_hist)
+                            cax = divider.append_axes('right', size='5%', pad=0.05)
+                            cbar = fig.colorbar(im, cax=cax, orientation='vertical')
+                            cbar.ax.set_title('[%]', fontsize=8)
+                        
+                        plt.tight_layout()
+                        if pdf: pdf_page.savefig(fig)
                         plt.close(fig)
+        
+        print("\rPlotting progress: 100.0% complete!       ")
         if pdf: pdf_page.close()
 
     else:
@@ -1072,6 +1413,7 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                                                        nocalc=False,
                                                        nocalc_plasma_data=True,
                                                        nocalc_blob_data=True,
+                                                       analyze_lh_difference=False,
                                                        ):
     """
     Calculates and plots the statistical relationship between blob structures and global plasma parameters.
@@ -1121,7 +1463,8 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
     metric_map = {
         'mutual_information': {'str': 'mutual_information', 'title': 'Blob vs plasma parameter mutual information map', 'zrange': [0, 1], 'cmap': 'Purples'},
         'correlation': {'str': 'correlation', 'title': 'Blob vs plasma parameter correlation map', 'zrange': [-1, 1], 'cmap': 'seismic'},
-        'predictive_power': {'str': 'pps', 'title': 'Blob vs plasma parameter predictive power map', 'zrange': [0, 1], 'cmap': 'Blues'}
+        'predictive_power': {'str': 'pps', 'title': 'Blob vs plasma parameter predictive power map', 'zrange': [0, 1], 'cmap': 'Blues'},
+        'coefficient_of_determination': {'str': 'R2', 'title': 'Blob vs plasma parameter coefficient of determination map', 'zrange': [0, 1], 'cmap': 'Blues'},
     }
     
     cfg = metric_map.get(quantity, metric_map['correlation'])
@@ -1131,158 +1474,305 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
     if pdf_filename is None:
         avg_str = 'full' if averaging == 'no' else f"{averaging}_{average}"
         thres_str = f"_thres_{int(threshold_multiplier)}" if threshold_corr else "_nothres"
-        pdf_filename = f"{wd}/plots/{cfg['str']}_matrix_gpi_plasma_{str_finding_method}_{avg_str}{thres_str}.pdf"
+        full_str = "_full" if plot_full else ""
+        lh_str = '_LH_diff' if analyze_lh_difference else ""
+        pdf_filename = f"{wd}/plots/{cfg['str']}_matrix_gpi_plasma_{str_finding_method}_{avg_str}{thres_str}{lh_str}{full_str}.pdf"
         
     if pdf:
         pdf_page = PdfPages(pdf_filename)
-
-    # --- 2. Data Loading & Derived Parameter Calculation ---
-    full_plasma_data = read_all_plasma_data(nocalc=nocalc_plasma_data)
-    full_blob_data = read_all_blob_data(nocalc=nocalc_blob_data, 
-                                        str_finding_method=str_finding_method,
-                                        fix_angle_for_correlation=fix_angle_for_correlation,
-                                        averaging=averaging, average=average)
-
-    # Calculate Blob Size Dimensionless
-    scale_length = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 /
-                    full_plasma_data['Pedestal radius']**0.2)
-    full_plasma_data['Blob size dimensionless'] = (np.sqrt(full_blob_data['Area'] / np.pi) / scale_length)**2.5
-
-    # --- 3. Key Curation ---
-    if plot_for_publication:
-        interesting_key_pairs, units = return_interesting_key_pairs(with_plasma_frequency=True)
-        gpi_labels = list(np.unique(interesting_key_pairs[:, 0]))
-        plasma_labels = list(np.unique(interesting_key_pairs[:, 1])[[2, 1, 4, 6, 0, 3, 5]])
-        plot_full = True
-    else:
-        gpi_labels = list(full_blob_data.keys())
-        plasma_labels = list(full_plasma_data.keys())
-        units = None
-
+        
     corr_accept = calculate_corr_acceptance_levels()
-
-    # --- 4. Main Mathematical Loop ---
-    if quantity in ['correlation', 'mutual_information']:
         
-        if plot_full:
-            full_blob_data.update(full_plasma_data)
-            data1_dict, data2_dict = full_blob_data, full_blob_data
-            label_1, label_2 = gpi_labels + plasma_labels, gpi_labels + plasma_labels
-        else:
-            data1_dict, data2_dict = full_blob_data, full_plasma_data
-            label_1, label_2 = gpi_labels, plasma_labels
-
-        correlation_matrix = np.zeros([len(label_2), len(label_1)])
-
-        for ind1, key1 in enumerate(label_1):
-            for ind2, key2 in enumerate(label_2):
-                
-                try:
-                    # Fetch arrays safely depending on structure
-                    if averaging == 'shot':
-                        d1 = data1_dict[key1]
-                        d2 = data2_dict[key2]
-                    else:
-                        # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
-                        d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
-                        d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
-                        d2 = d2_expanded
-
-                    valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
-                    d1, d2 = d1[valid_mask], d2[valid_mask]
-
-                    if len(d1) == 0 or len(d2) == 0:
-                        correlation_matrix[ind2, ind1] = np.nan
-                        continue
-
-                    if quantity == 'correlation':
-                        correlation_matrix[ind2, ind1] = correlation(d1, d2, 
-                                                                     threshold_correlation=threshold_corr,
-                                                                     correlation_accept=corr_accept,
-                                                                     confidence_sigma=threshold_multiplier)
-                    elif quantity == 'mutual_information':
-                        d1 -= np.mean(d1)
-                        d2 -= np.mean(d2)
-                        correlation_matrix[ind2, ind1] = mutual_information(d1, d2)
-                        
-                except Exception as e:
-                    print(f"Calculation failed for {key1} vs {key2}: {e}")
-                    correlation_matrix[ind2, ind1] = np.nan
-
-    elif quantity == 'predictive_power':
-        avg_str = 'full' if averaging == 'no' else f"{averaging}_{average}"
-        pickle_filename_pps = f"{wd}/processed_data/blob_plasma_predictive_power_score_{avg_str}.pickle"
-        
-        if not nocalc or not os.path.exists(pickle_filename_pps):
-            
-            # BUG FIX: Construct a standard dictionary first, then cast to DataFrame!
-            raw_df_dict = {}
-            
-            # Combine blob and plasma data into one flat dataframe
-            for key in gpi_labels:
-                raw_df_dict[key] = full_blob_data[key] if averaging == 'shot' else np.concatenate([s['data'] for s in full_blob_data[key]])
-            for key in plasma_labels:
-                # Assuming gpi_labels[0] has data we can use to map the lengths
-                ref_key = gpi_labels[0]
-                raw_df_dict[key] = full_plasma_data[key] if averaging == 'shot' else np.concatenate([np.full(len(s['data']), full_plasma_data[key][i]) for i, s in enumerate(full_blob_data[ref_key])])
-
-            df = pandas.DataFrame(raw_df_dict)
-            matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
-            matrix_df = matrix_df.reindex(index=gpi_labels+plasma_labels, columns=gpi_labels+plasma_labels)
-            
-            with open(pickle_filename_pps, 'wb') as f:
-                pickle.dump(matrix_df, f)
-        else:
-            with open(pickle_filename_pps, 'rb') as f:
-                matrix_df = pickle.load(f)
-
-        correlation_matrix = np.asarray(matrix_df).T
-        label_1, label_2 = list(matrix_df.columns), list(matrix_df.index)
-        plot_full = True
-
-    # --- 5. Plotting ---
-    if not plot_full:
-        plot_pearson_matrix(correlation_matrix, xlabels=label_1, ylabels=label_2,
-                            title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
-                            figsize=figsize, charsize=charsize, linewidth=linewidth,
-                            ticksize=ticksize, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
-    else:
+    if not analyze_lh_difference:
+        # --- 2. Data Loading & Derived Parameter Calculation ---
+        full_plasma_data = read_all_plasma_data(nocalc=nocalc_plasma_data)
+        full_blob_data = read_all_blob_data(nocalc=nocalc_blob_data, 
+                                            str_finding_method=str_finding_method,
+                                            fix_angle_for_correlation=fix_angle_for_correlation,
+                                            averaging=averaging, average=average, time_range_around_peak=5e-3)
+    
+        # Calculate Blob Size Dimensionless
+        scale_length = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 /
+                        full_plasma_data['Pedestal radius']**0.2)
+        full_plasma_data['Blob size dimensionless'] = (np.sqrt(full_blob_data['Area'] / np.pi) / scale_length)**2.5
+    
+        # --- 3. Key Curation ---
         if plot_for_publication:
-            # Apply Publication labels
-            if units is not None:
-                gpi_labels = [units[l][0] for l in gpi_labels]
-                plasma_labels = [units[l][0] for l in plasma_labels]
-            labels = gpi_labels + plasma_labels
-            
-            fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54 * 1.2))
-            plot_pearson_matrix(correlation_matrix, xlabels=labels, ylabels=labels,
-                                title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
-                                fig_ax=(fig, ax), charsize=charsize, charsize_score=charsize*2/3,
-                                ticksize=ticksize, linewidth=linewidth, minor_ticksize=0.001, 
-                                plot_colorbar=plot_colorbar)
-
-            # Draw Quadrant Rectangles
-            ax.add_patch(Rectangle((-0.45, -0.45), 3.9, 3.9, fill=False, edgecolor='red', lw=2, zorder=0))
-            ax.add_patch(Rectangle((-0.45, 3.55), 3.9, 6.9, fill=False, edgecolor='yellow', lw=2, zorder=0))
-            ax.add_patch(Rectangle((3.55, -0.45), 6.9, 3.9, fill=False, edgecolor='cyan', lw=2, zorder=0))
-            ax.add_patch(Rectangle((3.55, 3.55), 6.9, 6.9, fill=False, edgecolor='magenta', lw=2, zorder=0))
+            interesting_key_pairs, units = return_interesting_key_pairs(with_plasma_frequency=True)
+            gpi_labels = list(np.unique(interesting_key_pairs[:, 0]))
+            plasma_labels = list(np.unique(interesting_key_pairs[:, 1])[[2, 1, 4, 6, 0, 3, 5]])
+            plot_full = True
         else:
+            gpi_labels = list(full_blob_data.keys())
+            plasma_labels = list(full_plasma_data.keys())
+            units = None
+    
+    
+        # --- 4. Main Mathematical Loop ---
+        if quantity in ['correlation', 'mutual_information']:
+            
+            if plot_full:
+                full_blob_data.update(full_plasma_data)
+                data1_dict, data2_dict = full_blob_data, full_blob_data
+                label_1, label_2 = gpi_labels + plasma_labels, gpi_labels + plasma_labels
+            else:
+                data1_dict, data2_dict = full_blob_data, full_plasma_data
+                label_1, label_2 = gpi_labels, plasma_labels
+    
+            correlation_matrix = np.zeros([len(label_2), len(label_1)])
+    
+            for ind1, key1 in enumerate(label_1):
+                for ind2, key2 in enumerate(label_2):
+                    
+                    try:
+                        # Fetch arrays safely depending on structure
+                        if averaging == 'shot':
+                            d1 = data1_dict[key1]
+                            d2 = data2_dict[key2]
+                        else:
+                            # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
+                            d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
+                            d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
+                            d2 = d2_expanded
+    
+                        valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
+                        d1, d2 = d1[valid_mask], d2[valid_mask]
+    
+                        if len(d1) == 0 or len(d2) == 0:
+                            correlation_matrix[ind2, ind1] = np.nan
+                            continue
+    
+                        if quantity == 'correlation':
+                            correlation_matrix[ind2, ind1] = correlation(d1, d2, 
+                                                                         threshold_correlation=threshold_corr,
+                                                                         correlation_accept=corr_accept,
+                                                                         confidence_sigma=threshold_multiplier)
+                        elif quantity == 'mutual_information':
+                            d1 -= np.mean(d1)
+                            d2 -= np.mean(d2)
+                            correlation_matrix[ind2, ind1] = mutual_information(d1, d2)
+                            
+                    except Exception as e:
+                        print(f"Calculation failed for {key1} vs {key2}: {e}")
+                        correlation_matrix[ind2, ind1] = np.nan
+    
+        elif quantity == 'predictive_power':
+            avg_str = 'full' if averaging == 'no' else f"{averaging}_{average}"
+            pickle_filename_pps = f"{wd}/processed_data/blob_plasma_predictive_power_score_{avg_str}.pickle"
+            
+            if not nocalc or not os.path.exists(pickle_filename_pps):
+                
+                # BUG FIX: Construct a standard dictionary first, then cast to DataFrame!
+                raw_df_dict = {}
+                
+                # Combine blob and plasma data into one flat dataframe
+                for key in gpi_labels:
+                    raw_df_dict[key] = full_blob_data[key] if averaging == 'shot' else np.concatenate([s['data'] for s in full_blob_data[key]])
+                for key in plasma_labels:
+                    # Assuming gpi_labels[0] has data we can use to map the lengths
+                    ref_key = gpi_labels[0]
+                    raw_df_dict[key] = full_plasma_data[key] if averaging == 'shot' else np.concatenate([np.full(len(s['data']), full_plasma_data[key][i]) for i, s in enumerate(full_blob_data[ref_key])])
+    
+                df = pandas.DataFrame(raw_df_dict)
+                matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
+                matrix_df = matrix_df.reindex(index=gpi_labels+plasma_labels, columns=gpi_labels+plasma_labels)
+                
+                with open(pickle_filename_pps, 'wb') as f:
+                    pickle.dump(matrix_df, f)
+            else:
+                with open(pickle_filename_pps, 'rb') as f:
+                    matrix_df = pickle.load(f)
+    
+            correlation_matrix = np.asarray(matrix_df).T
+            label_1, label_2 = list(matrix_df.columns), list(matrix_df.index)
+            plot_full = True
+    
+        # --- 5. Plotting ---
+        if not plot_full:
             plot_pearson_matrix(correlation_matrix, xlabels=label_1, ylabels=label_2,
                                 title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
-                                figsize=figsize, charsize=3, charsize_score=2, ticksize=ticksize,
-                                linewidth=linewidth, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
+                                figsize=figsize, charsize=charsize, linewidth=linewidth,
+                                ticksize=ticksize, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
+        else:
+            if plot_for_publication:
+                # Apply Publication labels
+                if units is not None:
+                    gpi_labels = [units[l][0] for l in gpi_labels]
+                    plasma_labels = [units[l][0] for l in plasma_labels]
+                labels = gpi_labels + plasma_labels
+                
+                fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54 * 1.2))
+                plot_pearson_matrix(correlation_matrix, xlabels=labels, ylabels=labels,
+                                    title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
+                                    fig_ax=(fig, ax), charsize=charsize, charsize_score=charsize*2/3,
+                                    ticksize=ticksize, linewidth=linewidth, minor_ticksize=0.001, 
+                                    plot_colorbar=plot_colorbar)
+    
+                # Draw Quadrant Rectangles
+                ax.add_patch(Rectangle((-0.45, -0.45), 3.9, 3.9, fill=False, edgecolor='red', lw=2, zorder=0))
+                ax.add_patch(Rectangle((-0.45, 3.55), 3.9, 6.9, fill=False, edgecolor='yellow', lw=2, zorder=0))
+                ax.add_patch(Rectangle((3.55, -0.45), 6.9, 3.9, fill=False, edgecolor='cyan', lw=2, zorder=0))
+                ax.add_patch(Rectangle((3.55, 3.55), 6.9, 6.9, fill=False, edgecolor='magenta', lw=2, zorder=0))
+            else:
+                plot_pearson_matrix(correlation_matrix, xlabels=label_1, ylabels=label_2,
+                                    title=cfg['title'], colormap=colormap, zrange=cfg['zrange'],
+                                    figsize=figsize, charsize=3, charsize_score=2, ticksize=ticksize,
+                                    linewidth=linewidth, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
+                
+        plt.tight_layout(pad=0.1)
+        
+        
+    else: #analyze_lh_difference=True  # lots of repetition, but easy to implement this way
+        # --- 2. Dynamic Data Loading Helper ---
+        def _load_data(l_mode=False, h_mode=False):
+            mode_str = '_l_mode' if l_mode else '_h_mode' if h_mode else '_full'
+            p_plasma = f"{wd}/processed_data/plasma_vs_blob_plasma_data{mode_str}.pickle"
+            p_blob = f"{wd}/processed_data/plasma_vs_blob_blob_data{mode_str}.pickle"
             
-    plt.tight_layout(pad=0.1)
+            if not os.path.exists(p_plasma):
+                plasma_data = read_all_plasma_data(nocalc=nocalc, read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_plasma, 'wb') as f: pickle.dump(plasma_data, f)
+            else:
+                with open(p_plasma, 'rb') as f: plasma_data = pickle.load(f)
+                
+            if not os.path.exists(p_blob):
+            # if True:
+                blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed', 
+                                               fix_angle_for_correlation=True, averaging='shot', average='avg',
+                                               read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_blob, 'wb') as f: pickle.dump(blob_data, f)
+            else:
+                with open(p_blob, 'rb') as f: blob_data = pickle.load(f)
+            
+            for key in plasma_data.keys():
+                plasma_data[key]=np.asarray(plasma_data[key])
+            
+            for key in blob_data.keys():
+                blob_data[key]=np.asarray(blob_data[key])    
+            
+            # Calculate derived metrics
+            scale_length = (plasma_data['Larmor radius sound']**0.8 * plasma_data['Connection length']**0.4 /
+                            plasma_data['Pedestal radius']**0.2)
+            plasma_data['Blob size dimensionless'] = (np.sqrt(blob_data['Area']) / np.pi / scale_length)**2.5
+            
+            # In-place masking of invalid connection lengths
+            plasma_data['Connection length'] = np.where(plasma_data['Connection length'] < 1.5, np.nan, plasma_data['Connection length'])
+            
+            return plasma_data, blob_data
 
-    if pdf:
-        pdf_page.savefig()
+        # --- 3. Load Datasets ---
+        plasma_l, blob_l = _load_data(l_mode=True)
+        plasma_h, blob_h = _load_data(h_mode=True)
+        # --- 4. Plotting Mode: Publication Scatter Grid ---
+        flap_nstx.tools.set_matplotlib_for_publication(labelsize=6., linewidth=0.5, major_ticksize=2.)
+        if quantity in ['correlation', 'mutual_information', 'coefficient_of_determination']:
+            
+            label_1, label_2 = list(blob_l.keys()), list(plasma_l.keys())
+            if plot_full:
+                correlation_matrix = np.zeros([len(label_1)+len(label_2), len(label_1)+len(label_2), 3])
+            else:
+                correlation_matrix = np.zeros([len(label_2), len(label_1), 3])
+                
+            for ind_mode, mode in enumerate(['L-mode', 'H-mode', 'LH Diff']):
+                if ind_mode == 0:
+                    if plot_full:
+                        blob_l.update(plasma_l)
+                        data1_dict, data2_dict = blob_l, blob_l
+                        label_1, label_2 = label_1 + label_2, label_1 + label_2
+                        charsize=3
+                    else:
+                        data1_dict, data2_dict = blob_l, plasma_l
+                        
+                elif ind_mode == 1:
+                    if plot_full:
+                        blob_h.update(plasma_h)
+                        data1_dict, data2_dict = blob_h, blob_h
+                    else:
+                        data1_dict, data2_dict = blob_h, plasma_h
+                    
+                if ind_mode < 2:
+                    for ind1, key1 in enumerate(label_1):
+                        for ind2, key2 in enumerate(label_2):
+                            
+                            try:
+                                # Fetch arrays safely depending on structure
+                                if averaging == 'shot':
+                                    d1 = data1_dict[key1]
+                                    d2 = data2_dict[key2]
+                                else:
+                                    # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
+                                    d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
+                                    d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
+                                    d2 = d2_expanded
+            
+                                valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
+                                d1, d2 = d1[valid_mask], d2[valid_mask]
+            
+                                if len(d1) == 0 or len(d2) == 0:
+                                    correlation_matrix[ind2, ind1, ind_mode] = np.nan
+                                    continue
+            
+                                if quantity == 'correlation':
+                                    correlation_matrix[ind2, ind1, ind_mode] = correlation(d1, d2, 
+                                                                                           threshold_correlation=threshold_corr,
+                                                                                           correlation_accept=corr_accept,
+                                                                                           confidence_sigma=threshold_multiplier)
+                                elif quantity == 'mutual_information':
+                                    d1 -= np.mean(d1)
+                                    d2 -= np.mean(d2)
+                                    correlation_matrix[ind2, ind1, ind_mode] = mutual_information(d1, d2)
+                                    
+                                elif quantity == 'coefficient_of_determination':
+                                    slope, intercept, r_value, p_value, std_err = linregress(d2, d1)
+                                    correlation_matrix[ind2, ind1, ind_mode] = r_value ** 2
+                                    
+                            except Exception as e:
+                                print(f"Calculation failed for {key1} vs {key2}: {e}")
+                                correlation_matrix[ind2, ind1, ind_mode] = np.nan
+                else:
+                    correlation_matrix[:,:,ind_mode] = correlation_matrix[:,:,0] - correlation_matrix[:,:,1]
+                    colormap='seismic'
+                    cfg['zrange']=[-1,1]
+                    
+                if plot_for_publication:
+                    # Apply Publication labels
+                    if units is not None:
+                        gpi_labels = [units[l][0] for l in gpi_labels]
+                        plasma_labels = [units[l][0] for l in plasma_labels]
+                    labels = gpi_labels + plasma_labels
+                    
+                    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54 * 1.2))
+                    plot_pearson_matrix(correlation_matrix[:,:,ind_mode], xlabels=labels, ylabels=labels,
+                                        title=cfg['title']+' '+mode, colormap=colormap, zrange=cfg['zrange'],
+                                        fig_ax=(fig, ax), charsize=charsize, charsize_score=charsize*2/3,
+                                        ticksize=ticksize, linewidth=linewidth, minor_ticksize=0.001, 
+                                        plot_colorbar=plot_colorbar)
+        
+                    # Draw Quadrant Rectangles
+                    ax.add_patch(Rectangle((-0.45, -0.45), 3.9, 3.9, fill=False, edgecolor='red', lw=2, zorder=0))
+                    ax.add_patch(Rectangle((-0.45, 3.55), 3.9, 6.9, fill=False, edgecolor='yellow', lw=2, zorder=0))
+                    ax.add_patch(Rectangle((3.55, -0.45), 6.9, 3.9, fill=False, edgecolor='cyan', lw=2, zorder=0))
+                    ax.add_patch(Rectangle((3.55, 3.55), 6.9, 6.9, fill=False, edgecolor='magenta', lw=2, zorder=0))
+                else:
+                    if plot_full:
+                        charsize, charsize_score, linewidth = 2, 1.5, 0.5
+                    else:
+                        charsize, charsize_score, linewidth = 3, 3, 1
+                    plot_pearson_matrix(correlation_matrix[:,:,ind_mode], xlabels=label_1, ylabels=label_2,
+                                        title=cfg['title']+' '+mode, colormap=colormap, zrange=cfg['zrange'],
+                                        figsize=figsize, charsize=charsize, charsize_score=charsize_score, ticksize=0.5,
+                                        linewidth=linewidth, minor_ticksize=0.001, plot_colorbar=plot_colorbar)
+        
+                pdf_page.savefig()
+            
+    if pdf:        
         pdf_page.close()
         matplotlib.use('qt5agg')
 
-def plot_all_cross_data_matrix():
+def plot_all_cross_data_matrix(analyze_lh_difference=True):
     
     averaging=['no','blob','shot']
-    quantity=['correlation','mutual_information', 'predictive_power']
+    quantity=['correlation','mutual_information', 'coefficient_of_determination']
     method=['watershed', 'contour']
     
     for avg in averaging:
@@ -1293,12 +1783,13 @@ def plot_all_cross_data_matrix():
                                                                    average='avg', 
                                                                    str_finding_method=mthd, 
                                                                    quantity=qty, 
-                                                                   plot_for_publication=True, 
-                                                                   plot_full=True, 
+                                                                   plot_for_publication=False, 
+                                                                   plot_full=False, 
                                                                    threshold_corr=False, 
                                                                    linewidth=1, 
                                                                    ticksize=3, 
-                                                                   charsize=9)
+                                                                   charsize=9, 
+                                                                   analyze_lh_difference=analyze_lh_difference)
     
 
 def plot_blob_plasma_parameter_trends(pdf_filename=None,
@@ -1306,6 +1797,7 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
                                       threshold_corr=False,
                                       threshold_multiplier=2,
                                       plot_for_publication=False,
+                                      plot_all_trends=False,
                                       plot_2d_histogram=False,
                                       analyze_l_mode_only=False,
                                       analyze_h_mode_only=False,
@@ -1374,17 +1866,24 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
             with open(p_plasma, 'rb') as f: plasma_data = pickle.load(f)
             
         if not os.path.exists(p_blob):
+        # if True:
             blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed', 
                                            fix_angle_for_correlation=True, averaging='shot', average='avg',
                                            read_l_mode_only=l_mode, read_h_mode_only=h_mode)
             with open(p_blob, 'wb') as f: pickle.dump(blob_data, f)
         else:
             with open(p_blob, 'rb') as f: blob_data = pickle.load(f)
-            
+        
+        for key in plasma_data.keys():
+            plasma_data[key]=np.asarray(plasma_data[key])
+        
+        for key in blob_data.keys():
+            blob_data[key]=np.asarray(blob_data[key])    
+        
         # Calculate derived metrics
         scale_length = (plasma_data['Larmor radius sound']**0.8 * plasma_data['Connection length']**0.4 /
                         plasma_data['Pedestal radius']**0.2)
-        plasma_data['Blob size dimensionless'] = (np.sqrt(blob_data['Area'] / np.pi) / scale_length)**2.5
+        plasma_data['Blob size dimensionless'] = (np.sqrt(blob_data['Area']) / np.pi / scale_length)**2.5
         
         # In-place masking of invalid connection lengths
         plasma_data['Connection length'] = np.where(plasma_data['Connection length'] < 1.5, np.nan, plasma_data['Connection length'])
@@ -1397,8 +1896,8 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
         plasma_h, blob_h = _load_data(h_mode=True)
     else:
         full_plasma_data, full_blob_data = _load_data(l_mode=analyze_l_mode_only, h_mode=analyze_h_mode_only)
-
     # --- 4. Plotting Mode: Publication Scatter Grid ---
+    
     if plot_for_publication and not plot_2d_histogram:
         flap_nstx.tools.set_matplotlib_for_publication(labelsize=6., linewidth=0.5, major_ticksize=2.)
         interesting_key_pairs, units = return_interesting_key_pairs()
@@ -1455,7 +1954,113 @@ def plot_blob_plasma_parameter_trends(pdf_filename=None,
     
         plt.tight_layout(pad=0.1)
         pdf_page.savefig()
+        
+    elif plot_all_trends:
+        flap_nstx.tools.set_matplotlib_for_publication(labelsize=6., linewidth=0.5, major_ticksize=2.)
+        legend_labels = ['L-mode', 'H-mode']
+        colors = ['tab:blue', 'tab:orange']
+        corr_accept = calculate_corr_acceptance_levels()
+        corr_threshold_accept=[0,0]
+        for key1 in blob_l.keys():
+            for key2 in plasma_l.keys():
+                correlation=[0,0]
+                r_squared=[0,0]
+                for ind_mode in [0,1]:
+                    if ind_mode == 0:
+                        blob_data = blob_l
+                        plasma_data = plasma_l
+                    else:
+                        blob_data = blob_h
+                        plasma_data = plasma_h
+                        
+                    valid_data = ~np.isnan(blob_data[key1]) & ~np.isnan(plasma_data[key2])
+                
+                    data1 = blob_data[key1][valid_data]
+                    data2 = plasma_data[key2][valid_data]
+        
+                    # Standardize arrays for stats
+                    d1_c, d2_c = data1 - np.mean(data1), data2 - np.mean(data2)
+                    correlation[ind_mode] = np.sum(d1_c * d2_c) / np.sqrt(np.sum(d1_c**2) * np.sum(d2_c**2))
+                    slope, intercept, r_value, p_value, std_err = linregress(data2, data1)
+                    r_squared[ind_mode] = r_value ** 2
+                    N = np.sum(valid_data)
+                    if N < 160:
+                        corr_threshold_accept[ind_mode]=corr_accept['avg'][N] + threshold_multiplier * corr_accept['stddev'][N]
+                    else:
+                        corr_threshold_accept[ind_mode]=0.064
+                                            
+                                            
+                                            
+                if isinstance(threshold_corr,list) and len(threshold_corr) > 1:
+                    condition=(threshold_corr is not None and 
+                               any(abs(correlation[ind]) < max(threshold_corr) for ind in [0,1]) and 
+                               any(abs(correlation[ind]) > min(threshold_corr) for ind in [0,1]) and 
+                               any(abs(correlation[ind]) > corr_threshold_accept[ind] for ind in [0,1]))
+                else:
+                    condition=(threshold_corr is not None and 
+                               any(abs(correlation[ind]) > threshold_corr for ind in [0,1]) and 
+                               any(abs(correlation[ind]) > corr_threshold_accept[ind] for ind in [0,1]))
+                
+                if condition:
+                    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+                    for ind_mode in [0,1]:  
+                        if ind_mode == 0:
+                            blob_data = blob_l
+                            plasma_data = plasma_l
+                        else:
+                            blob_data = blob_h
+                            plasma_data = plasma_h
+                            
+                        valid_data = ~np.isnan(blob_data[key1]) & ~np.isnan(plasma_data[key2])
 
+                        data1 = blob_data[key1][valid_data]
+                        data2 = plasma_data[key2][valid_data]
+                        
+                        ax.plot(data2, data1, linestyle='None', marker='o', ms=1, label=legend_labels[ind_mode], color=colors[ind_mode])
+                        sns.regplot(x=data2, y=data1, 
+                                    ci=68.27, ax=ax, 
+                                    color=colors[ind_mode],
+                                    scatter_kws={'s': 1},
+                                    robust=True,
+                                    )
+                        pos = [0.05, 0.005] if correlation[ind_mode] < 0 else [0.65, 0.005]
+                        if ind_mode == 1:
+                            add_pos=0.03
+                            add_text='H-mode'
+                        else:
+                            add_pos=0.
+                            add_text='L-mode'
+                            
+                        ax.text(pos[0], pos[1] +          3*add_pos, 
+                                f"$\\rho \\ =\\ {correlation[ind_mode]:.2f}$ | {corr_threshold_accept[ind_mode]:.2f}", 
+                                size=6, 
+                                va='bottom', 
+                                ha='left', 
+                                transform=ax.transAxes, 
+                                color=colors[ind_mode])
+                        
+                        ax.text(pos[0], pos[1] +   0.03 + 3*add_pos,
+                                f"$R^2 \\ =\\ {r_squared[ind_mode]:.2f}$", 
+                                size=6, 
+                                va='bottom', 
+                                ha='left', 
+                                transform=ax.transAxes, 
+                                color=colors[ind_mode])
+                        
+                        ax.text(pos[0], pos[1] + 2*0.03 + 3*add_pos, 
+                                add_text, 
+                                size=6, 
+                                va='bottom', 
+                                ha='left', 
+                                transform=ax.transAxes, 
+                                color=colors[ind_mode])
+                        
+                        ax.set_xlabel(key2)
+                        ax.set_ylabel(key1)
+                        if ind_mode == 1:
+                            print(f"{key2} - {key1} - $\\rho$= {correlation[ind_mode]:.2f} - R^2 = {r_squared[ind_mode]:.2f}")
+                    plt.tight_layout(pad=0.1)
+                    pdf_page.savefig()
     # --- 5. Plotting Mode: 2D Histograms ---
     elif plot_2d_histogram:
         fig, axes = plt.subplots(4, 3, figsize=(8.5/2.54, 17/2.54))
@@ -1611,6 +2216,7 @@ def plot_blob_experiment_vs_theory_radial_velocity(pdf_filename=None,
 def plot_blob_regime_graph(pdf_filename=None,
                            nocalc=True,
                            save_data_for_publication=False,
+                           analyze_lh_difference=True,
                            ):
     """
     Plots a regime graph of dimensionless blob size vs. dimensionless collisionality.
@@ -1643,63 +2249,166 @@ def plot_blob_regime_graph(pdf_filename=None,
         pdf_filename += '.pdf'
 
     pdf_page = PdfPages(pdf_filename)
-
-    # --- 2. Load Data ---
-    full_plasma_data = read_all_plasma_data(nocalc=nocalc, calculate_parameters_in_sol=True)
-    full_blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed',
-                                        fix_angle_for_correlation=True, averaging='shot', average='avg')
-
-    # --- 3. Derived Calculations ---
-    scale_length = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 /
-                    full_plasma_data['Pedestal radius']**0.2)
-
-    x_data = (np.sqrt(full_blob_data['Area'] / np.pi) / scale_length)**2.5
-    y_data = full_plasma_data['Collisionality dimensionless']
-
-    valid_mask = ~np.isnan(x_data) & ~np.isnan(y_data)
-
-    # --- 4. Export Data ---
-    if save_data_for_publication:
-        with open(f"{wd}/blob_regime_data.txt", 'w+') as f:
-            f.write('Dimensionless blob size\n')
-            f.write(str(x_data[valid_mask]) + '\n')
-            f.write('Dimensionless collisionality\n')
-            f.write(str(y_data[valid_mask]) + '\n')
-
-    # --- 5. Plotting ---
-    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/1.5/2.54))
+    if not analyze_lh_difference:
+        # --- 2. Load Data ---
+        full_plasma_data = read_all_plasma_data(nocalc=nocalc, calculate_parameters_in_sol=True)
+        full_blob_data = read_all_blob_data(nocalc=nocalc, 
+                                            str_finding_method='watershed',
+                                            fix_angle_for_correlation=True, 
+                                            averaging='shot', 
+                                            average='avg')
     
-    ax.scatter(x_data, y_data, s=5)
+        # --- 3. Derived Calculations ---
+        scale_length = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 /
+                        full_plasma_data['Pedestal radius']**0.2)
     
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlabel('$\\Theta$')
-    ax.set_ylabel('$\\Lambda$')
-
-    x_max = 100
-    y_min = 0.01
-    ax.set_xlim([0.1, x_max])
-    ax.set_ylim([y_min, 10])
-
-    # --- 6. Regime Boundaries ---
-    # Draw separating lines using standard ax.plot([x1, x2], [y1, y2])
-    ax.plot([1e-3, x_max], [1e-3, x_max], color='black', lw=1)  # p1 to p2
-    ax.plot([10, x_max],   [1, 1],        color='black', lw=1)  # p3 to p4
-    ax.plot([10, 10],      [0.01, 1],     color='black', lw=1)  # p5 to p6 (which is p3)
-    ax.plot([0.1, 10],     [y_min, 1],    color='black', lw=1)  # p7 to p8 (which is p3)
-
-    # --- 7. Regime Annotations ---
-    text_arr = [
-        ("RB",   0.1,  0.8),
-        ("RX",   0.8,  0.8),
-        ("$C_I$", 0.4,  0.15),
-        ("$C_S$", 0.85, 0.05)
-    ]
+        x_data = (np.sqrt(full_blob_data['Area'] / np.pi) / scale_length)**2.5
+        y_data = full_plasma_data['Collisionality dimensionless']
     
-    for (text, xpos, ypos) in text_arr:
-        ax.text(xpos, ypos, text, transform=ax.transAxes, size=9, 
-                verticalalignment='bottom', horizontalalignment='left')
+        valid_mask = ~np.isnan(x_data) & ~np.isnan(y_data)
+    
+        # --- 4. Export Data ---
+        if save_data_for_publication:
+            with open(f"{wd}/blob_regime_data.txt", 'w+') as f:
+                f.write('Dimensionless blob size\n')
+                f.write(str(x_data[valid_mask]) + '\n')
+                f.write('Dimensionless collisionality\n')
+                f.write(str(y_data[valid_mask]) + '\n')
+    
+        # --- 5. Plotting ---
+        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/1.5/2.54))
+        
+        ax.scatter(x_data, y_data, s=5)
+        
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('$\\Theta$')
+        ax.set_ylabel('$\\Lambda$')
+    
+        x_max = 100
+        y_min = 0.01
+        ax.set_xlim([0.1, x_max])
+        ax.set_ylim([y_min, 10])
+    
+        # --- 6. Regime Boundaries ---
+        # Draw separating lines using standard ax.plot([x1, x2], [y1, y2])
+        ax.plot([1e-3, x_max], [1e-3, x_max], color='black', lw=1)  # p1 to p2
+        ax.plot([10, x_max],   [1, 1],        color='black', lw=1)  # p3 to p4
+        ax.plot([10, 10],      [0.01, 1],     color='black', lw=1)  # p5 to p6 (which is p3)
+        ax.plot([0.1, 10],     [y_min, 1],    color='black', lw=1)  # p7 to p8 (which is p3)
+    
+        # --- 7. Regime Annotations ---
+        text_arr = [
+            ("RB",   0.1,  0.8),
+            ("RX",   0.8,  0.8),
+            ("$C_I$", 0.4,  0.15),
+            ("$C_S$", 0.85, 0.05)
+        ]
+        
+        for (text, xpos, ypos) in text_arr:
+            ax.text(xpos, ypos, text, transform=ax.transAxes, size=9, 
+                    verticalalignment='bottom', horizontalalignment='left')
+    else:
+        
+        def _load_data(l_mode=False, h_mode=False):
+            mode_str = '_l_mode' if l_mode else '_h_mode' if h_mode else '_full'
+            p_plasma = f"{wd}/processed_data/plasma_vs_blob_plasma_data{mode_str}.pickle"
+            p_blob = f"{wd}/processed_data/plasma_vs_blob_blob_data{mode_str}.pickle"
+            
+            if not os.path.exists(p_plasma):
+                plasma_data = read_all_plasma_data(nocalc=nocalc, read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_plasma, 'wb') as f: pickle.dump(plasma_data, f)
+            else:
+                with open(p_plasma, 'rb') as f: plasma_data = pickle.load(f)
+                
+            if not os.path.exists(p_blob):
+            # if True:
+                blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed', 
+                                               fix_angle_for_correlation=True, averaging='shot', average='avg',
+                                               read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_blob, 'wb') as f: pickle.dump(blob_data, f)
+            else:
+                with open(p_blob, 'rb') as f: blob_data = pickle.load(f)
+            
+            for key in plasma_data.keys():
+                plasma_data[key]=np.asarray(plasma_data[key])
+            
+            for key in blob_data.keys():
+                blob_data[key]=np.asarray(blob_data[key])    
+            
+            # Calculate derived metrics
+            scale_length = (plasma_data['Larmor radius sound']**0.8 * plasma_data['Connection length']**0.4 /
+                            plasma_data['Pedestal radius']**0.2)
+            plasma_data['Blob size dimensionless'] = (np.sqrt(blob_data['Area']) / np.pi / scale_length)**2.5
+            
+            # In-place masking of invalid connection lengths
+            plasma_data['Connection length'] = np.where(plasma_data['Connection length'] < 1.5, np.nan, plasma_data['Connection length'])
+            
+            return plasma_data, blob_data
+        
+        plasma_l, blob_l = _load_data(l_mode=True)
+        plasma_h, blob_h = _load_data(h_mode=True)
+        
+        flap_nstx.tools.set_matplotlib_for_publication(labelsize=6., linewidth=0.5, major_ticksize=2.)
+        legend_labels = ['H-mode', 'L-mode']
+        colors = ['tab:blue', 'tab:orange']
 
+        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/1.5/2.54))
+
+        for ind_mode in [0,1]:
+            if ind_mode == 1:
+                blob_data = blob_l
+                plasma_data = plasma_l
+            else:
+                blob_data = blob_h
+                plasma_data = plasma_h
+            
+            # --- 3. Derived Calculations ---
+            scale_length = (plasma_data['Larmor radius sound']**0.8 * plasma_data['Connection length']**0.4 /
+                            plasma_data['Pedestal radius']**0.2)
+        
+            x_data = (np.sqrt(blob_data['Area'] / np.pi) / scale_length)**2.5
+            y_data = plasma_data['Collisionality dimensionless']
+        
+            valid_mask = ~np.isnan(x_data) & ~np.isnan(y_data)
+
+                
+            ax.scatter(x_data, y_data, s=5)
+            ax.text(0.04, 0.04+ind_mode*0.06, legend_labels[ind_mode], 
+                    transform=ax.transAxes, size=9, 
+                    verticalalignment='bottom', horizontalalignment='left',
+                    color=colors[ind_mode])
+            
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('$\\Theta$')
+        ax.set_ylabel('$\\Lambda$')
+    
+        x_max = 100
+        y_min = 0.0005
+        ax.set_xlim([0.1, x_max])
+        ax.set_ylim([y_min, 10])
+    
+        # --- 6. Regime Boundaries ---
+        # Draw separating lines using standard ax.plot([x1, x2], [y1, y2])
+        ax.plot([1e-3, x_max], [1e-3, x_max], color='black', lw=1)  # p1 to p2
+        ax.plot([10, x_max],   [1, 1],        color='black', lw=1)  # p3 to p4
+        ax.plot([10, 10],      [y_min, 1],     color='black', lw=1)  # p5 to p6 (which is p3)
+        ax.plot([0.1, 10],     [1e-2, 1],    color='black', lw=1)  # p7 to p8 (which is p3)
+    
+        # --- 7. Regime Annotations ---
+        text_arr = [
+            ("RB",   0.1,  0.8),
+            ("RX",   0.8,  0.8),
+            ("$C_I$", 0.5,  0.1),
+            ("$C_S$", 0.85, 0.1)
+        ]
+        
+        for (text, xpos, ypos) in text_arr:
+            ax.text(xpos, ypos, text, transform=ax.transAxes, size=9, 
+                    verticalalignment='bottom', horizontalalignment='left')
+        
+                    
     plt.tight_layout(pad=0.1)
     pdf_page.savefig(fig)
     pdf_page.close()
@@ -1711,6 +2420,7 @@ def plot_blob_regime_graph(pdf_filename=None,
 def plot_well_known_parameter_dependences(pdf_filename=None,
                                           nocalc=True,
                                           save_data_for_publication=False,
+                                          analyze_lh_difference=True,
                                           ):
     """
     Plots a multi-panel figure of specific, well-known blob and plasma parameter dependencies.
@@ -1744,23 +2454,12 @@ def plot_well_known_parameter_dependences(pdf_filename=None,
         pdf_filename += '.pdf'
 
     pdf_page = PdfPages(pdf_filename)
-
-    # --- 2. Load Data ---
-    full_plasma_data = read_all_plasma_data(nocalc=nocalc, calculate_parameters_in_sol=True)
-    full_blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed',
-                                        fix_angle_for_correlation=True, averaging='shot', average='avg')
     
-    # --- 3. Derived Dimensionless Calculations ---
-    # a_star and v_star scaling
-    a_star = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 / 
-              np.abs(full_blob_data['Velocity radial position fit'])**0.2)
-              
-    v_star = full_plasma_data['Sound speed'] * (a_star / full_blob_data['Position radial fit'])**0.5
+                
+    ncol, nrow = 2, 3
+    fig, axs = plt.subplots(nrows=nrow, ncols=ncol, figsize=(8.5/2.54, 8.5*1.5/2.54))
     
-    full_blob_data['Velocity radial dimensionless'] = full_blob_data['Velocity radial position fit'] / v_star
-    full_plasma_data['Inverse A hat squared'] = 1 / (full_blob_data['Size radial fit'] / a_star)**2
     
-    # --- 4. Plotting Configuration ---
     interesting_key_pairs = [
         ('Angle fit',                       'Connection length'),
         ('Angular velocity ALI',            'Connection length'),
@@ -1780,58 +2479,180 @@ def plot_well_known_parameter_dependences(pdf_filename=None,
         'Collisionality dimensionless':    ['$\\Lambda$', '', 1]
     }
     
-    ncol, nrow = 2, 3
-    fig, axs = plt.subplots(nrows=nrow, ncols=ncol, figsize=(8.5/2.54, 8.5*1.5/2.54))
-    
-    # --- 5. Main Plotting Loop ---
-    for ind, (key1, key2) in enumerate(interesting_key_pairs):
-        ax = axs[ind // ncol, ind % ncol]
+    if not analyze_lh_difference:
+        # --- 2. Load Data ---
+        full_plasma_data = read_all_plasma_data(nocalc=nocalc, calculate_parameters_in_sol=True)
+        full_blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed',
+                                            fix_angle_for_correlation=True, averaging='shot', average='avg')
         
-        # Mask NaNs safely
-        valid_mask = ~np.isnan(full_blob_data[key1]) & ~np.isnan(full_plasma_data[key2])
-        data1 = full_blob_data[key1][valid_mask] * units[key1][2]
-        data2 = full_plasma_data[key2][valid_mask] * units[key2][2]
+        # --- 3. Derived Dimensionless Calculations ---
+        # a_star and v_star scaling
+        a_star = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 / 
+                  np.abs(full_blob_data['Velocity radial position fit'])**0.2)
+                  
+        v_star = full_plasma_data['Sound speed'] * (a_star / full_blob_data['Position radial fit'])**0.5
         
-        # Math & Stats
-        d1_c, d2_c = data1 - np.mean(data1), data2 - np.mean(data2)
-        correlation = np.sum(d1_c * d2_c) / np.sqrt(np.sum(d1_c**2) * np.sum(d2_c**2))
-        slope, intercept, r_value, p_value, std_err = linregress(data2, data1)
-        r_squared = r_value ** 2
+        full_blob_data['Velocity radial dimensionless'] = full_blob_data['Velocity radial position fit'] / v_star
+        full_plasma_data['Inverse A hat squared'] = 1 / (full_blob_data['Size radial fit'] / a_star)**2
         
-        # Scatter and Regression
-        ax.plot(data2, data1, linestyle='None', marker='o', ms=1)
-        sns.regplot(x=data2, y=data1, ci=68.27, ax=ax, scatter_kws={'s': 1})
         
-        # Dynamic axis labels
-        xlabel = f"{units[key2][0]} [{units[key2][1]}]" if units[key2][1] else units[key2][0]
-        ylabel = f"{units[key1][0]} [{units[key1][1]}]" if units[key1][1] else units[key1][0]
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
+        ncol, nrow = 2, 3
+        fig, axs = plt.subplots(nrows=nrow, ncols=ncol, figsize=(8.5/2.54, 8.5*1.5/2.54))
         
-        # Panel letter annotation
-        ax.text(-0.4, 1.02, f"({alc[ind]})", transform=ax.transAxes, size=9, va='bottom', ha='left')
-        
-        # Adjust text positioning based on correlation sign or specific key
-        if key1 == "Velocity radial dimensionless":
-            pos_corr, pos_r2 = [0.05, 0.755], [0.05, 0.875]
-        elif correlation < 0:
-            pos_corr, pos_r2 = [0.05, 0.005], [0.05, 0.125]
-        else:
-            pos_corr, pos_r2 = [0.65, 0.005], [0.60, 0.125]
+        # --- 5. Main Plotting Loop ---
+        for ind, (key1, key2) in enumerate(interesting_key_pairs):
+            ax = axs[ind // ncol, ind % ncol]
             
-        ax.text(pos_corr[0], pos_corr[1], f"$\\rho \\ =\\ {correlation:.2f}$", 
-                size=6, va='bottom', ha='left', transform=ax.transAxes)
-        ax.text(pos_r2[0], pos_r2[1], f"$R^2 \\ =\\ {r_squared:.2f}$", 
-                size=6, va='bottom', ha='left', transform=ax.transAxes)
+            # Mask NaNs safely
+            valid_mask = ~np.isnan(full_blob_data[key1]) & ~np.isnan(full_plasma_data[key2])
+            data1 = full_blob_data[key1][valid_mask] * units[key1][2]
+            data2 = full_plasma_data[key2][valid_mask] * units[key2][2]
+            
+            # Math & Stats
+            d1_c, d2_c = data1 - np.mean(data1), data2 - np.mean(data2)
+            correlation = np.sum(d1_c * d2_c) / np.sqrt(np.sum(d1_c**2) * np.sum(d2_c**2))
+            slope, intercept, r_value, p_value, std_err = linregress(data2, data1)
+            r_squared = r_value ** 2
+            
+            # Scatter and Regression
+            ax.plot(data2, data1, linestyle='None', marker='o', ms=1)
+            sns.regplot(x=data2, y=data1, ci=68.27, ax=ax, scatter_kws={'s': 1})
+            
+            # Dynamic axis labels
+            xlabel = f"{units[key2][0]} [{units[key2][1]}]" if units[key2][1] else units[key2][0]
+            ylabel = f"{units[key1][0]} [{units[key1][1]}]" if units[key1][1] else units[key1][0]
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            
+            # Panel letter annotation
+            ax.text(-0.4, 1.02, f"({alc[ind]})", transform=ax.transAxes, size=9, va='bottom', ha='left')
+            
+            # Adjust text positioning based on correlation sign or specific key
+            if key1 == "Velocity radial dimensionless":
+                pos_corr, pos_r2 = [0.05, 0.755], [0.05, 0.875]
+            elif correlation < 0:
+                pos_corr, pos_r2 = [0.05, 0.005], [0.05, 0.125]
+            else:
+                pos_corr, pos_r2 = [0.65, 0.005], [0.60, 0.125]
+                
+            ax.text(pos_corr[0], pos_corr[1], f"$\\rho \\ =\\ {correlation:.2f}$", 
+                    size=6, va='bottom', ha='left', transform=ax.transAxes)
+            ax.text(pos_r2[0], pos_r2[1], f"$R^2 \\ =\\ {r_squared:.2f}$", 
+                    size=6, va='bottom', ha='left', transform=ax.transAxes)
+            
+            # Export Data
+            if save_data_for_publication:
+                with open(f"{wd}/{alc[ind]}_well_known_params.txt", 'w+') as f:
+                    f.write(f"{key1} data:\n{data1}\n\n")
+                    f.write(f"{key2} data:\n{data2}\n\n")
+                    f.write(f"R2 value: {r_squared}\n")
+                    f.write(f"Correlation: {correlation}")
+    else:
         
-        # Export Data
-        if save_data_for_publication:
-            with open(f"{wd}/{alc[ind]}_well_known_params.txt", 'w+') as f:
-                f.write(f"{key1} data:\n{data1}\n\n")
-                f.write(f"{key2} data:\n{data2}\n\n")
-                f.write(f"R2 value: {r_squared}\n")
-                f.write(f"Correlation: {correlation}")
+        def _load_data(l_mode=False, h_mode=False):
+            mode_str = '_l_mode' if l_mode else '_h_mode' if h_mode else '_full'
+            p_plasma = f"{wd}/processed_data/plasma_vs_blob_plasma_data{mode_str}.pickle"
+            p_blob = f"{wd}/processed_data/plasma_vs_blob_blob_data{mode_str}.pickle"
+            
+            if not os.path.exists(p_plasma):
+                plasma_data = read_all_plasma_data(nocalc=nocalc, read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_plasma, 'wb') as f: pickle.dump(plasma_data, f)
+            else:
+                with open(p_plasma, 'rb') as f: plasma_data = pickle.load(f)
+                
+            if not os.path.exists(p_blob):
+            # if True:
+                blob_data = read_all_blob_data(nocalc=nocalc, str_finding_method='watershed', 
+                                               fix_angle_for_correlation=True, averaging='shot', average='avg',
+                                               read_l_mode_only=l_mode, read_h_mode_only=h_mode)
+                with open(p_blob, 'wb') as f: pickle.dump(blob_data, f)
+            else:
+                with open(p_blob, 'rb') as f: blob_data = pickle.load(f)
+            
+            for key in plasma_data.keys():
+                plasma_data[key]=np.asarray(plasma_data[key])
+            
+            for key in blob_data.keys():
+                blob_data[key]=np.asarray(blob_data[key])    
+            
+            # Calculate derived metrics
+            scale_length = (plasma_data['Larmor radius sound']**0.8 * plasma_data['Connection length']**0.4 /
+                            plasma_data['Pedestal radius']**0.2)
+            plasma_data['Blob size dimensionless'] = (np.sqrt(blob_data['Area']) / np.pi / scale_length)**2.5
+            
+            # In-place masking of invalid connection lengths
+            plasma_data['Connection length'] = np.where(plasma_data['Connection length'] < 1.5, np.nan, plasma_data['Connection length'])
+            
+            return plasma_data, blob_data
+        
+        plasma_l, blob_l = _load_data(l_mode=True)
+        plasma_h, blob_h = _load_data(h_mode=True)
+        
+        flap_nstx.tools.set_matplotlib_for_publication(labelsize=6., linewidth=0.5, major_ticksize=2.)
+        legend_labels = ['H-mode', 'L-mode']
+        colors = ['tab:blue', 'tab:orange']
+    
+    
+        for ind_mode in [0,1]:
+            if ind_mode == 1:
+                full_blob_data = blob_l
+                full_plasma_data = plasma_l
+            else:
+                full_blob_data = blob_h
+                full_plasma_data = plasma_h
 
+            a_star = (full_plasma_data['Larmor radius sound']**0.8 * full_plasma_data['Connection length']**0.4 / 
+                      np.abs(full_blob_data['Velocity radial position fit'])**0.2)
+                      
+            v_star = full_plasma_data['Sound speed'] * (a_star / full_blob_data['Position radial fit'])**0.5
+            
+            full_blob_data['Velocity radial dimensionless'] = full_blob_data['Velocity radial position fit'] / v_star
+            full_plasma_data['Inverse A hat squared'] = 1 / (full_blob_data['Size radial fit'] / a_star)**2
+            
+            # --- 5. Main Plotting Loop ---
+            for ind, (key1, key2) in enumerate(interesting_key_pairs):
+                ax = axs[ind // ncol, ind % ncol]
+                
+                # Mask NaNs safely
+                valid_mask = ~np.isnan(full_blob_data[key1]) & ~np.isnan(full_plasma_data[key2])
+                data1 = full_blob_data[key1][valid_mask] * units[key1][2]
+                data2 = full_plasma_data[key2][valid_mask] * units[key2][2]
+                
+                # Math & Stats
+                d1_c, d2_c = data1 - np.mean(data1), data2 - np.mean(data2)
+                correlation = np.sum(d1_c * d2_c) / np.sqrt(np.sum(d1_c**2) * np.sum(d2_c**2))
+                slope, intercept, r_value, p_value, std_err = linregress(data2, data1)
+                r_squared = r_value ** 2
+                
+                # Scatter and Regression
+                ax.plot(data2, data1, linestyle='None', marker='o', ms=1, color=colors[ind_mode])
+                sns.regplot(x=data2, y=data1, ci=68.27, ax=ax, scatter_kws={'s': 1}, color=colors[ind_mode])
+                
+                # Dynamic axis labels
+                xlabel = f"{units[key2][0]} [{units[key2][1]}]" if units[key2][1] else units[key2][0]
+                ylabel = f"{units[key1][0]} [{units[key1][1]}]" if units[key1][1] else units[key1][0]
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel)
+                
+                # Panel letter annotation
+                ax.text(-0.4, 1.02, f"({alc[ind]})", transform=ax.transAxes, size=9, va='bottom', ha='left')
+                
+                # Adjust text positioning based on correlation sign or specific key
+                if ind_mode == 0:
+                    pos_corr, pos_r2 = [0.05, 0.005], [0.05, 0.125]
+                else:
+                    pos_corr, pos_r2 = [0.65, 0.005], [0.60, 0.125]
+                    
+                ax.text(pos_corr[0], pos_corr[1], f"$\\rho \\ =\\ {correlation:.2f}$", 
+                        size=6, va='bottom', ha='left', transform=ax.transAxes,
+                        color=colors[ind_mode])
+                ax.text(pos_r2[0], pos_r2[1], f"$R^2 \\ =\\ {r_squared:.2f}$", 
+                        size=6, va='bottom', ha='left', transform=ax.transAxes,
+                        color=colors[ind_mode])
+                if ind == 5:
+                    ax.text(0.7, 0.7+ind_mode*0.1, legend_labels[ind_mode], 
+                            size=6, va='bottom', ha='left', transform=ax.transAxes,
+                            color=colors[ind_mode])
     plt.tight_layout(pad=0.1)
     pdf_page.savefig(fig)
     pdf_page.close()

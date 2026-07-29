@@ -319,7 +319,6 @@ def get_fit_nstx_thomson_profiles(exp_id=None,                                  
                     pcov[:,:]=np.nan
                     
                 successful_fitting=False
-            
             if test or (plot_time_vec is not None and i_time_vec==np.argmin(np.abs(plot_time_vec-time_vec))):
                 plt.cla()
                 if successful_fitting:

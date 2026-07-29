@@ -23,7 +23,7 @@ flap_nstx.register('NSTX_GPI')
 from flap_nstx.gpi import (normalize_gpi, 
                            identify_structures, track_structures, 
                            calculate_differential_structure_keys,
-                           remove_orphans)
+                           _remove_orphans)
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
 from flap_nstx.tools import StructureDataset
 
@@ -660,24 +660,27 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                 print(f'Exception in analyze_gpi_structures.py L661: {e}')
                 print('Pickle file cannot be loaded, trying hdf5 instead.')
                 print('\n\n--- Loading data from the HDF5 file ---')
-                tracked_dataset = StructureDataset.load_hdf5(hdf5_filename)
+                tracked_dataset = StructureDataset.load_hdf5(hdf5_filename, tracked=True)
     else:
         pickle_filename=hdf5_filename.replace('.h5', '.pickle')
         try:
-             print("Loading data from the pickle file")
+             print('\n\n--- Loading data from the pickle file ---')
              with open(pickle_filename,'rb') as f:
                  tracked_dataset=pickle.load(f)
         except Exception as e:
             print(f'Exception in analyze_gpi_structures.py L661: {e}')
             print('Pickle file cannot be loaded, trying hdf5 instead.')
             print('\n\n--- Loading data from the HDF5 file ---')
-            tracked_dataset = StructureDataset.load_hdf5(hdf5_filename)
+            tracked_dataset = StructureDataset.load_hdf5(hdf5_filename, tracked=True)
+            
     if calculate_only: return True
     
     if remove_orphans:
-        tracked_dataset = remove_orphans(tracked_dataset, test, min_structure_lifetime)
-
-
+        tracked_dataset = _remove_orphans(tracked_dataset, test, min_structure_lifetime)
+    tracked_dataset=calculate_differential_structure_keys(tracked_dataset)
+    
+    
+    
     """
     PLOTTING THE RESULTS
     """

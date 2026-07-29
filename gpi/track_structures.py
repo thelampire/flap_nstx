@@ -347,10 +347,10 @@ def calculate_score_matrix(structures_1, structures_2, matrix_weight, coeff_r=No
                 
     return score_matrix
 
-
-
-def remove_orphans(dataset, test, min_structure_lifetime):
+def _remove_orphans(dataset, test, min_structure_lifetime):
     label_counts = Counter()
+    
+    # Count frequencies based on the raw frames
     for structures in dataset.frames:
         if structures is not None:
             for s in structures:
@@ -367,14 +367,35 @@ def remove_orphans(dataset, test, min_structure_lifetime):
             label_map[label] = new_index
             new_index += 1
 
+    # 1. Filter and remap the raw untracked frames
     for i_frames, structures in enumerate(dataset.frames):
         if structures is not None:
             valid_structures = []
             for s in structures:
                 if s.label in label_map:
+                    # Remap the primary label
                     s.label = label_map[s.label]
+                    
+                    # BUG FIX: Safely remap parent/child relationships so merges/splits don't break!
+                    if hasattr(s, 'parents'):
+                        s.parents = [label_map[p] for p in s.parents if p in label_map]
+                    if hasattr(s, 'children'):
+                        s.children = [label_map[c] for c in s.children if c in label_map]
+                        
                     valid_structures.append(s)
             dataset.frames[i_frames] = valid_structures
+
+    # 2. Filter and remap the tracked blobs (if they have been generated)
+    if hasattr(dataset, 'tracked_structures') and dataset.tracked_structures:
+        valid_tracked_blobs = []
+        for blob in dataset.tracked_structures:
+            if blob.label in label_map:
+                # Remap the blob's primary overarching label
+                blob.label = label_map[blob.label]
+                valid_tracked_blobs.append(blob)
+        
+        # Replace the old list with the strictly filtered one
+        dataset.tracked_structures = valid_tracked_blobs
 
     return dataset
 
@@ -414,17 +435,17 @@ def calculate_differential_structure_keys(dataset):
         if not struct or len(struct.time) < 2:
             continue
             
-        rp = struct.regular_parameters
-        dp = struct.differential_parameters
+        regular_parameters = struct.regular_parameters
+        differential_parameters = struct.differential_parameters
         
         # Get raw time differences
         dt_arr = np.diff(struct.time)
         
         # 1. Calculate standard derivatives (Velocity, Growth rates, etc.)
         for diff_key, reg_key in diff_map.items():
-            if reg_key in rp:
+            if reg_key in regular_parameters:
                 # Safely extract the raw numpy array
-                reg_obj = rp[reg_key]
+                reg_obj = regular_parameters[reg_key]
                 reg_val = reg_obj.value if hasattr(reg_obj, 'value') else reg_obj
                 
                 # Perform the math using raw numpy arrays
@@ -449,11 +470,11 @@ def calculate_differential_structure_keys(dataset):
                                    dict_label=diff_key, 
                                    plot_label=derived_plot_label, 
                                    unit=derived_unit)
-                dp[diff_key] = rate
+                differential_parameters[diff_key] = rate
 
         # 2. Calculate Expansion Fractions (Area ratios)
-        if 'Area' in rp:
-            area_obj = rp['Area']
+        if 'Area' in regular_parameters:
+            area_obj = regular_parameters['Area']
             area_val = area_obj.value if hasattr(area_obj, 'value') else area_obj
             res_val = (area_val[1:] / area_val[:-1]) ** 0.5
             
@@ -462,13 +483,13 @@ def calculate_differential_structure_keys(dataset):
                               dict_label='Expansion fraction area', 
                               plot_label='$f_{E,area}$', 
                               unit='-')
-            dp['Expansion fraction area'] = res
+            differential_parameters['Expansion fraction area'] = res
             
-        if 'Axes length minor fit' in rp and 'Axes length major fit' in rp:
-            minor_obj = rp['Axes length minor fit']
+        if 'Axes length minor fit' in regular_parameters and 'Axes length major fit' in regular_parameters:
+            minor_obj = regular_parameters['Axes length minor fit']
             minor_val = minor_obj.value if hasattr(minor_obj, 'value') else minor_obj
             
-            major_obj = rp['Axes length major fit']
+            major_obj = regular_parameters['Axes length major fit']
             major_val = major_obj.value if hasattr(major_obj, 'value') else major_obj
             
             area_fit = minor_val * major_val
@@ -478,7 +499,7 @@ def calculate_differential_structure_keys(dataset):
                               dict_label='Expansion fraction axes fit', 
                               plot_label='$f_{E,ellipse}$', 
                               unit='-')
-            dp['Expansion fraction axes fit'] = res
+            differential_parameters['Expansion fraction axes fit'] = res
             
     return dataset
 

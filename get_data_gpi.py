@@ -316,24 +316,24 @@ def add_coordinate_gpi(data_object,
             raise ValueError('R,z or t coordinates are missing.')
         try:
             psi_rz_obj=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT01::\PSIRZ',
+                                     name='\EFIT02::\PSIRZ',
                                      exp_id=data_object.exp_id,
                                      object_name='PSIRZ_FOR_COORD')
             r_mag_axis=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT01::\RMAXIS',
+                                     name='\EFIT02::\RMAXIS',
                                      exp_id=data_object.exp_id,
                                      object_name='RMAXIS_FOR_COORD')
             z_mag_axis=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT01::\ZMAXIS',
+                                     name='\EFIT02::\ZMAXIS',
                                      exp_id=data_object.exp_id,
                                      object_name='ZMAXIS_FOR_COORD')
             r_bdry_obj=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT01::\RBDRY',
+                                     name='\EFIT02::\RBDRY',
                                      exp_id=data_object.exp_id,
                                      object_name='SEP X OBJ'
                                      )
             z_bdry_obj=flap.get_data('NSTX_MDSPlus',
-                                     name='\EFIT01::\ZBDRY',
+                                     name='\EFIT02::\ZBDRY',
                                      exp_id=data_object.exp_id,
                                      object_name='SEP Y OBJ'
                                      )

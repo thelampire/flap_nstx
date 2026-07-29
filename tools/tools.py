@@ -889,7 +889,7 @@ class Kmeans:
             yield jc, (self.Xtocentre == jc)
 
 
-def calculate_corr_acceptance_levels(n_data=160,
+def calculate_corr_acceptance_levels(n_data=200,
                                      n_rand=10000,
                                      recalc=False,
                                      verbose=False):
@@ -1273,3 +1273,142 @@ def ellipse_line_intersection(xc, yc, a, b, x1, y1, x2, y2, segment_only=True, t
             if (not segment_only) or (0-tol <= t <= 1+tol):
                 pts.append((x1 + t*dx, y1 + t*dy))
     return pts
+
+from scipy.interpolate import RegularGridInterpolator
+import skimage.measure
+
+import numpy as np
+import flap
+import flap_nstx
+
+def get_flux_coord(shot=None,
+                   time=None,
+                   R_target=None, 
+                   z_target=None):
+    """
+    Calculates the normalized poloidal flux and arc-length poloidal angle 
+    for a specific list of absolute (R, Z) points.
+    
+    Args:
+        shot (int): Experimental shot number.
+        time (float): Time slice to extract equilibrium data.
+        R_target (np.ndarray): 1D array of Target Major Radius coordinates (from center of torus).
+        z_target (np.ndarray): 1D array of Target Vertical coordinates.
+        
+    Returns:
+        dict: 'psi_norm' and 'theta_arc' arrays corresponding to the target points.
+    """
+    R_target = np.atleast_1d(R_target)
+    Z_target = np.atleast_1d(z_target)
+    
+    # =========================================================================
+    # 1. Read data for flux coordinate calculation
+    # =========================================================================
+    psi_rz_obj = flap.get_data('NSTX_MDSPlus',
+                               name=r'\EFIT02::\PSIRZ',
+                               exp_id=shot,
+                               object_name='PSIRZ_FOR_COORD'
+                               ).slice_data(slicing={'Time': time})
+    
+    R_grid_1d = psi_rz_obj.coordinate('Device R')[0][:, 0]
+    z_grid_1d = psi_rz_obj.coordinate('Device z')[0][0, :]
+    psi_grid_2d = psi_rz_obj.data
+    
+    # Extract structural scalars (wrapped in float() to unpack single-element arrays)
+    R_axis = flap.get_data('NSTX_MDSPlus',
+                                 name=r'\EFIT02::\RMAXIS',
+                                 exp_id=shot,
+                                 object_name='RMAXIS_FOR_COORD'
+                                 ).slice_data(slicing={'Time': time}).data
+                                 
+    Z_axis = float(flap.get_data('NSTX_MDSPlus',
+                                 name=r'\EFIT02::\ZMAXIS',
+                                 exp_id=shot,
+                                 object_name='ZMAXIS_FOR_COORD'
+                                 ).slice_data(slicing={'Time': time}).data)
+                                 
+    psi_axis = float(flap.get_data('NSTX_MDSPlus',
+                                   name=r'\EFIT02::\SSIMAG',
+                                   exp_id=shot,
+                                   object_name='PSI0_FOR_COORD'
+                                   ).slice_data(slicing={'Time': time}).data)
+                                   
+    psi_bdry = float(flap.get_data('NSTX_MDSPlus',
+                                   name=r'\EFIT02::\SSIBRY',
+                                   exp_id=shot,
+                                   object_name='PSIBDY_FOR_COORD'
+                                   ).slice_data(slicing={'Time': time}).data)
+    # =========================================================================
+    # 2. Interpolate psi at the target locations
+    # =========================================================================
+    # RegularGridInterpolator strictly maps absolute R and absolute Z to psi.
+    interp_func = RegularGridInterpolator((R_grid_1d, z_grid_1d), psi_grid_2d, 
+                                          bounds_error=False, fill_value=np.nan)
+    
+    target_coords = np.column_stack((R_target, Z_target))
+    psi_target = interp_func(target_coords)
+    # Calculate Normalized Flux
+    psi_norm_target = (psi_target - psi_axis) / (psi_bdry - psi_axis)
+    # =========================================================================
+    # 3. Trace the contour for each point to calculate physical arc length
+    # =========================================================================
+    theta_arc_target = np.zeros_like(psi_target)
+    
+    for i, (r_pt, z_pt, psi_val) in enumerate(zip(R_target, Z_target, psi_target)):
+        if np.isnan(psi_val):
+            theta_arc_target[i] = np.nan
+            continue
+            
+        # If the point is exactly on the axis, theta is degenerate
+        if np.isclose(psi_val, psi_axis, atol=1e-5):
+            theta_arc_target[i] = 0.0
+            continue
+            
+        # Find the contour for this specific psi value
+        contours = skimage.measure.find_contours(psi_grid_2d, psi_val)
+        if not contours:
+            theta_arc_target[i] = np.nan
+            continue
+            
+        # Assume the longest contour is our closed flux surface
+        contour = max(contours, key=len)
+        
+        # Map skimage pixel indices back to physical absolute R, Z coordinates
+        # (Assuming psi_grid_2d is shape [len(R), len(Z)])
+        R_idx, Z_idx = contour[:, 0], contour[:, 1]
+        R_c = np.interp(R_idx, np.arange(len(R_grid_1d)), R_grid_1d)
+        Z_c = np.interp(Z_idx, np.arange(len(z_grid_1d)), z_grid_1d)
+        
+        # Find Outboard Midplane (OMP) to use as theta = 0
+        # Since R is measured from the center, the outboard side is strictly R > R_axis
+        omp_mask = R_c > R_axis
+        if np.any(omp_mask):
+            omp_idx = np.where(omp_mask)[0][np.argmin(np.abs(Z_c[omp_mask] - Z_axis))]
+        else:
+            # Fallback for highly distorted topologies
+            omp_idx = np.argmax(R_c)
+            
+        # Roll arrays to start at the OMP
+        R_c = np.roll(R_c, -omp_idx)
+        Z_c = np.roll(Z_c, -omp_idx)
+        
+        # Ensure standard counter-clockwise orientation (Z should increase initially)
+        if len(Z_c) > 1 and Z_c[1] < Z_c[0]:
+            R_c = np.insert(R_c[1:][::-1], 0, R_c[0])
+            Z_c = np.insert(Z_c[1:][::-1], 0, Z_c[0])
+            
+        # Calculate cumulative arc lengths along this specific surface
+        dR = np.diff(R_c)
+        dZ = np.diff(Z_c)
+        ds = np.sqrt(dR**2 + dZ**2)
+        s_cumulative = np.insert(np.cumsum(ds), 0, 0.0)
+        s_total = s_cumulative[-1]
+        
+        # Find exactly where our target blob sits on this contour
+        distances = (R_c - r_pt)**2 + (Z_c - z_pt)**2
+        closest_idx = np.argmin(distances)
+        
+        # Normalize the distance to [0, 2pi]
+        theta_arc_target[i] = 2 * np.pi * (s_cumulative[closest_idx] / s_total)
+        
+    return (psi_norm_target, theta_arc_target)
