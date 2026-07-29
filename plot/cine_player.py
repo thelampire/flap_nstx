@@ -4,9 +4,9 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import numpy as np
 import pims
 import time
-import sys
 import matplotlib
 import matplotlib.cm as cm
+
 
 class CinePlayer:
     def __init__(self, root):
@@ -164,10 +164,14 @@ class CinePlayer:
             return
 
         try:
+        
             if self.reader is not None:
                 self.reader.close()
 
             self.reader = pims.Cine(file_path)
+            if 3 not in self.reader.shape and self.reader.setup_fields_dict['cfa'] != 0:
+                self.reader.setup_fields_dict['cfa']=0
+                self.reader.header_dict['compression']=0
             self.total_frames = len(self.reader)
             self.base_fps = 30
 
