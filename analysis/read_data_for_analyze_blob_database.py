@@ -40,7 +40,301 @@ import pandas
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
-def read_all_blob_data(time_range_around_peak=[-5e-3,15e-3], 
+
+def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3], 
+                       nocalc=False,
+                       recalc_tracking=False,
+                       min_structure_lifetime=20,
+                       str_finding_method='watershed',
+                       fix_angle_for_correlation=False,
+                       read_mean_results=False, 
+                       averaging='shot',
+                       average='avg', 
+                       replicate_histogram2=False,
+                       replicate_old_read_blob_data=False,
+                       read_l_mode_only=False,
+                       read_h_mode_only=False,
+                       filtered_blob_db=False,
+                       condition_key=None,
+                       condition_range=None):
+    
+    if read_mean_results:
+        averaging = 'shot'
+    
+    pickle_filename = f"{wd}/processed_data/blob_database_shot_by_shot_blob_{str_finding_method}_{averaging}_avg__{average}_calc__"
+    
+    if read_l_mode_only: pickle_filename += 'L_mode'
+    if read_h_mode_only: pickle_filename += 'H_mode'
+    
+    if averaging == 'conditional' and condition_key is not None and condition_range is not None:
+        pickle_filename += f"_cond_{condition_key}_{condition_range[0]}_{condition_range[1]}"
+        
+    pickle_filename += '.pickle'
+            
+    if read_l_mode_only:
+        blob_database = read_blob_lh_mode_database_file(l_mode=True, filtered_blob_db=filtered_blob_db, time_range_around_peak=time_range_around_peak)
+    elif read_h_mode_only:
+        blob_database = read_blob_lh_mode_database_file(h_mode=True, filtered_blob_db=filtered_blob_db, time_range_around_peak=time_range_around_peak)
+    else:
+        if not isinstance(time_range_around_peak, (int, float)):
+            print('time_range_around_peak needs to be a single number if l_mode or h_mode reading is not set. Setting it to 5e-3')
+            time_range_around_peak = 5e-3
+        blob_database = read_blob_database_file(time_range_around_peak=time_range_around_peak)
+        
+    ncalc = len(blob_database['shot'])
+
+    full_blob_db_data = {}
+    full_blob_db_error = {}
+
+    if not os.path.exists(pickle_filename) or not nocalc:
+        n_str = 0
+        start_time = time_mod.time()
+        keys_initialized = False
+        analyzed_keys = []
+        failed_shots = {'shot': [], 'index': []}
+        
+        for ind in range(ncalc):
+            shot = blob_database['shot'][ind]
+            if shot in [137651, 139435, 139434]:
+                failed_shots['shot'].append(shot)
+                failed_shots['index'].append(ind)
+                continue
+            
+            if isinstance(blob_database['time'][ind], (list, np.ndarray)):
+                time_range = blob_database['time'][ind]
+            else:
+                time_range = [blob_database['time'][ind] - time_range_around_peak,
+                              blob_database['time'][ind] + time_range_around_peak]
+
+            blob_results = read_blob_data(shot, time_range, nocalc=True, recalc_tracking=recalc_tracking,
+                                          min_structure_lifetime=min_structure_lifetime, str_finding_method=str_finding_method)
+                                          
+            if blob_results is None or blob_results.mode != 'tracked' or not blob_results.tracked_structures: 
+                failed_shots['shot'].append(shot)
+                failed_shots['index'].append(ind)
+                continue
+        
+            if not keys_initialized:
+                first_struct = blob_results.tracked_structures[0]
+                analyzed_keys = list(first_struct.regular_parameters.keys()) + list(first_struct.differential_parameters.keys())
+                
+                new_keys_to_add = ['Normalized flux coordinate', 'Poloidal angle', 'Lifetime', 
+                                   'Poloidal angular velocity', 'Normalized flux coordinate velocity']
+                for nk in new_keys_to_add:
+                    if nk not in analyzed_keys:
+                        analyzed_keys.append(nk)
+                
+                full_blob_db_data = {key: [] for key in analyzed_keys}
+                full_blob_db_error = {key: [] for key in analyzed_keys}
+                keys_initialized = True
+
+            curr_shot_data = {key: [] for key in analyzed_keys}
+            curr_shot_error = {key: [] for key in analyzed_keys}
+            
+            flap.delete_data_object('*')
+            
+            for structure in blob_results.tracked_structures: 
+                
+                # ===============================================================
+                # 1. PRE-CALCULATE CORRECTED FLUX COORDS
+                # ===============================================================
+                raw_psi_norm, raw_theta_arc = None, None
+                
+                flux_dependent_keys = ['Normalized flux coordinate', 'Poloidal angle', 
+                                       'Poloidal angular velocity', 'Normalized flux coordinate velocity']
+                needs_flux = any(k in analyzed_keys for k in flux_dependent_keys) or (condition_key in flux_dependent_keys)
+                
+                if needs_flux:
+                    try:
+                       
+                        # Step 3: Call the flux function with the perfectly corrected coordinates
+                        raw_psi_norm, raw_theta_arc = get_flux_coord(
+                            shot=shot,
+                            time=np.mean(blob_database['time'][ind]),
+                            R_target=structure.regular_parameters['Centroid radial'].value,
+                            z_target=structure.regular_parameters['Centroid poloidal'].value
+                        )
+                    except Exception as e:
+                        print(f"Exception in read_data_for_analyze_blob_database.py at L158: {e}")
+                        raw_psi_norm = np.full(len(structure.regular_parameters['Intensity'].value), np.nan)
+                        raw_theta_arc = np.full(len(structure.regular_parameters['Intensity'].value), np.nan)
+
+                # ===============================================================
+                # 2. EVENT TRIGGER DETECTION (Find t0)
+                # ===============================================================
+                event_idx = 0
+                if averaging == 'conditional' and condition_key is not None and condition_range is not None:
+                    cond_arr = None
+                    if condition_key == 'Normalized flux coordinate': cond_arr = raw_psi_norm
+                    elif condition_key == 'Poloidal angle': cond_arr = raw_theta_arc
+                    # Using np.gradient preserves the original array length so we no longer need np.nan padding
+                    elif condition_key == 'Poloidal angular velocity': 
+                        cond_arr = ((np.gradient(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
+                    elif condition_key == 'Normalized flux coordinate velocity': 
+                        cond_arr = np.gradient(raw_psi_norm) / 2.5e-6
+                    elif condition_key == 'Lifetime': cond_arr = np.arange(len(structure.regular_parameters['Intensity'].value)) * 2.5e-6
+                    elif condition_key in structure.regular_parameters: cond_arr = structure.regular_parameters[condition_key].value
+                    elif condition_key in structure.differential_parameters: cond_arr = structure.differential_parameters[condition_key].value
+                    
+                    if cond_arr is not None:
+                        valid_indices = np.where((cond_arr >= condition_range[0]) & (cond_arr <= condition_range[1]))[0]
+                        if len(valid_indices) > 0:
+                            event_idx = valid_indices[0] 
+                        else:
+                            continue
+                    else:
+                        continue
+
+                # ===============================================================
+                
+                n_str += 1
+                for key in analyzed_keys:
+                    
+                    is_differential = False
+                    if key == 'Axes length minor fit': new_key = 'Axes length major fit'
+                    elif key == 'Axes length major fit': new_key = 'Axes length minor fit'
+                    else: new_key = key
+
+                    if key == 'Normalized flux coordinate': 
+                        raw_data = raw_psi_norm
+                    elif key == 'Poloidal angle': 
+                        raw_data = raw_theta_arc
+                    
+                    # ===============================================================
+                    # Velocity Calculations using centered np.gradient (dt = 2.5e-6)
+                    # ===============================================================
+                    elif key == 'Poloidal angular velocity':
+                        # Wrap to [-pi, pi] safely
+                        raw_data = ((np.gradient(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
+                        is_differential = False # gradient returns length N, so we don't pad!
+                    elif key == 'Normalized flux coordinate velocity':
+                        raw_data = np.gradient(raw_psi_norm) / 2.5e-6
+                        is_differential = False # gradient returns length N, so we don't pad!
+                    # ===============================================================
+                    
+                    elif key == 'Lifetime': 
+                        raw_data = np.arange(len(structure.regular_parameters['Intensity'].value)) * 2.5e-6
+                    elif key in structure.regular_parameters: 
+                        raw_data = structure.regular_parameters[new_key].value
+                    elif key in structure.differential_parameters:
+                        raw_data = structure.differential_parameters[new_key].value
+                        is_differential = True
+                    else: continue 
+                        
+                    if replicate_old_read_blob_data:
+                        str_key_data = np.append(raw_data, raw_data[-1]) if is_differential else raw_data
+                    elif replicate_histogram2:
+                        str_key_data = raw_data if is_differential else raw_data[1:]
+                    else:  
+                        str_key_data = raw_data
+                        
+                    str_key_data = np.asarray(str_key_data)
+                    
+                    if averaging == 'no':
+                        curr_shot_data[new_key] = np.append(curr_shot_data[new_key], np.ravel(str_key_data))
+                        
+                    elif averaging in ['shot', 'blob']:
+                        str_key_data = str_key_data[~np.isnan(str_key_data)]
+                        if len(str_key_data) == 0: continue
+                        if averaging == 'shot': curr_shot_error[new_key].append(np.sqrt(np.var(str_key_data)))
+                                
+                        if average == 'avg': curr_shot_data[new_key].append(np.mean(str_key_data))
+                        elif average == 'std': curr_shot_data[new_key].append(np.sqrt(np.var(str_key_data)))
+                        elif average == 'max': curr_shot_data[new_key].append(np.max(str_key_data))
+                        
+                    elif averaging == 'conditional':
+                        curr_shot_data[new_key].append((event_idx, str_key_data))
+                        
+            if averaging != 'conditional':
+                for key in analyzed_keys:
+                    try: curr_shot_data[key] = np.concatenate(curr_shot_data[key])
+                    except: pass
+                
+            for key in full_blob_db_data.keys():
+                if len(curr_shot_data[key]) == 0: 
+                    if averaging == 'shot':
+                        full_blob_db_data[key].append(np.nan)
+                        full_blob_db_error[key].append(np.nan)
+                    elif averaging in ['no', 'blob']:
+                        full_blob_db_data[key].append({'shot': shot, 'data': np.nan})
+                else:
+                    if averaging == 'shot':
+                        full_blob_db_data[key].append(np.mean(curr_shot_data[key]))
+                        full_blob_db_error[key].append(np.mean(curr_shot_error[key]) / np.sqrt(len(curr_shot_error[key])))
+                    elif averaging in ['no', 'blob']:
+                        full_blob_db_data[key].append({'shot': shot, 'data': curr_shot_data[key]})
+                    elif averaging == 'conditional':
+                        full_blob_db_data[key].extend(curr_shot_data[key])
+            
+            elapsed_time = time_mod.time() - start_time
+            avg_time_per_shot = elapsed_time / (ind + 1)
+            remaining_time = avg_time_per_shot * (ncalc - ind - 1)
+            print(f'\rRemaining time: {int(remaining_time // 3600)}h {int((remaining_time % 3600) // 60):02}min {int(remaining_time % 60):02}sec', end="", flush=True)
+            
+        print(f'\nTotal number of structures: {n_str}')
+
+        # ===============================================================
+        # 3. ALIGN & PAD UNEQUAL ARRAYS FOR CONDITIONAL AVERAGING
+        # ===============================================================
+        if averaging == 'conditional':
+            for key in analyzed_keys:
+                list_of_tuples = full_blob_db_data[key]
+                if len(list_of_tuples) == 0:
+                    full_blob_db_data[key] = {'mean': [], 'error': [], 'count': [], 'relative_frames': [], 'raw_matrix': []}
+                    continue
+                    
+                max_pre = max(evt_idx for evt_idx, arr in list_of_tuples)
+                max_post = max(len(arr) - 1 - evt_idx for evt_idx, arr in list_of_tuples)
+                
+                total_len = max_pre + max_post + 1
+                padded_matrix = np.full((len(list_of_tuples), total_len), np.nan)
+                
+                for i, (evt_idx, arr) in enumerate(list_of_tuples):
+                    start_idx = max_pre - evt_idx
+                    end_idx = start_idx + len(arr)
+                    padded_matrix[i, start_idx:end_idx] = arr
+                    
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    count = np.sum(~np.isnan(padded_matrix), axis=0)
+                    median_arr = np.nanmedian(padded_matrix, axis=0)
+                    p10 = np.nanpercentile(padded_matrix, 10, axis=0)
+                    p90 = np.nanpercentile(padded_matrix, 90, axis=0)
+                
+                err_lower = median_arr - p10
+                err_upper = p90 - median_arr
+                err_arr = np.vstack([err_lower, err_upper])
+                err_arr[:, count == 0] = 0.0
+                
+                relative_frames = np.arange(-max_pre, max_post + 1)
+                
+                full_blob_db_data[key] = {
+                    'mean': median_arr,
+                    'error': err_arr,
+                    'count': count,
+                    'relative_frames': relative_frames,
+                    'raw_matrix': padded_matrix  
+                }
+        # ===============================================================
+        
+        if len(failed_shots['shot']) > 0 and averaging != 'conditional':
+            for ind, shot in enumerate(failed_shots['shot']):
+                for key in full_blob_db_data.keys():
+                    if averaging == 'shot':
+                        full_blob_db_data[key].insert(ind, np.nan)
+                        full_blob_db_error[key].insert(ind, np.nan)
+                    else:
+                        full_blob_db_data[key].append({'shot': shot, 'data': np.nan})
+        
+        with open(pickle_filename, 'wb') as f:
+            pickle.dump(full_blob_db_data, f)
+    else:
+        with open(pickle_filename, 'rb') as f:
+            full_blob_db_data = pickle.load(f)
+
+    return full_blob_db_data
+
+def read_all_blob_data_old(time_range_around_peak=[-5e-3,15e-3], 
                        nocalc=False,
                        recalc_tracking=False,
                        min_structure_lifetime=20,
@@ -755,15 +1049,14 @@ def read_all_plasma_data(time_range_around_peak=[-5e-3,15e-3],
 
 
 def read_plasma_parameters_for_table_in_paper(database=None,
-                                              print_ranges=False):
+                                              print_ranges=False,
+                                              calculate_for_lh_study=False):
     """
     Extracts key global plasma parameters across a database of shots for summary tables.
 
     This function iterates through a given database of experimental shots and their 
-    corresponding times. For each event, it retrieves the core plasma parameters 
-    (collisionality, q95, Greenwald fraction, plasma current, toroidal field, and 
-    line-integrated density) using the `read_plasma_data` routine. It also generates 
-    and saves diagnostic PDF plots for the density and temperature profile fits.
+    corresponding times. It can operate on a single provided database, or automatically 
+    fetch and process separate L-mode and H-mode databases. 
 
     Args:
         database (dict, optional): A dictionary containing 'shot' and 'time' arrays. 
@@ -772,62 +1065,103 @@ def read_plasma_parameters_for_table_in_paper(database=None,
         print_ranges (bool, optional): If True, calculates and prints the minimum 
             and maximum values for each of the extracted parameters to the console 
             after the loop completes. Defaults to False.
+        calculate_for_lh_study (bool, optional): If True, fetches and processes 
+            both the L-mode and H-mode databases instead of the default one. 
+            Defaults to False.
 
     Returns:
-        tuple: A tuple containing six lists of the extracted parameters in the 
-            following order:
-            - collisionality (list): Average collisionality for each shot.
-            - q95 (list): Safety factor at the 95% flux surface for each shot.
-            - greenwald (list): Greenwald density fraction for each shot.
-            - current (list): Plasma current for each shot.
-            - btoroidal (list): Toroidal magnetic field for each shot.
-            - density (list): Line-integrated density for each shot.
+        tuple or dict: 
+            - If `calculate_for_lh_study` is False: Returns a tuple containing six lists 
+              (collisionality, q95, greenwald, current, btoroidal, density).
+            - If `calculate_for_lh_study` is True: Returns a dictionary where keys are 
+              'L-Mode' and 'H-Mode', and values are the tuples of the six lists.
     """
     
-    if database is None:
-        database=read_blob_database_file()
+    # --- 1. Database Setup ---
+    databases_to_process = {}
+    
+    if calculate_for_lh_study:
+        # Assuming your L/H reader supports these kwargs as seen in your other scripts
+        databases_to_process['L-Mode'] = read_blob_lh_mode_database_file(l_mode=True, filter_lh_transition=True)
+        databases_to_process['H-Mode'] = read_blob_lh_mode_database_file(h_mode=True, filter_lh_transition=True)
+    else:
+        if database is None:
+            databases_to_process['Standard'] = read_blob_database_file()
+        else:
+            databases_to_process['Standard'] = database
 
-    density=[]
-    current=[]
-    btoroidal=[]
-    greenwald=[]
-    collisionality=[]
-    q95=[]
-    pdf_pages_density=PdfPages(wd+'/plots/blob_database_density_fits.pdf')
-    pdf_pages_temperature=PdfPages(wd+'/plots/blob_database_temperature_fits.pdf')
+    results = {}
+    
+    # [Assuming wd is defined globally in your script]
+    pdf_pages_density = PdfPages(wd+'/plots/blob_database_density_fits.pdf')
+    pdf_pages_temperature = PdfPages(wd+'/plots/blob_database_temperature_fits.pdf')
 
-    for ind_shot in range(len(database['shot'])):
-        print(f"\r{ind_shot/len(database['shot'])*100} % done from the calculation.", flush=True, end='')
-        time_curr=database['time'][ind_shot]
-        shot=database['shot'][ind_shot]
+    # --- 2. Process Each Database ---
+    for db_name, db in databases_to_process.items():
+        if calculate_for_lh_study:
+            print(f"\nProcessing {db_name} Database...")
+            
+        density = []
+        current = []
+        btoroidal = []
+        greenwald = []
+        collisionality = []
+        q95 = []
 
-        start_time=time_mod.time()
+        for ind_shot in range(len(db['shot'])):
+            print(f"\r{ind_shot/len(db['shot'])*100:.1f} % done from the calculation.", flush=True, end='')
+            
+            # Handle cases where time might be an array/window instead of a scalar
+            if isinstance(db['time'][ind_shot], (list, np.ndarray)):
+                time_curr = np.mean(db['time'][ind_shot])
+            else:
+                time_curr = db['time'][ind_shot]
+                
+            shot = db['shot'][ind_shot]
+            start_time = time_mod.time()
 
-        plasma_parameters=read_plasma_data(exp_id=shot,time=time_curr,
-                                                 pdf_pages_density=pdf_pages_density,
-                                                 pdf_pages_temperature=pdf_pages_temperature)
+            try:
+                plasma_parameters = read_plasma_data(exp_id=shot, time=time_curr,
+                                                     pdf_pages_density=pdf_pages_density,
+                                                     pdf_pages_temperature=pdf_pages_temperature)
 
-        greenwald.append(plasma_parameters['Greenwald fraction'])
-        density.append(plasma_parameters['Line integrated density'])
-        q95.append(plasma_parameters['q95'])
-        current.append(plasma_parameters['Current'])
+                greenwald.append(plasma_parameters['Greenwald fraction'])
+                density.append(plasma_parameters['Line integrated density'])
+                q95.append(plasma_parameters['q95'])
+                current.append(plasma_parameters['Current'])
+                btoroidal.append(plasma_parameters['Toroidal field'])
+                collisionality.append(plasma_parameters['Collisionality'])
+                
+            except Exception as e:
+                # print(f"\nFailed to read plasma data for shot {shot}: {e}")
+                continue
 
-        btoroidal.append(plasma_parameters['Toroidal field'])
-        collisionality.append(plasma_parameters['Collisionality'])
-        # print(str((ind_shot+1)/len(database['shot'])*100.)+'% done')
-        print('Finished in: ',time_mod.time()-start_time,'s')
+            # print('Finished in: ',time_mod.time()-start_time,'s')
 
-    if print_ranges:
-        print('Collisionality range: ',min(collisionality),max(collisionality))
-        print('Density range: ',min(density), max(density))
-        print('Greenwald range: ',min(greenwald),max(greenwald))
-        print('BT range: ',min(btoroidal),max(btoroidal))
-        print('current range: ',min(current),max(current))
+        # --- 3. Print Ranges ---
+        if print_ranges and len(collisionality) > 0:
+            print(f'\n\n--- {db_name} Parameter Ranges ---')
+            print(f'Collisionality range: {min(collisionality):.3e} to {max(collisionality):.3e}')
+            print(f'Density range:        {min(density):.3e} to {max(density):.3e}')
+            print(f'Greenwald range:      {min(greenwald):.3f} to {max(greenwald):.3f}')
+            print(f'BT range:             {min(btoroidal):.3f} to {max(btoroidal):.3f}')
+            print(f'Current range:        {min(current):.3f} to {max(current):.3f}')
+            print(f'q95 range:            {min(q95):.3f} to {max(q95):.3f}')
+            print('-' * 40)
+
+        # Store results for this specific database
+        results[db_name] = (collisionality, q95, greenwald, current, btoroidal, density)
 
     pdf_pages_density.close()
     pdf_pages_temperature.close()
 
-    return collisionality, q95, greenwald, current, btoroidal, density
+    # --- 4. Return Output ---
+    # Return the simple tuple if running in standard mode to prevent breaking older scripts
+    if not calculate_for_lh_study:
+        return results['Standard']
+    
+    # Return the dictionary of both modes for the LH study
+    return results
 
 def read_plasma_data(exp_id=None,
                      time=None,

@@ -65,10 +65,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
 
                            #Normalizer inputs
                            normalize='simple',                #Normalization options,
-                                                                                                                #None: no normalization
-                                                                                                                #'roundtrip': zero phase LPF IIR filter
-                                                                                                                #'halved': different normalzation for before and after the ELM
-                                                                                                                #'simple': simple low-pass filtered normalization
+                                                                                                        #None: no normalization
+                                                                                                        #'roundtrip': zero phase LPF IIR filter
+                                                                                                        #'halved': different normalzation for before and after the ELM
+                                                                                                        #'simple': simple low-pass filtered normalization
                            normalize_f_kernel='Elliptic',        #The kernel for filtering the gas cloud
                            normalize_f_high=1e3,                 #High pass frequency for the normalizer data
 
@@ -135,8 +135,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            plot_vertical_line_at=None,
                            plot_str_by_str=False,
                            plot_watershed_steps=False,           #Plot the steps of the watershed segmentation at the sample number this is set to.
+                           plot_results=False,                   #Each and every parameter in an individual plot
                            plot_example_structure_frames=False,  #Plot 10 example frames from the sample number this is set to.
-                           plot_example_frames_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
+                           plot_example_results=False,    #Plot example results for one shot: Area, Angle, Elongation, Roundness
+                           plot_example_results_options=None,
                            plot_nframe=None,
                            plot_ncol=None,
                            linewidth=None,
@@ -151,6 +153,9 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            return_results=False,                 #Return the results if set.
                            return_pixel_displacement=False,
                            cache_data=True,                      #Cache the data or try to open is from cache
+
+                            load_data_from_hdf5=False,
+                            save_data_as_hdf5=False,
 
                             #Test options
                            test=False,                           #Test the results
@@ -372,7 +377,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     #     print('The pickle file does not exist. Recalculating the results.')
     #     nocalc = False
     
-    plot_results=plot
+
     fit_shape=fit_shape.capitalize()
     hdf5_filename = filename + '.h5'
     
@@ -415,7 +420,6 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             slicing={'Time':flap.Intervals(time_range[0],time_range[1]),
                      'Image x':flap.Intervals(x_range[0],x_range[1]),
                      'Image y':flap.Intervals(y_range[0],y_range[1])}
-
             data=flap.slice_data('GPI', exp_id=exp_id, slicing=slicing, output_name='GPI_SLICED_FULL')
 
         elif isinstance(data_object, str):
@@ -530,8 +534,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                     R_sep=flap.get_data('NSTX_MDSPlus', name='\EFIT02::\RBDRY', exp_id=exp_id, object_name='SEP R OBJ').slice_data(slicing={'Time':elm_time}).data
                     z_sep=flap.get_data('NSTX_MDSPlus', name='\EFIT02::\ZBDRY', exp_id=exp_id, object_name='SEP Z OBJ').slice_data(slicing={'Time':elm_time}).data
                     
-                    coeff_r=np.asarray([3.75, 0,    1402.8097])/1000. 
-                    coeff_z=np.asarray([0,    3.75, 70.544312])/1000. 
+                    coeff_r, coeff_z = flap_nstx.spatial_calibration_coeffs()
                     
                     z_bound_upper = coeff_z[2] + 79*coeff_z[0] + 64*coeff_z[1]
                     sep_GPI_ind = np.where((R_sep > coeff_r[2]) & (z_sep > coeff_z[2]) & (z_sep < z_bound_upper))
@@ -645,7 +648,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                                 comment=comment)            
             
             print(f"Saving dataset to HDF5: {hdf5_filename}")
-            tracked_dataset.save_hdf5(hdf5_filename)
+            if save_data_as_hdf5:
+                tracked_dataset.save_hdf5(hdf5_filename)
             with open(hdf5_filename.replace('.h5', '.pickle'), 'wb') as f:
                 print("Saving dataset to pickle:"+hdf5_filename.replace('.h5', '.pickle'))
                 pickle.dump(tracked_dataset, f)
@@ -671,7 +675,10 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
             print(f'Exception in analyze_gpi_structures.py L661: {e}')
             print('Pickle file cannot be loaded, trying hdf5 instead.')
             print('\n\n--- Loading data from the HDF5 file ---')
-            tracked_dataset = StructureDataset.load_hdf5(hdf5_filename, tracked=True)
+            if load_data_from_hdf5:
+                tracked_dataset = StructureDataset.load_hdf5(hdf5_filename, tracked=True)
+            else:
+                print('Set load_data_from_hdf5=True in analyze_gpi_structures')
             
     if calculate_only: return True
     
@@ -735,7 +742,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                                        )
 
     #Plotting the results
-    if plot_results or pdf:
+    if plot_results:
         _plot_results(dataset=tracked_dataset,
                       pdf=pdf,
                       plot_results=plot_results,
@@ -753,17 +760,18 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                       colortable=colortable,
                       )
 
-    if plot_example_frames_results:
-        _plot_example_frames_results(dataset=tracked_dataset,
-                                     exp_id=exp_id,
-                                     time_range=time_range,
-                                     plot_time_range=plot_time_range,
-                                     wd=wd,
-                                     n_color=n_color,
-                                     colortable=colortable,
-                                     pdf=pdf,
-                                     save_data_for_publication=save_data_for_publication,
-                                     )
+    if plot_example_results:
+        _plot_example_results(dataset=tracked_dataset,
+                              exp_id=exp_id,
+                              time_range=time_range,
+                              plot_time_range=plot_time_range,
+                              wd=wd,
+                              n_color=n_color,
+                              colortable=colortable,
+                              pdf=pdf,
+                              save_data_for_publication=save_data_for_publication,
+                              options=plot_example_results_options,
+                              )
 
     if return_results:
         return tracked_dataset
@@ -975,10 +983,14 @@ def _plot_example_structure_frames(exp_id=None,
         plot_ncol = 5
 
     fig, axes = plt.subplots(int(plot_nframe/plot_ncol), plot_ncol,
-                             figsize=(8.5/2.54, 3.5*plot_nframe/plot_ncol/2.54))
+                             figsize=(8.5/2.54, 3*plot_nframe/plot_ncol/2.54))
 
     for i_frames in range(0, plot_nframe):
-        ax = axes[i_frames//plot_ncol, np.mod(i_frames, plot_ncol)]
+        if plot_ncol == 1:
+            ax = axes[i_frames]
+        else:
+            
+            ax = axes[i_frames//plot_ncol, np.mod(i_frames, plot_ncol)]
 
         slicing_frame = {'Sample': sample_0 + i_frames + plot_example_structure_frames}
 
@@ -1010,7 +1022,7 @@ def _plot_example_structure_frames(exp_id=None,
             separatrix_data[:,1] = d_sep_y_sliced.data
             
             if separatrix_data is not None:
-                ax.plot(separatrix_data[:,0], separatrix_data[:,1], linewidth=1, color='red')
+                ax.plot(separatrix_data[:,0], separatrix_data[:,1], linewidth=0.5, color='red')
                 
                 if save_data_for_publication:
                     filename = f"{wd}/{exp_id}_{current_time}_separatrix.txt"
@@ -1098,16 +1110,19 @@ def _plot_example_structure_frames(exp_id=None,
         ax.set_ylim([y_coord.min(), y_coord.max()])
         ax.set_title(f"{current_time*1e3:.3f} ms", fontsize=8, y=0.95)
 
-    plt.tight_layout(h_pad=0.3, w_pad=0.1)
-    
+    #plt.tight_layout(h_pad=0.1, w_pad=0.1)
+    plt.tight_layout(pad=0.1)
     pdf_pages.savefig()
     pdf_pages.close()
 
 
-def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=None,
-                                 dataset=None, wd=None, n_color=None,
-                                 colortable=None, pdf=None, markersize=0.5,
-                                 save_data_for_publication=False):
+
+
+def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
+                          dataset=None, wd=None, n_color=None,
+                          colortable=None, pdf=None, markersize=0.5,
+                          save_data_for_publication=False,
+                          options=None):
     
     """
     Plots the time evolution of specific structure properties in a multi-panel figure.
@@ -1145,7 +1160,19 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
         None: The function generates plots, optionally saves files, and closes the 
         matplotlib figures.
     """
-
+    
+    if options is None:
+        options['keys_to_plot']=['Position radial fit', 
+                                 'Position poloidal fit', 
+                                 'Area', 
+                                 'Angle fit', 
+                                 'Roundness', 
+                                 'Total curvature']
+        options['figsize']=(17/2.54,12/2.54)
+    else:
+        if 'keys_to_plot' not in list(options.keys()):
+            raise ValueError('keys_to_plot and figsize need to be in the options dictuionary for plotting the example results')
+            
     set_matplotlib_for_publication(labelsize=8,
                                     linewidth=0.2,
                                     major_ticksize=2.,
@@ -1158,26 +1185,52 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
                                           purpose='example_frame_results',
                                           extension='pdf')
         pdf_pages=PdfPages(filename)
-
-    labels=['a','b','c','d','e','f']
-    fig, axes = plt.subplots(6,1,figsize=(17/2.54,12/2.54))
     
+    import string
+    if options.get('subplot_labels'):
+        subplot_labels=options.get('subplot_labels')
+    else:
+        subplot_labels = list(string.ascii_lowercase)
+    
+    if not options.get('fig_axes'):
+        fig, axes = plt.subplots(len(options['keys_to_plot']),1,
+                                 figsize=options['figsize'])
+    else:
+        fig, axes = options['fig_axes']
+        
     if not dataset.tracked_structures:
         print("No tracked structures found for example frame plotting.")
         return
-
-    for ind, key in enumerate(['Position radial fit', 'Position poloidal fit', 
-                               'Area', 'Angle fit', 'Roundness', 'Total curvature']):
+    
+    if isinstance(options['keys_to_plot'], list): 
+        keys_to_plot=options['keys_to_plot']
+        options_with_labels=False
+        
+    elif isinstance(options['keys_to_plot'], dict):
+        keys_to_plot=list(options['keys_to_plot'].keys())
+        options_with_labels=True
+    nplot=len(keys_to_plot)
+    
+    if options.get('subplot_label_location'):
+        subplot_label_location=options.get('subplot_label_location')
+    else:
+        subplot_label_location=-0.1
+    
+    for ind, key in enumerate(keys_to_plot):
         ax = axes[ind]
         
         if save_data_for_publication:
-            filename = f'{wd}/{labels[ind]}_{exp_id}_{time_range[0]}_{time_range[1]}_{key}_example.txt'
+            filename = f'{wd}/{subplot_labels[ind]}_{exp_id}_{time_range[0]}_{time_range[1]}_{key}_example.txt'
             file1 = open(filename, 'w+')
 
         # SAFELY EXTRACT THE METRIC REFERENCE FIRST
         first_struct = dataset.tracked_structures[0]
         metric_ref = first_struct.differential_parameters.get(key) or first_struct.regular_parameters.get(key)
         if metric_ref is None: continue
+        if options_with_labels and options['keys_to_plot'][key].get('multiplier'):
+            multiplier=options['keys_to_plot'][key].get('multiplier')
+        else:
+            multiplier=1.0
             
         for ind_str, struct in enumerate(dataset.tracked_structures):
             if len(struct.time) > 0:
@@ -1189,6 +1242,7 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
                     time_vec = np.asarray(struct.time) * 1e3
                     metric_array = struct.regular_parameters[key]
                 else:
+                    print(f"{key} is not in {struct.differential_parameters} or {struct.regular_parameters}")
                     continue 
 
                 # Apply plot_time_range mask
@@ -1202,7 +1256,8 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
 
                 if len(masked_time) > 0:
                     try:
-                        ax.plot(masked_time, masked_data, '-o', markersize=markersize, linewidth=0.2,
+                        ax.plot(masked_time, masked_data * multiplier, '-o', 
+                                markersize=markersize, linewidth=0.2,
                                 label=str(struct.label),
                                 color=colortable[np.mod(int(struct.label)+1, n_color)])
                         
@@ -1214,18 +1269,30 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
                     except Exception as e:
                         print(f'Exception in plotting line 1748: {e}')
                     
-        # Apply the units natively extracted from the Metric object!
-        if metric_ref.unit != '':
-            ax.set_ylabel(f"{metric_ref.plot_label} [{metric_ref.unit}]", fontsize=8)
+        
+        if options_with_labels:
+            ax.set_ylabel(f"{options['keys_to_plot'][key]['label']} [{options['keys_to_plot'][key]['unit']}]", fontsize=8)
+            if options['keys_to_plot'][key]['range'] is not None:
+                ax.set_ylim(options['keys_to_plot'][key]['range'])
         else:
-            ax.set_ylabel(metric_ref.plot_label, fontsize=8)
+            if metric_ref.unit != '':
+                ax.set_ylabel(f"{metric_ref.plot_label} [{metric_ref.unit}]", fontsize=8)
+            else:
+                ax.set_ylabel(metric_ref.plot_label, fontsize=8)
                     
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
-        if ind < 5:
+        if ind < nplot-1:
             ax.xaxis.label.set_visible(False)
             ax.set_xticklabels([])
             
-        ax.text(-0.1, 0.9, f"({labels[ind]})", transform=ax.transAxes, size=8)
+        if options.get('title') and ind == 0:
+            ax.set_title(options['title'])
+
+        if options.get('hide_y_labels'):
+            ax.yaxis.label.set_visible(False)
+            ax.set_yticklabels([])
+            
+        ax.text(subplot_label_location, 0.9, f"({subplot_labels[ind]})", transform=ax.transAxes, size=8)
         ax.set_xlabel('Time [ms]', fontsize=8)
         
         if plot_time_range is not None:
@@ -1233,8 +1300,8 @@ def _plot_example_frames_results(exp_id=None, time_range=None, plot_time_range=N
         else:
             ax.set_xlim(np.asarray(time_range) * 1e3)
             
-        if ind == 0: ax.set_ylim([1.43, 1.55])
-        if ind == 1: ax.set_ylim([0.07, 0.35])
+        # if ind == 0: ax.set_ylim([1.43, 1.55])
+        # if ind == 1: ax.set_ylim([0.07, 0.35])
         
         fig.tight_layout(pad=0.1)
         if save_data_for_publication: file1.close()

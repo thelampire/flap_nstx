@@ -185,8 +185,8 @@ def get_data_gpi(exp_id=None, data_name=None, no_data=False, options=None, coord
     #This needs to be updated as soon as more information is available on the
     #calibration coordinates.
 
-    coeff_r=np.asarray([3.75, 0.,   1402.8097])/1000. #The coordinates are in meters
-    coeff_z=np.asarray([0.,   3.75, 70.544312])/1000. #The coordinates are in meters
+ 
+    coeff_r, coeff_z=spatial_calibration_coeffs()
 
 #   This part is not producing appropriate results due to the equidistant spacing and double
 #   coefficients. Slicing is only possible for single steps.
@@ -356,46 +356,67 @@ def add_coordinate_gpi(data_object,
         angle_values_spat_interpol=np.zeros([psi_t_coord.shape[0],gpi_r_coord.shape[1],gpi_r_coord.shape[2]])
         for index_t in range(psi_t_coord.shape[0]):
             poloidal_coord=np.zeros([0,3])
+            
             #Get the contour plot paths of the constant psi surfaces
             psi_contour=plt.contour(psi_r_coord[index_t,:,:].transpose(),
                                     psi_z_coord[index_t,:,:].transpose(),
                                     psi_values[index_t,:,:], levels=nlevel)
-            for index_collections in range(len(psi_contour.collections)): #Iterate through all the constant surfaces
-                n_paths=len(psi_contour.collections[index_collections].get_paths()) #Get the actual paths, there might be more for one constant outside the separatrix.
-                if n_paths > 0:
-                    for index_paths in range(n_paths):
-                        path=psi_contour.collections[index_collections].get_paths()[index_paths].vertices # Get the actual coordinates of the curve.
-                        #The following code calculates the angles. The full arclength is calculated along with the partial arclengths.
-                        # The angle is then difined as the fraction of the arclength fraction and the entire arclength.
-                        arclength=0.
-                        current_path_angles=[]
-                        arclength_0=np.sqrt((path[0,0]-path[-1,0])**2 +
-                                            (path[0,1]-path[-1,1])**2)
-                        for index_path_points in range(-1,len(path[:,0])-1):
-                            arclength += np.sqrt((path[index_path_points+1,0]-path[index_path_points,0])**2 +
-                                                 (path[index_path_points+1,1]-path[index_path_points,1])**2)
-                            current_path_angles.append([path[index_path_points+1,0],
-                                                        path[index_path_points+1,1],
-                                                        arclength-arclength_0])
-                        current_path_angles=np.asarray(current_path_angles)
-                        min_ind=0
-                        #The angles needs to be measured from the midplane. Hence a correction rotation subtracted from the angle.
-                        for index_path_points in range(len(path[:,0])):
-                            if ((np.abs(path[index_path_points,1]-z_maxis[index_t]) <
-                                 np.abs(path[min_ind,1]-z_maxis[index_t]))   and
-                               (path[index_path_points,0] > r_maxis[index_t])):
-                                min_ind=index_path_points
-                        rotation=(current_path_angles[min_ind,2]/(arclength-arclength_0))*2.*np.pi
-                        current_path_angles[:,2] = (current_path_angles[:,2]/(arclength-arclength_0))*2*np.pi
-                        current_path_angles[:,2] = -1*(current_path_angles[:,2]-rotation)
-                        #The angles are corrected to be between -Pi and +Pi
-                        for i_angle in range(len(current_path_angles[:,2])):
-                            if current_path_angles[i_angle,2] > np.pi:
-                                current_path_angles[i_angle,2] -= 2*np.pi
-                            if current_path_angles[i_angle,2] < -np.pi:
-                                current_path_angles[i_angle,2] += 2*np.pi
-                        poloidal_coord=np.append(poloidal_coord,current_path_angles, axis=0)
-
+                                    
+            # ===============================================================
+            # COMPATIBILITY FIX FOR MATPLOTLIB 3.8+
+            # Gather all paths into a single list regardless of Matplotlib version
+            # ===============================================================
+            if hasattr(psi_contour, 'collections'):
+                all_paths = []
+                for col in psi_contour.collections:
+                    all_paths.extend(col.get_paths())
+            else:
+                all_paths = psi_contour.get_paths()
+            # ===============================================================
+            
+            for contour_path in all_paths:
+                # Get the actual coordinates of the curve.
+                path = contour_path.vertices 
+                
+                if len(path) == 0:
+                    continue
+                
+                #The following code calculates the angles. The full arclength is calculated along with the partial arclengths.
+                # The angle is then difined as the fraction of the arclength fraction and the entire arclength.
+                arclength=0.
+                current_path_angles=[]
+                arclength_0=np.sqrt((path[0,0]-path[-1,0])**2 +
+                                    (path[0,1]-path[-1,1])**2)
+                                    
+                for index_path_points in range(-1,len(path[:,0])-1):
+                    arclength += np.sqrt((path[index_path_points+1,0]-path[index_path_points,0])**2 +
+                                         (path[index_path_points+1,1]-path[index_path_points,1])**2)
+                    current_path_angles.append([path[index_path_points+1,0],
+                                                path[index_path_points+1,1],
+                                                arclength-arclength_0])
+                                                
+                current_path_angles=np.asarray(current_path_angles)
+                min_ind=0
+                
+                #The angles needs to be measured from the midplane. Hence a correction rotation subtracted from the angle.
+                for index_path_points in range(len(path[:,0])):
+                    if ((np.abs(path[index_path_points,1]-z_maxis[index_t]) <
+                         np.abs(path[min_ind,1]-z_maxis[index_t]))   and
+                       (path[index_path_points,0] > r_maxis[index_t])):
+                        min_ind=index_path_points
+                        
+                rotation=(current_path_angles[min_ind,2]/(arclength-arclength_0))*2.*np.pi
+                current_path_angles[:,2] = (current_path_angles[:,2]/(arclength-arclength_0))*2*np.pi
+                current_path_angles[:,2] = -1*(current_path_angles[:,2]-rotation)
+                
+                #The angles are corrected to be between -Pi and +Pi
+                for i_angle in range(len(current_path_angles[:,2])):
+                    if current_path_angles[i_angle,2] > np.pi:
+                        current_path_angles[i_angle,2] -= 2*np.pi
+                    if current_path_angles[i_angle,2] < -np.pi:
+                        current_path_angles[i_angle,2] += 2*np.pi
+                        
+                poloidal_coord=np.append(poloidal_coord,current_path_angles, axis=0)
             points=poloidal_coord[:,(1,0)]
             values=poloidal_coord[:,2]
 
@@ -537,3 +558,12 @@ def add_coordinate_gpi(data_object,
         data_object.coordinates.append(new_coordinates)
 
     return data_object
+
+def spatial_calibration_coeffs():
+    
+    # coeff_r=np.asarray([3.75, 0.,   1402.8097])/1000. #The coordinates are in meters
+    # coeff_z=np.asarray([0.,   3.75, 70.544312])/1000. #The coordinates are in meters
+    
+    coeff_r = np.asarray([3.7183594, - 0.77821046, 1402.8097]) / 1000.0
+    coeff_z = np.asarray([0.18090118,  3.0657776,  70.544312]) / 1000.0
+    return (coeff_r, coeff_z)

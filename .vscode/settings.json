@@ -1,0 +1,7 @@
+{
+    "python.envFile": "${workspaceFolder}/.env",
+    "jupyter.runStartupCommands": [
+        "import sys",
+        "sys.path.append('/Users/mlampert/work/repos/flap_repos')"
+    ]
+}

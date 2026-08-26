@@ -53,7 +53,6 @@ from scipy.stats import linregress
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
-
 def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                str_finding_method='watershed',
                                plot=False,
@@ -62,7 +61,10 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                recalc_tracking=False,
                                test=False,
                                calculate_for_lh_study=False,
+                               calculate_l_mode_only=False,
+                               calculate_h_mode_only=False,
                                download_data_only=False,
+                               shot_range=None,  # <-- NEW PARAMETER
                                ):
     
     """
@@ -97,7 +99,9 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
         download_data_only (bool, optional): If True (and `calculate_for_lh_study` 
             is True), only downloads the raw 'NSTX_GPI' data via FLAP and skips 
             the structure tracking analysis. Defaults to False.
-
+        shot_range (list or tuple, optional): Specify [min_shot, max_shot] to only 
+            process a specific subset of shots. Defaults to None (processes all).
+            
     Returns:
         None: Executes batch processing and saves results/data to disk.
     """
@@ -118,9 +122,13 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             'filtered_blob_db': False,
             'time_range_around_peak': time_range_around_peak
         }
-        databases_to_process.append(read_blob_lh_mode_database_file(l_mode=True, **common_kwargs))
-        databases_to_process.append(read_blob_lh_mode_database_file(h_mode=True, **common_kwargs))
-
+        if calculate_l_mode_only:
+            databases_to_process.append(read_blob_lh_mode_database_file(l_mode=True, **common_kwargs))
+        if calculate_h_mode_only:
+            databases_to_process.append(read_blob_lh_mode_database_file(h_mode=True, **common_kwargs))
+        else:
+            databases_to_process.append(read_blob_lh_mode_database_file(l_mode=True, **common_kwargs))
+            databases_to_process.append(read_blob_lh_mode_database_file(h_mode=True, **common_kwargs))
     # --- 2. Batch Processing ---
     # Calculate total shots for accurate ETA tracking
     total_shots = sum(len(db['shot']) for db in databases_to_process)
@@ -134,6 +142,14 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             if calculate_for_lh_study and shot < 138113:
                 total_shots -= 1 # Adjust total so ETA doesn't break
                 continue
+                
+            # ===============================================================
+            # NEW: Filter based on the requested shot range
+            # ===============================================================
+            if shot_range is not None and not (shot_range[0] <= shot <= shot_range[1]):
+                total_shots -= 1 # Adjust total so ETA doesn't break
+                continue
+            # ===============================================================
                 
             start_time = time_mod.time()
 
@@ -182,7 +198,7 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             total_elapsed_time += execution_time
             
             # Cumulative moving average for a stable ETA
-            avg_time_per_shot = total_elapsed_time / shots_processed
+            avg_time_per_shot = execution_time
             shots_remaining = total_shots - shots_processed
             remaining_hours = (avg_time_per_shot * shots_remaining) / 3600.
             
@@ -2659,3 +2675,255 @@ def plot_well_known_parameter_dependences(pdf_filename=None,
     plt.close(fig)
     
     matplotlib.use('qt5agg')
+    
+import itertools
+import time
+
+def plot_conditional_evolution_matrices(dt=2.5e-6, 
+                                        min_r_squared=0.3,
+                                        min_points_required=5,
+                                        min_count_required=25,
+                                        add_corrected_angles=False, #Does not make a difference in the trends
+                                        plot_spaghetti=False,    # <-- NEW PARAMETER
+                                        num_spaghetti=50,       # <-- NEW PARAMETER
+                                        nocalc=True):
+    """
+    Plots the conditionally averaged evolution of blob parameters with optional 
+    "spaghetti plot" overlays of raw individual trajectories to verify trends.
+    """
+    
+    # [Assuming wd is defined globally in your script]
+    
+    l_mode_data = read_all_blob_data(time_range_around_peak=[-5e-3,15e-3], 
+                                     nocalc=nocalc, recalc_tracking=False, 
+                                     min_structure_lifetime=10, read_l_mode_only=True, 
+                                     averaging='conditional', condition_key='Lifetime', 
+                                     condition_range=[-2.5e-6,2.5e-6], replicate_histogram2=True)
+    
+    h_mode_data = read_all_blob_data(time_range_around_peak=[-5e-3,15e-3], 
+                                     nocalc=nocalc, recalc_tracking=False, 
+                                     min_structure_lifetime=10, read_h_mode_only=True, 
+                                     averaging='conditional', condition_key='Lifetime', 
+                                     condition_range=[-2.5e-6,2.5e-6], replicate_histogram2=True)
+
+    
+    # ===============================================================
+    # Angle Difference Synthesis Helper
+    # ===============================================================
+    def add_angle_differences(dataset):
+        base_angle = 'Poloidal angle'
+        targets = [('Angle fit', 'Angle diff (Poloidal + Fit)'),
+                   ('Angle ALI', 'Angle diff (Poloidal + ALI)')]
+        
+        if base_angle not in dataset: return dataset
+            
+        for target_key, new_key in targets:
+            if target_key in dataset:
+                t_base = dataset[base_angle]['relative_frames']
+                t_target = dataset[target_key]['relative_frames']
+                
+                if len(t_base) == 0 or len(t_target) == 0: continue
+                common_t, ind_base, ind_target = np.intersect1d(t_base, t_target, return_indices=True)
+                
+                val_base = dataset[base_angle]['mean'][ind_base]
+                val_target = dataset[target_key]['mean'][ind_target]
+                
+                if '-' in new_key: diff = val_base - val_target
+                elif '+' in new_key: diff = val_base + val_target
+                diff = (diff + np.pi) % (2 * np.pi) - np.pi
+                
+                err_base_raw = np.asarray(dataset[base_angle]['error'])
+                err_target_raw = np.asarray(dataset[target_key]['error'])
+                err_base = err_base_raw[:, ind_base] if err_base_raw.ndim == 2 else err_base_raw[ind_base]
+                err_target = err_target_raw[:, ind_target] if err_target_raw.ndim == 2 else err_target_raw[ind_target]
+                err_diff = np.sqrt(err_base**2 + err_target**2)
+                
+                count_base = dataset[base_angle].get('count', np.full_like(val_base, np.inf))[ind_base]
+                count_target = dataset[target_key].get('count', np.full_like(val_target, np.inf))[ind_target]
+                
+                dataset[new_key] = {
+                    'mean': diff, 'error': err_diff, 'count': np.minimum(count_base, count_target), 'relative_frames': common_t
+                }
+                
+                # Transform raw matrices for spaghetti plot
+                if 'raw_matrix' in dataset[base_angle] and 'raw_matrix' in dataset[target_key]:
+                    raw_base = dataset[base_angle]['raw_matrix'][:, ind_base]
+                    raw_target = dataset[target_key]['raw_matrix'][:, ind_target]
+                    raw_diff = (raw_base - raw_target) if '-' in new_key else (raw_base + raw_target)
+                    dataset[new_key]['raw_matrix'] = (raw_diff + np.pi) % (2 * np.pi) - np.pi
+
+        return dataset
+    if add_corrected_angles:
+        l_mode_data = add_angle_differences(l_mode_data)
+        h_mode_data = add_angle_differences(h_mode_data)
+    
+    
+    keys_to_ignore=['Axes length major', 'Axes length minor', 'Size radial', 'Size poloidal', 
+                    'Angle envelope', 'Signed area', 'Total curvature', 'Total bending energy', 
+                    'Center of gravity radial', 'Center of gravity poloidal', 
+                    'Position radial fit', 'Position poloidal fit', 
+                    'Expansion fraction axes fit', 
+                    'Velocity radial COG', 'Velocity poloidal COG', 
+                    'Velocity radial position fit', 'Velocity poloidal position fit', 
+                    'Total curvature diff',
+                    'Total bending energy diff', 
+                    'Velocity radial position diff', 'Velocity poloidal position diff']
+        
+    valid_keys = [k for k in l_mode_data.keys() if k in h_mode_data and k not in keys_to_ignore]
+    key_pairs = list(itertools.permutations(valid_keys, 2))
+    pdf_filename = wd + f'/plots/conditional_average_blob_vs_blob_thres_{min_r_squared}.pdf'
+    pdf_page = PdfPages(pdf_filename)
+    
+    plots_generated, plots_filtered = 0, 0
+    angle_diff_keys = ['Angle diff (Poloidal - Fit)','Angle diff (Poloidal + Fit)',
+                       'Angle diff (Poloidal - ALI)','Angle diff (Poloidal + ALI)']
+
+    total_pairs = len(key_pairs)
+    print(f"Starting cross-parameter evolution plotting. Analyzing {total_pairs} pairs...")
+    start_time = time.time()
+
+    for i, (key_x, key_y) in enumerate(key_pairs):
+        
+        def extract_and_align_data(dataset):
+            if key_x not in dataset or key_y not in dataset: return None
+                
+            t_x, t_y = dataset[key_x]['relative_frames'], dataset[key_y]['relative_frames']
+            if len(t_x) == 0 or len(t_y) == 0: return None
+                
+            common_t, ind_x, ind_y = np.intersect1d(t_x, t_y, return_indices=True)
+            x_mean, y_mean = dataset[key_x]['mean'][ind_x], dataset[key_y]['mean'][ind_y]
+            
+            x_count = dataset[key_x].get('count', np.full_like(x_mean, np.inf))[ind_x]
+            y_count = dataset[key_y].get('count', np.full_like(y_mean, np.inf))[ind_y]
+            
+            x_err_raw, y_err_raw = np.asarray(dataset[key_x]['error']), np.asarray(dataset[key_y]['error'])
+            x_err = x_err_raw[:, ind_x] if x_err_raw.ndim == 2 else x_err_raw[ind_x]
+            y_err = y_err_raw[:, ind_y] if y_err_raw.ndim == 2 else y_err_raw[ind_y]
+            
+            valid_mask = (~np.isnan(x_mean) & ~np.isnan(y_mean) & 
+                          (x_count >= min_count_required) & (y_count >= min_count_required))
+            
+            if np.sum(valid_mask) < min_points_required: return None
+            
+            # --- Extract raw matrices for the spaghetti plot ---
+            x_raw = dataset[key_x].get('raw_matrix')
+            y_raw = dataset[key_y].get('raw_matrix')
+            
+            if x_raw is not None and y_raw is not None:
+                x_raw, y_raw = x_raw[:, ind_x], y_raw[:, ind_y]
+                x_raw, y_raw = x_raw[:, valid_mask], y_raw[:, valid_mask]
+                
+            return {
+                't': common_t[valid_mask] * dt * 1e6, 'x': x_mean[valid_mask], 'y': y_mean[valid_mask],
+                'x_err': x_err[:, valid_mask] if x_err.ndim == 2 else x_err[valid_mask],
+                'y_err': y_err[:, valid_mask] if y_err.ndim == 2 else y_err[valid_mask],
+                'x_raw': x_raw, 'y_raw': y_raw
+            }
+
+        l_data = extract_and_align_data(l_mode_data)
+        h_data = extract_and_align_data(h_mode_data)
+        
+        if l_data is not None or h_data is not None:
+            r_L, r2_L = (np.corrcoef(l_data['x'], l_data['y'])[0, 1], np.corrcoef(l_data['x'], l_data['y'])[0, 1]**2) if l_data and np.std(l_data['x']) > 0 and np.std(l_data['y']) > 0 else (0.0, 0.0)
+            r_H, r2_H = (np.corrcoef(h_data['x'], h_data['y'])[0, 1], np.corrcoef(h_data['x'], h_data['y'])[0, 1]**2) if h_data and np.std(h_data['x']) > 0 and np.std(h_data['y']) > 0 else (0.0, 0.0)
+            
+            if max(r2_L, r2_H) < min_r_squared:
+                plots_filtered += 1
+            else:
+                fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+                t_min = min((np.min(d['t']) for d in [l_data, h_data] if d is not None))
+                t_max = max((np.max(d['t']) for d in [l_data, h_data] if d is not None))
+        
+                for ax, d, mode_name, r, r2 in zip(axes, [l_data, h_data], ['L-Mode', 'H-Mode'], [r_L, r_H], [r2_L, r2_H]):
+                    if d is None:
+                        ax.text(0.5, 0.5, "Insufficient Data", ha='center', va='center')
+                        ax.set_title(mode_name)
+                        continue
+                    
+                    # ===============================================================
+                    # NEW: Spaghetti Plot (Z-Order = 0 so it stays in the background)
+                    # ===============================================================
+                    if plot_spaghetti and d.get('x_raw') is not None and d.get('y_raw') is not None:
+                        n_blobs = d['x_raw'].shape[0]
+                        sample_size = min(num_spaghetti, n_blobs)
+                        
+                        # Use a fixed seed so the spaghetti plots look consistent if you rerun the script
+                        np.random.seed(42)
+                        sampled_indices = np.random.choice(n_blobs, sample_size, replace=False)
+                        
+                        for idx in sampled_indices:
+                            bx = d['x_raw'][idx, :]
+                            by = d['y_raw'][idx, :]
+                            
+                            # Ensure we don't plot lines connecting across NaN gaps
+                            b_valid = ~np.isnan(bx) & ~np.isnan(by)
+                            if np.sum(b_valid) > 1:
+                                ax.plot(bx[b_valid], by[b_valid], color='gray', alpha=0.15, linewidth=0.8, zorder=0)
+                    # ===============================================================
+
+                    # Error bars (Z-Order = 1)
+                    ax.errorbar(d['x'], d['y'], xerr=d['x_err'], yerr=d['y_err'], fmt='none', ecolor='gray', alpha=0.5, zorder=1)
+                    
+                    # Scatter points (Z-Order = 2)
+                    sc = ax.scatter(d['x'], d['y'], c=d['t'], cmap='coolwarm', vmin=t_min, vmax=t_max, s=40, zorder=2, edgecolor='k', linewidth=0.5)
+                    
+                    ax.set_title(f"{mode_name} Evolution", fontsize=12, fontweight='bold')
+                    ax.set_xlabel(key_x)
+                    
+                    if key_x == 'Poloidal angle': ax.set_xlim([0.1,0.5])
+                    if key_y == 'Poloidal angle': ax.set_ylim([0.1,0.5])
+                    
+                    if key_x in angle_diff_keys: ax.set_xlim([-0.2,0.7])
+                    if key_y in angle_diff_keys: ax.set_ylim([-0.2,0.7])
+                    
+                    if key_x in ['Angle ALI','Angle fit']: ax.set_xlim([-0.4,0.1])
+                    if key_y in ['Angle ALI','Angle fit']: ax.set_ylim([-0.4,0.1])
+                    
+                    if key_x in ['Angular velocity angle fit', 'Angular velocity ALI']: ax.set_xlim([-15e3,15e3])
+                    if key_y in ['Angular velocity angle fit', 'Angular velocity ALI']: ax.set_ylim([-15e3,15e3])
+                    
+                    if key_x in ['Normalized flux coordinate velocity']: ax.set_xlim([-1.5e3,1.5e3])
+                    if key_y in ['Normalized flux coordinate velocity']: ax.set_ylim([-1.5e3,1.5e3])
+                    
+                    if key_x in ['Poloidal angular velocity']: ax.set_xlim([-0.5e3,0.5e3])
+                    if key_y in ['Poloidal angular velocity']: ax.set_ylim([-0.5e3,0.5e3])
+                    
+                    if key_x in ['Convexity diff', 'Solidity diff']: ax.set_xlim([-1.5e3,1.5e3])
+                    if key_y in ['Convexity diff', 'Solidity diff']: ax.set_ylim([-1.5e3,1.5e3])
+                    
+                    if key_x in ['Roundness diff']: ax.set_xlim([-3e3,3e3])
+                    if key_y in ['Roundness diff']: ax.set_ylim([-3e3,3e3])
+                    
+                    if key_x in ['Elongation fit diff']: ax.set_xlim([-5e3,5e3])
+                    if key_y in ['Elongation fit diff']: ax.set_ylim([-5e3,5e3])
+                        
+                    if ax == axes[0]: ax.set_ylabel(key_y)
+                        
+                    stats_text = f"$r = {r:.3f}$\n$R^2 = {r2:.3f}$"
+                    ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='gray'))
+                    ax.grid(True, linestyle='--', alpha=0.5)
+        
+                fig.subplots_adjust(right=0.9)
+                cbar_ax = fig.add_axes([0.92, 0.15, 0.015, 0.7])
+                cbar = fig.colorbar(sc, cax=cbar_ax)
+                cbar.set_label('Time relative to event trigger [$\mu s$]', rotation=270, labelpad=15)
+                fig.suptitle(f"{key_y} vs {key_x} (Median & 10th and 90th Percentiles)", fontsize=14)
+                
+                pdf_page.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+                plots_generated += 1
+
+        elapsed_time = time.time() - start_time
+        avg_time_per_plot = elapsed_time / (i + 1)
+        remaining_time = avg_time_per_plot * (total_pairs - (i + 1))
+        hours, rem = divmod(remaining_time, 3600)
+        minutes, seconds = divmod(rem, 60)
+        print(f'\rPlotting Progress: {i+1}/{total_pairs} | Remaining time: {int(hours)}h {int(minutes):02}min {int(seconds):02}sec', end="", flush=True)
+
+    pdf_page.close()
+    print("\n" + "-" * 40)
+    print("Plotting Complete.")
+    print(f"Generated {plots_generated} comparison plots.")
+    print(f"Skipped {plots_filtered} pairs due to R² < {min_r_squared}.")
+    print(f"Saved to: {pdf_filename}")

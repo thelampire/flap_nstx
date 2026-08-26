@@ -1,0 +1,369 @@
+jScope.default_server = 9
+jScope.data_server_9.name = PPPL NSTX
+jScope.data_server_9.class = MdsDataProvider
+jScope.data_server_9.argument = skylark.pppl.gov:8501
+
+Scope.geometry: 1989x1342+233+22
+Scope.title: "PHYSICS SCOPE"
+Scope.icon_name: "PHYSICS"
+Scope.title_event: 
+Scope.print_file: sys$login:dwscope.ps
+Scope.print_event: 
+Scope.print_portrait: 0
+Scope.print_window_title: 0
+Scope.printer: To file
+Scope.font: -Misc-Fixed-Medium-R-SemiCondensed--13-120-75-75-C-60-ISO8859-1
+Scope.columns: 3
+Scope.global_1_1.shot: current_shot("nstx")
+Scope.global_1_1.xmin: -.05
+Scope.global_1_1.xmax: .5
+Scope.global_1_1.global_defaults: -12545
+Scope.rows_in_column_1: 13
+Scope.plot_1_1.height: 92
+Scope.plot_1_1.experiment: nstx
+Scope.plot_1_1.x: dim_of(\ENGINEERING::PC_PLASMA_CUR_1)
+Scope.plot_1_1.y: \ENGINEERING::ip1/1000.
+Scope.plot_1_1.xmin: -0.05
+Scope.plot_1_1.xmax: 1
+Scope.plot_1_1.ymin: 0
+Scope.plot_1_1.event: PC_908C22N19_ACQ
+Scope.plot_1_1.title: "Corrected Ip1 (kA)"//$SHOT
+Scope.plot_1_1.global_defaults: -786049
+Scope.plot_2_1.height: 93
+Scope.plot_2_1.experiment: operations
+Scope.plot_2_1.y: \cal_vflohm
+Scope.plot_2_1.ymin: -1
+Scope.plot_2_1.ymax: 5
+Scope.plot_2_1.event: OP_H908_06_ACQ
+Scope.plot_2_1.title: "Loop voltage at CS midplane"//$SHOT
+Scope.plot_2_1.global_defaults: -247937
+Scope.plot_3_1.height: 92
+Scope.plot_3_1.experiment: engineering
+Scope.plot_3_1.y: \ENGINEERING::Ioh/1000.0
+Scope.plot_3_1.ymin: -25
+Scope.plot_3_1.ymax: 25
+Scope.plot_3_1.event: PC_908C22N19_ACQ
+Scope.plot_3_1.title: "OH Current (kA)"//$SHOT
+Scope.plot_3_1.label: I_OH_TOT_CUR
+Scope.plot_3_1.global_defaults: -772737
+Scope.plot_4_1.height: 93
+Scope.plot_4_1.experiment: engineering
+Scope.plot_4_1.x: dim_of(\ENGINEERING::GS_pzv1_TD)
+Scope.plot_4_1.y: \ENGINEERING::GS_pzv1_TD+\ENGINEERING::GS_pzv2_TD+\ENGINEERING::GS_pzv3_TD
+Scope.plot_4_1.ymin: 0
+Scope.plot_4_1.ymax: 250
+Scope.plot_4_1.event: GS_908C28N14_ACQ
+Scope.plot_4_1.title: "PZV1+2+3, CS fill"//\ENGINEERING::top.epics.gas.parameters:cstk_PRESs
+Scope.plot_4_1.label: \GS_IG_TD
+Scope.plot_4_1.global_defaults: -773761
+Scope.plot_5_1.height: 92
+Scope.plot_5_1.experiment: operations
+Scope.plot_5_1.y: -1.5*\TOP.RAWDATA:MI_H908_01:input_03
+Scope.plot_5_1.xmin: -0.1
+Scope.plot_5_1.xmax: 1
+Scope.plot_5_1.ymin: 0
+Scope.plot_5_1.ymax: .5
+Scope.plot_5_1.event: MI_H908_01_ACQ
+Scope.plot_5_1.title: "MIG CH 3~ approx. mTorr "
+Scope.plot_5_1.global_defaults: -260225
+Scope.plot_6_1.height: 93
+Scope.plot_6_1.experiment: operations
+Scope.plot_6_1.y: \operations::MHD_ODDN_MIDF
+Scope.plot_6_1.ymin: -1
+Scope.plot_6_1.ymax: 1
+Scope.plot_6_1.event: NSTX_MHD_ANALYSIS_DONE
+Scope.plot_6_1.title: "Med. Freq. 40-400 kHz"//$SHOT
+Scope.plot_6_1.label: I_PF45_CUR_1
+Scope.plot_6_1.global_defaults: -772737
+Scope.plot_7_1.height: 92
+Scope.plot_7_1.experiment: operations
+Scope.plot_7_1.y: \operations::mhd_oddn_lowf
+Scope.plot_7_1.ymin: -10
+Scope.plot_7_1.ymax: 10
+Scope.plot_7_1.event: PC_908C22N19_ACQ
+Scope.plot_7_1.title: "outer wall Mirnov 0.2-40 kHz"//$SHOT
+Scope.plot_7_1.label: I_PF45_CUR_1
+Scope.plot_7_1.global_defaults: -772737
+Scope.plot_8_1.height: 93
+Scope.plot_8_1.experiment: nstx
+Scope.plot_8_1.y: \lmc_mode_n1_amplitude*1e4
+Scope.plot_8_1.xmax: 0.6
+Scope.plot_8_1.ymin: 0
+Scope.plot_8_1.ymax: 8
+Scope.plot_8_1.title: "n: 1 locked mode"
+Scope.plot_8_1.global_defaults: -256129
+Scope.plot_9_1.height: 92
+Scope.plot_9_1.experiment: passivespec
+Scope.plot_9_1.y: \bayc_dalf_haifa
+Scope.plot_9_1.xmax: 1
+Scope.plot_9_1.ymin: 0
+Scope.plot_9_1.ymax: 4
+Scope.plot_9_1.event: fv_H908_01_acq
+Scope.plot_9_1.title: "Bayc_dalf_haifa"//$SHOT
+Scope.plot_9_1.global_defaults: -256129
+Scope.plot_10_1.height: 93
+Scope.plot_10_1.experiment: passivespec
+Scope.plot_10_1.y: \baye_dalf_fscope
+Scope.plot_10_1.xmax: 1
+Scope.plot_10_1.ymin: 0
+Scope.plot_10_1.ymax: 1
+Scope.plot_10_1.event: fv_H908_01_acq
+Scope.plot_10_1.title: "BAYe_dalf_fscope"//$SHOT
+Scope.plot_10_1.global_defaults: -256129
+Scope.plot_11_1.height: 92
+Scope.plot_11_1.experiment: passivespec
+Scope.plot_11_1.y: \bolom_totpwr
+Scope.plot_11_1.xmax: 1
+Scope.plot_11_1.ymin: 0
+Scope.plot_11_1.title: "Prad [MW]"//$SHOT
+Scope.plot_11_1.global_defaults: -256129
+Scope.plot_12_1.height: 93
+Scope.plot_12_1.show_mode: 2
+Scope.plot_12_1.experiment: efit
+Scope.plot_12_1.y: .001*\EFIT02::wmhd
+Scope.plot_12_1.xmin: -0.05
+Scope.plot_12_1.ymin: 0
+Scope.plot_12_1.title: "Stored Energy (kJ)"//$SHOT
+Scope.plot_12_1.label: AMINOR
+Scope.plot_12_1.global_defaults: -785036
+Scope.plot_13_1.height: 148
+Scope.plot_13_1.show_mode: 2
+Scope.plot_13_1.experiment: efit
+Scope.plot_13_1.y: \EFIT01::kappa
+Scope.plot_13_1.xmin: -0.05
+Scope.plot_13_1.ymin: 1.5
+Scope.plot_13_1.ymax: 2.5
+Scope.plot_13_1.title: "kappa"//$SHOT
+Scope.plot_13_1.label: AMINOR
+Scope.plot_13_1.global_defaults: -785036
+Scope.rows_in_column_2: 13
+Scope.plot_1_2.height: 92
+Scope.plot_1_2.experiment: PARTICLES
+Scope.plot_1_2.y: \NEUT_FLUCT_SLW_2FG
+Scope.plot_1_2.xmax: 1
+Scope.plot_1_2.event: NF_H908_01_ACQ
+Scope.plot_1_2.title: "Neutrons Slow 2FG "//$SHOT
+Scope.plot_1_2.label: \NEUT_FLUCT_SLW_2FG
+Scope.plot_1_2.global_defaults: -731265
+Scope.plot_2_2.height: 93
+Scope.plot_2_2.experiment: usxr
+Scope.plot_2_2.y: \usxr::usxr_hdown_13
+Scope.plot_2_2.xmin: 0
+Scope.plot_2_2.ymin: 0
+Scope.plot_2_2.title: "usxr hdown 13"//$SHOT//" "//\usxr_hdown:filter
+Scope.plot_2_2.global_defaults: -260225
+Scope.plot_3_2.height: 92
+Scope.plot_3_2.experiment: usxr
+Scope.plot_3_2.y: \usxr::usxr_hup_10
+Scope.plot_3_2.xmin: 0
+Scope.plot_3_2.ymin: 0
+Scope.plot_3_2.title: "usxr hup 10"//$SHOT//" "//\usxr_hup:filter
+Scope.plot_3_2.global_defaults: -260225
+Scope.plot_4_2.height: 93
+Scope.plot_4_2.experiment: engineering
+Scope.plot_4_2.y: \ENGINEERING::Ipf1al/1000.
+Scope.plot_4_2.event: PC_908C22N19_ACQ
+Scope.plot_4_2.title: "Pf1al Current (kA)"//$SHOT
+Scope.plot_4_2.label: I_PF2U_CUR_1
+Scope.plot_4_2.global_defaults: -723585
+Scope.plot_5_2.height: 92
+Scope.plot_5_2.experiment: engineering
+Scope.plot_5_2.y: \ENGINEERING::Ipf1au/1000.
+Scope.plot_5_2.event: PC_908C22N19_ACQ
+Scope.plot_5_2.title: "Pf1au Current (kA)"//$SHOT
+Scope.plot_5_2.label: I_PF2U_CUR_1
+Scope.plot_5_2.global_defaults: -723585
+Scope.plot_6_2.height: 93
+Scope.plot_6_2.experiment: engineering
+Scope.plot_6_2.y: \ENGINEERING::Ipf1b/1000.
+Scope.plot_6_2.event: PC_908C22N19_ACQ
+Scope.plot_6_2.title: "Pf1b Current (kA)"//$SHOT
+Scope.plot_6_2.label: I_PF2U_CUR_1
+Scope.plot_6_2.global_defaults: -723585
+Scope.plot_7_2.height: 92
+Scope.plot_7_2.experiment: engineering
+Scope.plot_7_2.y: \ENGINEERING::IPF2U/1000.
+Scope.plot_7_2.event: PC_908C22N19_ACQ
+Scope.plot_7_2.title: "PF2U Current (kA)"//$SHOT
+Scope.plot_7_2.label: I_PF2U_CUR_1
+Scope.plot_7_2.global_defaults: -723585
+Scope.plot_8_2.height: 93
+Scope.plot_8_2.experiment: engineering
+Scope.plot_8_2.y: \IPF2L/1000.
+Scope.plot_8_2.event: PC_908C22N19_ACQ
+Scope.plot_8_2.title: "PF2L Currents (kA)"//$SHOT
+Scope.plot_8_2.label: I_PF2L_CUR_1
+Scope.plot_8_2.global_defaults: -723585
+Scope.plot_9_2.height: 92
+Scope.plot_9_2.experiment: engineering
+Scope.plot_9_2.y: \ENGINEERING::IPF3U/1000.0
+Scope.plot_9_2.event: PC_908C22N19_ACQ
+Scope.plot_9_2.title: "PF3U Current (kA)"//$SHOT
+Scope.plot_9_2.label: I_PF3U_CUR_1
+Scope.plot_9_2.global_defaults: -723585
+Scope.plot_10_2.height: 93
+Scope.plot_10_2.experiment: engineering
+Scope.plot_10_2.y: \ENGINEERING::IPF3l/1000.0
+Scope.plot_10_2.event: PC_908C22N19_ACQ
+Scope.plot_10_2.title: "PF3L Current (kA)"//$SHOT
+Scope.plot_10_2.label: I_PF3U_CUR_1
+Scope.plot_10_2.global_defaults: -723585
+Scope.plot_11_2.height: 92
+Scope.plot_11_2.show_mode: 2
+Scope.plot_11_2.experiment: efit
+Scope.plot_11_2.y: \EFIT01::gapout
+Scope.plot_11_2.xmin: -0.05
+Scope.plot_11_2.xmax: .35
+Scope.plot_11_2.ymin: 0
+Scope.plot_11_2.ymax: .2
+Scope.plot_11_2.title: "gapout"//$SHOT
+Scope.plot_11_2.label: AMINOR
+Scope.plot_11_2.global_defaults: -785036
+Scope.plot_12_2.height: 93
+Scope.plot_12_2.show_mode: 2
+Scope.plot_12_2.experiment: efit
+Scope.plot_12_2.y: \EFIT01::gapin
+Scope.plot_12_2.xmin: -0.05
+Scope.plot_12_2.xmax: .6
+Scope.plot_12_2.ymax: .1
+Scope.plot_12_2.title: "gapin"//$SHOT
+Scope.plot_12_2.label: AMINOR
+Scope.plot_12_2.global_defaults: -785036
+Scope.plot_13_2.height: 148
+Scope.plot_13_2.show_mode: 2
+Scope.plot_13_2.experiment: efit
+Scope.plot_13_2.y: \EFIT01::tribot
+Scope.plot_13_2.xmin: -0.05
+Scope.plot_13_2.ymin: 0.2
+Scope.plot_13_2.ymax: 1
+Scope.plot_13_2.title: "lower triangularity"//$SHOT
+Scope.plot_13_2.label: AMINOR
+Scope.plot_13_2.global_defaults: -785036
+Scope.rows_in_column_3: 13
+Scope.plot_1_3.height: 92
+Scope.plot_1_3.show_mode: 2
+Scope.plot_1_3.experiment: efit
+Scope.plot_1_3.y: \EFIT01::rvsin
+Scope.plot_1_3.xmin: -0.05
+Scope.plot_1_3.xmax: .8
+Scope.plot_1_3.ymin: .25
+Scope.plot_1_3.ymax: .35
+Scope.plot_1_3.title: "rvsin"//$SHOT
+Scope.plot_1_3.label: AMINOR
+Scope.plot_1_3.global_defaults: -785036
+Scope.plot_2_3.height: 93
+Scope.plot_2_3.show_mode: 2
+Scope.plot_2_3.experiment: efit
+Scope.plot_2_3.y: \EFIT01::rvsout
+Scope.plot_2_3.xmin: -0.05
+Scope.plot_2_3.xmax: .8
+Scope.plot_2_3.ymin: .7
+Scope.plot_2_3.ymax: .9
+Scope.plot_2_3.title: "rvsout"//$SHOT
+Scope.plot_2_3.label: AMINOR
+Scope.plot_2_3.global_defaults: -785036
+Scope.plot_3_3.height: 92
+Scope.plot_3_3.show_mode: 2
+Scope.plot_3_3.experiment: efit
+Scope.plot_3_3.y: \EFIT01::Q95
+Scope.plot_3_3.xmin: -0.05
+Scope.plot_3_3.xmax: .8
+Scope.plot_3_3.ymin: 5
+Scope.plot_3_3.ymax: 15
+Scope.plot_3_3.title: "q(95)"//$SHOT
+Scope.plot_3_3.label: AMINOR
+Scope.plot_3_3.global_defaults: -785036
+Scope.plot_4_3.height: 93
+Scope.plot_4_3.show_mode: 2
+Scope.plot_4_3.experiment: efit
+Scope.plot_4_3.y: \EFIT01::betan
+Scope.plot_4_3.xmin: -0.05
+Scope.plot_4_3.ymin: 0
+Scope.plot_4_3.ymax: 8
+Scope.plot_4_3.title: "betan"//$SHOT
+Scope.plot_4_3.label: AMINOR
+Scope.plot_4_3.global_defaults: -785036
+Scope.plot_5_3.height: 92
+Scope.plot_5_3.show_mode: 2
+Scope.plot_5_3.experiment: efit
+Scope.plot_5_3.y: \EFIT01::li
+Scope.plot_5_3.xmin: -0.05
+Scope.plot_5_3.xmax: .6
+Scope.plot_5_3.ymin: 0
+Scope.plot_5_3.ymax: 1.5
+Scope.plot_5_3.title: "li"//$SHOT
+Scope.plot_5_3.label: AMINOR
+Scope.plot_5_3.global_defaults: -785036
+Scope.plot_6_3.height: 93
+Scope.plot_6_3.experiment: nbi
+Scope.plot_6_3.y: \nbi::nb_p_inj
+Scope.plot_6_3.xmax: 1
+Scope.plot_6_3.title: "NBI input [MW]"//$SHOT
+Scope.plot_6_3.global_defaults: -206977
+Scope.plot_7_3.height: 92
+Scope.plot_7_3.show_mode: 2
+Scope.plot_7_3.experiment: efit
+Scope.plot_7_3.y: \EFIT01::bcentr
+Scope.plot_7_3.xmin: -0.05
+Scope.plot_7_3.ymin: -0.6
+Scope.plot_7_3.ymax: -0.2
+Scope.plot_7_3.title: "bcentr"//$SHOT
+Scope.plot_7_3.label: AMINOR
+Scope.plot_7_3.global_defaults: -785036
+Scope.plot_8_3.height: 93
+Scope.plot_8_3.experiment: rf
+Scope.plot_8_3.x: dim_of(\pnet1)
+Scope.plot_8_3.y: \pnet1 + \pnet2 + \pnet3  + \pnet4 + \pnet5 + \pnet6
+Scope.plot_8_3.event: FW_H908_01_acq
+Scope.plot_8_3.title: "HHFW Power "//$SHOT
+Scope.plot_8_3.print_title: "HHFW Power "//$SHOT
+Scope.plot_8_3.label: \ECHPOWER
+Scope.plot_8_3.global_defaults: -1035393
+Scope.plot_9_3.height: 92
+Scope.plot_9_3.experiment: rf
+Scope.plot_9_3.x: dim_of(\klystronfwd1)
+Scope.plot_9_3.y: \echpower
+Scope.plot_9_3.ymin: -.5
+Scope.plot_9_3.ymax: 15
+Scope.plot_9_3.event: FW_H908_01_acq
+Scope.plot_9_3.title: "ECH Power "//$SHOT
+Scope.plot_9_3.print_title: "ECH Power "//$SHOT
+Scope.plot_9_3.label: \ECHPOWER
+Scope.plot_9_3.global_defaults: -1035393
+Scope.plot_10_3.height: 93
+Scope.plot_10_3.experiment: microwave
+Scope.plot_10_3.y: \den_firetipc1
+Scope.plot_10_3.ymin: 0
+Scope.plot_10_3.ymax: 8e13
+Scope.plot_10_3.event: den_firetip_calc
+Scope.plot_10_3.title: "Firetip_line_average_density/cm3"//$SHOT
+Scope.plot_10_3.global_defaults: -247937
+Scope.plot_11_3.height: 92
+Scope.plot_11_3.show_mode: 2
+Scope.plot_11_3.experiment: activespec
+Scope.plot_11_3.y: \ts_ld/130.
+Scope.plot_11_3.ymax: 8e13
+Scope.plot_11_3.event: MPTS_FIT_DONE
+Scope.plot_11_3.title: "MPTS nel/130. "//$SHOT
+Scope.plot_11_3.global_defaults: -231561
+Scope.plot_12_3.height: 93
+Scope.plot_12_3.show_mode: 2
+Scope.plot_12_3.experiment: efit
+Scope.plot_12_3.y: \EFIT01::drsep
+Scope.plot_12_3.xmin: -0.05
+Scope.plot_12_3.ymin: -0.02
+Scope.plot_12_3.ymax: 0.02
+Scope.plot_12_3.title: "drsep"//$SHOT
+Scope.plot_12_3.global_defaults: -785036
+Scope.plot_13_3.height: 148
+Scope.plot_13_3.show_mode: 2
+Scope.plot_13_3.experiment: efit
+Scope.plot_13_3.y: \EFIT02::rmidout
+Scope.plot_13_3.xmin: -0.05
+Scope.plot_13_3.ymin: 1.4
+Scope.plot_13_3.ymax: 1.5
+Scope.plot_13_3.title: "rmidout"//$SHOT
+Scope.plot_13_3.label: AMINOR
+Scope.plot_13_3.global_defaults: -785036
+Scope.vpane_1: 333
+Scope.vpane_2: 666

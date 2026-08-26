@@ -162,7 +162,7 @@ def show_nstx_gpi_video(exp_id=None,                                            
                                                  'Color':'red'}}
 
         if plot_flux:
-            d=flap.get_data('NSTX_MDSPlus',
+            flap.get_data('NSTX_MDSPlus',
                             name='\EFIT02::\PSIRZ',
                             exp_id=exp_id,
                             object_name='PSI RZ OBJ'
@@ -181,13 +181,16 @@ def show_nstx_gpi_video(exp_id=None,                                            
 
     if flux_coordinates:
         print("**** Adding Flux r coordinates")
-        d.add_coordinate(coordinates='Flux r',exp_id=exp_id)
+        data_obj=data_obj.add_coordinate(coordinates='Flux r',exp_id=exp_id)
+        # data_obj=data_obj.add_coordinate(coordinates='Flux theta',exp_id=exp_id)
         x_axis='Flux r'
         y_axis='Device z'
+        # y_axis='Flux theta'
         if plot_separatrix:
             oplot_options={}
             oplot_options['line']={'separatrix':{'Vertical':[[1.0,'red']],
                                                  'Plot':True}}
+        flap.add_data_object(data_obj, object_name)
     elif device_coordinates:
         x_axis='Device R'
         y_axis='Device z'

@@ -4,7 +4,6 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import numpy as np
 import pims
 import time
-import sys
 import matplotlib
 import matplotlib.cm as cm
 try:

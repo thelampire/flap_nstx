@@ -1,4 +1,4 @@
-from .get_data_gpi import get_data_gpi, add_coordinate_gpi
+from .get_data_gpi import get_data_gpi, add_coordinate_gpi, spatial_calibration_coeffs
 from .get_data_thomson import get_data_thomson, add_coordinate_thomson
 #No get_data_chers, avoiding the use of flap
 

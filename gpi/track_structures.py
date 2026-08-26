@@ -31,9 +31,7 @@ from flap_nstx.tools import (
     StructureDataset, TrackedPlasmaStructure
 )
 
-# Constants for the calculation
-coeff_r = np.asarray([3.75, 0,    1402.8097])/1000. 
-coeff_z = np.asarray([0,    3.75, 70.544312])/1000.  
+coeff_r, coeff_z=flap_nstx.spatial_calibration_coeffs()
 
 def track_structures(dataset=None,
                      time_range=None,
