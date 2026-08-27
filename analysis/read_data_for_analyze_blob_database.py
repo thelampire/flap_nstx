@@ -20,7 +20,7 @@ flap_nstx.register('NSTX_GPI')
 
 from flap_nstx.gpi import analyze_gpi_structures
 from flap_nstx.thomson import get_fit_nstx_thomson_profiles
-from flap_nstx.tools import get_flux_coord
+from flap_nstx.tools import get_flux_coord, read_equilibrium_data, get_equilibrium_slice
 
 import flap_mdsplus
 
@@ -114,6 +114,13 @@ def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3],
                 failed_shots['index'].append(ind)
                 continue
         
+            #Read the EFIT equilibrium once per shot and slice it once for the
+            #time the structures of this shot are evaluated at.
+            shot_equilibrium = read_equilibrium_data(shot=shot)
+            shot_equilibrium_slice = get_equilibrium_slice(equilibrium=shot_equilibrium,
+                                                           time=np.mean(blob_database['time'][ind]),
+                                                           shot=shot)
+        
             if not keys_initialized:
                 first_struct = blob_results.tracked_structures[0]
                 analyzed_keys = list(first_struct.regular_parameters.keys()) + list(first_struct.differential_parameters.keys())
@@ -152,7 +159,8 @@ def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3],
                             shot=shot,
                             time=np.mean(blob_database['time'][ind]),
                             R_target=structure.regular_parameters['Centroid radial'].value,
-                            z_target=structure.regular_parameters['Centroid poloidal'].value
+                            z_target=structure.regular_parameters['Centroid poloidal'].value,
+                            equilibrium_slice=shot_equilibrium_slice
                         )
                     except Exception as e:
                         print(f"Exception in read_data_for_analyze_blob_database.py at L158: {e}")
@@ -484,6 +492,12 @@ def read_all_blob_data_old(time_range_around_peak=[-5e-3,15e-3],
             
             flap.delete_data_object('*')
             
+            #Read the EFIT equilibrium once per shot instead of once per structure.
+            shot_equilibrium = read_equilibrium_data(shot=shot)
+            shot_equilibrium_slice = get_equilibrium_slice(equilibrium=shot_equilibrium,
+                                                           time=np.mean(blob_database['time'][ind]),
+                                                           shot=shot)
+
             # --- OOP EXTRACTION --- 
             for structure in blob_results.tracked_structures: 
                 n_str += 1
@@ -506,7 +520,8 @@ def read_all_blob_data_old(time_range_around_peak=[-5e-3,15e-3],
                                 psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
                                                                                    time=np.mean(blob_database['time'][ind]),
                                                                                    R_target=structure.regular_parameters['Centroid radial'].value,
-                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value)
+                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value,
+                                                                                   equilibrium_slice=shot_equilibrium_slice)
                                 raw_data = psi_norm_target
                             except Exception as e:
                                 print(f'Exception occurred at read_data_for_analyze_blob_database.py at line 157: {e}')

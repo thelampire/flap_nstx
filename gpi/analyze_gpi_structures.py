@@ -23,6 +23,7 @@ flap_nstx.register('NSTX_GPI')
 from flap_nstx.gpi import (normalize_gpi, 
                            identify_structures, track_structures, 
                            calculate_differential_structure_keys,
+                           calculate_flux_structure_keys,
                            _remove_orphans)
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
 from flap_nstx.tools import StructureDataset
@@ -97,6 +98,7 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
                            str_size_lower_thres=0.00375*4,       #Structures having sizes under this value are filtered out from the results. (Default is 4 pixels for both radial, poloidal)
                            elongation_threshold=0.1,             #Structures having major/minor_axis-1 lower than this value are set to angle=np.nan
 
+                           calculate_flux_coordinates=True,      #Calculate the flux coordinate (psi_norm, theta) and lifetime based keys
                            tracking='weighted',                  #Tracking methods 'overlap' or 'weighted'
                            tracking_assignment='max_score',      #Method of assigning the correspondence, 'hungarian' or 'max_score'
                            max_gap=1,
@@ -685,6 +687,8 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     if remove_orphans:
         tracked_dataset = _remove_orphans(tracked_dataset, test, min_structure_lifetime)
     tracked_dataset=calculate_differential_structure_keys(tracked_dataset)
+    if calculate_flux_coordinates:
+        tracked_dataset=calculate_flux_structure_keys(tracked_dataset, exp_id=exp_id)
     
     
     

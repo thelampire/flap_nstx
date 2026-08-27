@@ -118,58 +118,61 @@ def plot_results_for_pop_2026(plot_figure=2,
     if plot_figure == 4:
         options={}
         options['keys_to_plot']={}
-        # options['keys_to_plot']['Centroid radial']={'label':'R',
-        #                                             'unit':'m',
-        #                                             'range':[1.37,1.6],
-        #                                             'multiplier':1}
-                                 
-        # options['keys_to_plot']['Centroid poloidal']={'label':'z',
-        #                                               'unit':'m',
-        #                                               'range':[0.05,0.35],
-        #                                               'multiplier':1}
-        
-        options['keys_to_plot']['Normalized flux coordinate']={'label':'$\psi_{norm}$',
-                                                    'unit':'',
-                                                    'range':None,#[1.37,1.6],
+        options['keys_to_plot']['Centroid radial']={'label':'R',
+                                                    'unit':'m',
+                                                    'range':[1.37,1.6],
                                                     'multiplier':1}
+        
+        options['keys_to_plot']['Normalized flux coordinate']={'label':r'$\psi_{norm}$',
+                                                    'unit':'',
+                                                    'range':[0.6,2.0],#[1.37,1.6],
+                                                    'multiplier':1}
+                         
+        options['keys_to_plot']['Centroid poloidal']={'label':'z',
+                                                      'unit':'m',
+                                                      'range':[0.05,0.35],
+                                                      'multiplier':1}
+    
                                  
-        options['keys_to_plot']['Poloidal angle']={'label':'$\theta$',
+        options['keys_to_plot']['Poloidal angle']={'label':r'$\theta$',
                                                       'unit':'rad',
-                                                      'range':None,#[0.05,0.35],
+                                                      'range':[0.,1.],#[0.05,0.35],
                                                       'multiplier':1}        
         
-        options['keys_to_plot']['Velocity radial centroid']={'label':'$v_{rad}$',
-                                                             'unit':'km/s',
-                                                             'range':[-5,5],
-                                                             'multiplier':1e-3}
+        # options['keys_to_plot']['Velocity radial centroid']={'label':'$v_{rad}$',
+        #                                                      'unit':'km/s',
+        #                                                      'range':[-5,5],
+        #                                                      'multiplier':1e-3}
         
-        options['keys_to_plot']['Velocity poloidal centroid']={'label':'$v_{pol}$',
-                                                               'unit':'km/s',
-                                                               'range':[-10,10],
-                                                               'multiplier':1e-3}
+        # options['keys_to_plot']['Velocity poloidal centroid']={'label':'$v_{pol}$',
+        #                                                        'unit':'km/s',
+        #                                                        'range':[-10,10],
+        #                                                        'multiplier':1e-3}
         
-        options['keys_to_plot']['Angle fit']={'label':'$\phi$',
-                                              'unit':'rad',
-                                              'range':[-2,2],
-                                              'multiplier':1}
+        # options['keys_to_plot']['Angle fit']={'label':r'$\phi$',
+        #                                       'unit':'rad',
+        #                                       'range':[-2,2],
+        #                                       'multiplier':1}
         
-        options['keys_to_plot']['Angular velocity angle fit']={'label':'$\omega$',
-                                                               'unit':'krad/s',
-                                                               'range':[-100,100],
-                                                               'multiplier':1e-3}
+        # options['keys_to_plot']['Angular velocity angle fit']={'label':r'$\omega$',
+        #                                                        'unit':'krad/s',
+        #                                                        'range':[-100,100],
+        #                                                        'multiplier':1e-3}
         nplot=len(list(options['keys_to_plot'].keys()))
-        fig, axes=plt.subplots(nplot,2, figsize=[17/2.54,2*nplot/2.54])
+        fig, axes=plt.subplots(nplot,2, figsize=[8.5/2.54,2*nplot/2.54])
         
         options['fig_axes']=(fig,axes[:,0])
         options['hide_y_labels']=False
         options['subplot_labels']=abc[0:nplot]
-        options['title']='L-mode blob evolution #141998'
+        options['title']='L-mode spatial evolution #141998'
         options['subplot_label_location']=-0.2
         pdf_pages=PdfPages(wd+'/plots/fig4_lh_single_shot.pdf')
         
+        window_length=1e-3
+        
         analyze_gpi_structures(exp_id=141998,
                                time_range=[0.215,0.235],
-                               plot_time_range=[0.222,0.223],
+                               plot_time_range=[0.222,0.222+window_length],
                                ignore_side_structures=True,
                                pdf=False, plot=True,
                                plot_str_by_str=True,
@@ -185,12 +188,12 @@ def plot_results_for_pop_2026(plot_figure=2,
         options['hide_y_labels']=True
         options['fig_axes']=(fig,axes[:,1])
         options['subplot_labels']=abc[nplot:2*nplot]
-        options['title']='H-mode blob evolution #141319'
+        options['title']='H-mode spatial evolution #141319'
         options['subplot_label_location']=-0.07
         
         analyze_gpi_structures(exp_id=141319,
                                time_range=[0.527, 0.547],
-                               plot_time_range=[0.530, 0.531],
+                               plot_time_range=[0.530, 0.530+window_length],
                                ignore_side_structures=True,
                                pdf=False, plot=True,
                                plot_str_by_str=True,

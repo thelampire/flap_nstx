@@ -501,6 +501,173 @@ def calculate_differential_structure_keys(dataset):
             
     return dataset
 
+def calculate_flux_structure_keys(dataset, exp_id=None, time=None,
+                                  theta_method='geometric', fold_angle=False):
+    """
+    Calculates the flux-coordinate and lifetime based properties for all tracked
+    structures and stores them in the regular/differential parameter dicts.
+
+    The following keys are added to each tracked structure:
+        Regular:
+            'Lifetime'                             [s]
+            'Normalized flux coordinate'           [-]
+            'Poloidal angle'                       [rad]
+        Differential:
+            'Normalized flux coordinate velocity'  [1/s]
+            'Poloidal angular velocity'            [rad/s]
+
+    The derivatives are calculated with np.gradient, hence they keep the length
+    of the original array (they are NOT shortened like the np.diff based keys in
+    calculate_differential_structure_keys).
+
+    Args:
+        dataset (StructureDataset): Tracked dataset to be extended.
+        exp_id (int): Shot number used for the equilibrium reconstruction.
+                      Defaults to dataset.exp_id.
+        time (float): Time of the equilibrium slice. If None, the mean of each
+                      structure's own time vector is used.
+        theta_method (str): 'geometric' (default) stores the geometric poloidal
+                      angle atan2(z-z_axis, R-R_axis), which is defined both
+                      inside and outside the separatrix. 'arclength' stores the
+                      normalized arc length along the flux surface, which is
+                      only meaningful on closed surfaces and is therefore NaN
+                      in the SOL, i.e. over most of the GPI field of view.
+        fold_angle (bool): Fold the poloidal angle into [0, pi/2] the way the
+                      previous implementation did. Lossy, only kept for
+                      reproducing older results. Defaults to False, i.e. the
+                      true [0, 2pi) angle is stored.
+
+    Returns:
+        StructureDataset: The same dataset, extended in place.
+    """
+    import numpy as np
+    from flap_nstx.tools import (MetricArray, get_flux_coord, read_equilibrium_data,
+                                 get_equilibrium_slice, get_theta_map)
+
+    if exp_id is None:
+        exp_id = dataset.exp_id
+
+    # The EFIT equilibrium is read once here and handed down to every
+    # structure, so the slow MDSplus reading is never repeated. If it is
+    # unavailable on the server, the flux coordinates are filled with NaNs.
+    equilibrium = read_equilibrium_data(shot=exp_id)
+
+    # The equilibrium slices and the angle maps are reused between the
+    # structures resolving to the same EFIT reconstruction time.
+    equilibrium_slices = {}
+    theta_maps = {}
+
+    for struct in dataset.tracked_structures:
+        if not struct or len(struct.time) < 1:
+            continue
+
+        regular_parameters = struct.regular_parameters
+        differential_parameters = struct.differential_parameters
+
+        time_arr = np.asarray(struct.time, dtype=float)
+        n_time = len(time_arr)
+
+        # 1. Lifetime relative to the birth of the structure
+        regular_parameters['Lifetime'] = MetricArray(value=time_arr - time_arr[0],
+                                                     dict_label='Lifetime',
+                                                     plot_label='$t_{life}$',
+                                                     unit='s')
+
+        # 2. Flux coordinates of the structure centroid
+        if ('Centroid radial' not in regular_parameters or
+            'Centroid poloidal' not in regular_parameters):
+            continue
+
+        r_obj = regular_parameters['Centroid radial']
+        z_obj = regular_parameters['Centroid poloidal']
+        r_val = r_obj.value if hasattr(r_obj, 'value') else r_obj
+        z_val = z_obj.value if hasattr(z_obj, 'value') else z_obj
+
+        equilibrium_time = np.mean(time_arr) if time is None else time
+
+        if equilibrium is None:
+            psi_norm = np.full(n_time, np.nan)
+            theta_arc = np.full(n_time, np.nan)
+        else:
+            try:
+                slice_key = round(float(equilibrium_time), 9)
+                if slice_key not in equilibrium_slices:
+                    equilibrium_slices[slice_key] = get_equilibrium_slice(
+                        equilibrium=equilibrium,
+                        time=equilibrium_time,
+                        shot=exp_id)
+                equilibrium_slice = equilibrium_slices[slice_key]
+
+                theta_map = None
+                if theta_method == 'arclength':
+                    if slice_key not in theta_maps:
+                        theta_maps[slice_key] = get_theta_map(
+                            equilibrium_slice=equilibrium_slice,
+                            shot=exp_id,
+                            time=equilibrium_time)
+                    theta_map = theta_maps[slice_key]
+
+                psi_norm, theta_arc = get_flux_coord(shot=exp_id,
+                                                     time=equilibrium_time,
+                                                     R_target=r_val,
+                                                     z_target=z_val,
+                                                     equilibrium_slice=equilibrium_slice,
+                                                     theta_map=theta_map,
+                                                     theta_method=theta_method,
+                                                     fold_angle=fold_angle)
+            except Exception as e:
+                print(f'Exception in calculate_flux_structure_keys for {exp_id}: {e}')
+                psi_norm = np.full(n_time, np.nan)
+                theta_arc = np.full(n_time, np.nan)
+
+        psi_norm = np.asarray(psi_norm, dtype=float)
+        theta_arc = np.asarray(theta_arc, dtype=float)
+
+        regular_parameters['Normalized flux coordinate'] = MetricArray(
+            value=psi_norm,
+            dict_label='Normalized flux coordinate',
+            plot_label='$\\Psi_{norm}$',
+            unit='-')
+
+        regular_parameters['Poloidal angle'] = MetricArray(
+            value=theta_arc,
+            dict_label='Poloidal angle',
+            plot_label='$\\theta_{geom}$' if theta_method == 'geometric' else '$\\theta_{arc}$',
+            unit='rad')
+
+        # 3. Velocities in flux coordinates (np.gradient keeps the array length)
+        if n_time < 2:
+            continue
+
+        psi_velocity = np.gradient(psi_norm, time_arr)
+        # The stored angle spans the full [0, 2pi) range, so the derivative has
+        # to be taken on the unwrapped trace, otherwise the 0 <-> 2pi seam shows
+        # up as a huge artificial spike. The folded angle is not periodic in the
+        # same sense, hence unwrapping is skipped in that legacy case.
+        if fold_angle:
+            theta_velocity = np.gradient(theta_arc, time_arr)
+        else:
+            finite_mask = np.isfinite(theta_arc)
+            theta_velocity = np.full(n_time, np.nan)
+            if np.count_nonzero(finite_mask) > 1:
+                unwrapped_theta = np.unwrap(theta_arc[finite_mask])
+                theta_velocity[finite_mask] = np.gradient(unwrapped_theta,
+                                                          time_arr[finite_mask])
+
+        differential_parameters['Normalized flux coordinate velocity'] = MetricArray(
+            value=psi_velocity,
+            dict_label='Normalized flux coordinate velocity',
+            plot_label='$\\partial \\Psi_{norm} / \\partial t$',
+            unit='1/s')
+
+        differential_parameters['Poloidal angular velocity'] = MetricArray(
+            value=theta_velocity,
+            dict_label='Poloidal angular velocity',
+            plot_label='$\\partial \\theta / \\partial t$',
+            unit='rad/s')
+
+    return dataset
+
 def calculate_differential_structure_keys_old(dataset):
     """
     Vectorized calculation of time-differential properties for all tracked structures.

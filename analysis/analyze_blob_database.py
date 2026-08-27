@@ -26,6 +26,9 @@ from flap_nstx.analysis import return_interesting_key_pairs
 
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
 from flap_nstx.tools import correlation, mutual_information, get_flux_coord
+from flap_nstx.tools import read_equilibrium_data, get_equilibrium_slice
+from flap_nstx.tools import filename as nstx_filename
+from flap_nstx.gpi import calculate_flux_structure_keys
 
 import flap_mdsplus
 
@@ -53,6 +56,108 @@ from scipy.stats import linregress
 wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
+FLUX_STRUCTURE_KEYS = ['Normalized flux coordinate',
+                       'Poloidal angle',
+                       'Lifetime',
+                       'Poloidal angular velocity',
+                       'Normalized flux coordinate velocity']
+
+
+def _add_flux_parameters_to_saved_file(shot,
+                                       time_range,
+                                       str_finding_method='watershed',
+                                       normalize='simple',
+                                       remove_interlaced_structures=True,
+                                       theta_method='geometric',
+                                       overwrite=False,
+                                       ):
+    """
+    Adds the flux coordinate based keys to an already calculated structure file.
+
+    The structure finding and the tracking are NOT repeated, the tracked dataset is
+    restored from the file written by `analyze_gpi_structures` and only the keys
+    listed in `FLUX_STRUCTURE_KEYS` are calculated (via
+    `calculate_flux_structure_keys`) and saved back into the same file(s).
+
+    Args:
+        shot (int): Shot number.
+        time_range (list): The [start, end] time range the file was calculated for.
+        str_finding_method (str, optional): Segmentation method used for the saved
+            file ('watershed' or 'contour'). Defaults to 'watershed'.
+        normalize (str, optional): Normalization used for the saved file, needed for
+            reconstructing the filename. Defaults to 'simple'.
+        remove_interlaced_structures (bool, optional): Interlace setting used for the
+            saved file, needed for reconstructing the filename. Defaults to True.
+        theta_method (str, optional): Poloidal angle definition, 'geometric' or
+            'arclength'. Defaults to 'geometric'.
+        overwrite (bool, optional): Recalculate the flux keys even if they are already
+            present in the file. Defaults to False.
+
+    Returns:
+        bool: True if the file was (re)written, False otherwise.
+    """
+
+    comment = ''
+    if normalize is not None:
+        comment += normalize
+    if remove_interlaced_structures:
+        comment += '_nointer'
+    comment += '_' + str_finding_method
+
+    base_filename = nstx_filename(exp_id=shot,
+                                  working_directory=wd + '/processed_data',
+                                  time_range=time_range,
+                                  purpose='structure char',
+                                  comment=comment)
+
+    pickle_filename = base_filename + '.pickle'
+    hdf5_filename = base_filename + '.h5'
+
+    if not os.path.exists(pickle_filename):
+        print(f'  {pickle_filename} does not exist, nothing to extend.')
+        return False
+
+    try:
+        with open(pickle_filename, 'rb') as f:
+            tracked_dataset = pickle.load(f)
+    except Exception as e:
+        print(f'  Could not load {pickle_filename}: {e}')
+        return False
+
+    if getattr(tracked_dataset, 'mode', None) != 'tracked' or not tracked_dataset.tracked_structures:
+        print(f'  {pickle_filename} does not contain tracked structures, skipping.')
+        return False
+
+    if not overwrite:
+        first_struct = tracked_dataset.tracked_structures[0]
+        existing_keys = (list(first_struct.regular_parameters.keys()) +
+                         list(first_struct.differential_parameters.keys()))
+        if all(key in existing_keys for key in FLUX_STRUCTURE_KEYS):
+            print('  Flux parameters are already available in the file, skipping.')
+            return False
+
+    try:
+        tracked_dataset = calculate_flux_structure_keys(tracked_dataset,
+                                                        exp_id=shot,
+                                                        theta_method=theta_method)
+    except Exception as e:
+        print(f'  Could not calculate the flux parameters for #{shot}: {e}')
+        return False
+
+    with open(pickle_filename, 'wb') as f:
+        pickle.dump(tracked_dataset, f)
+    print(f'  Flux parameters saved into {pickle_filename}')
+
+    if os.path.exists(hdf5_filename):
+        try:
+            tracked_dataset.save_hdf5(hdf5_filename)
+            print(f'  Flux parameters saved into {hdf5_filename}')
+        except Exception as e:
+            print(f'  Could not update {hdf5_filename}: {e}')
+
+    return True
+
+
 def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                str_finding_method='watershed',
                                plot=False,
@@ -65,6 +170,9 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                calculate_h_mode_only=False,
                                download_data_only=False,
                                shot_range=None,  # <-- NEW PARAMETER
+                               add_flux_parameters_only=False,
+                               overwrite_flux_parameters=False,
+                               theta_method='geometric',
                                ):
     
     """
@@ -101,6 +209,18 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             the structure tracking analysis. Defaults to False.
         shot_range (list or tuple, optional): Specify [min_shot, max_shot] to only 
             process a specific subset of shots. Defaults to None (processes all).
+        add_flux_parameters_only (bool, optional): If True, no structure finding or 
+            tracking is performed. The already existing result files of each shot are 
+            loaded and only the flux coordinate based keys ('Normalized flux 
+            coordinate', 'Poloidal angle', 'Lifetime', 'Poloidal angular velocity', 
+            'Normalized flux coordinate velocity') are calculated and written back 
+            into the very same files. Defaults to False.
+        overwrite_flux_parameters (bool, optional): If True, the flux coordinate based 
+            keys are recalculated even if they are already present in the saved file. 
+            Only used when `add_flux_parameters_only` is True. Defaults to False.
+        theta_method (str, optional): Poloidal angle definition. 'geometric' (default)
+            is defined over the whole GPI field of view, 'arclength' is only valid on
+            closed flux surfaces.
             
     Returns:
         None: Executes batch processing and saves results/data to disk.
@@ -171,7 +291,14 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                               db['time'][ind, 1] * multiplier]
 
             # Execution logic
-            if calculate_for_lh_study and download_data_only:
+            if add_flux_parameters_only:
+                print(f'Adding flux parameters to shot #{int(shot)} for window {time_range}...')
+                _add_flux_parameters_to_saved_file(int(shot),
+                                                   time_range,
+                                                   str_finding_method=str_finding_method,
+                                                   theta_method=theta_method,
+                                                   overwrite=overwrite_flux_parameters)
+            elif calculate_for_lh_study and download_data_only:
                 print(f'Downloading shot #{int(shot)}...')
                 try:
                     flap.get_data('NSTX_GPI', exp_id=int(shot), name='', object_name='GPI')
@@ -301,6 +428,13 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                     analyzed_keys += ['Normalized flux coordinate', 'Poloidal angle', 'Lifetime']   
                 full_data = {key: [] for key in analyzed_keys}
                 keys_initialized = True
+
+            #Read the EFIT equilibrium once per shot instead of once per structure.
+            shot_equilibrium = read_equilibrium_data(shot=shot)
+            shot_equilibrium_slice = get_equilibrium_slice(equilibrium=shot_equilibrium,
+                                                           time=np.mean(blob_database['time'][ind]),
+                                                           shot=shot)
+
             # --- OOP DATA EXTRACTION ---
             for structure in blob_results.tracked_structures:
                 n_str += 1
@@ -314,7 +448,8 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                 psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
                                                                                    time=np.mean(blob_database['time'][ind]),
                                                                                    R_target=structure.regular_parameters['Centroid radial'].value,
-                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value)
+                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value,
+                                                                                   equilibrium_slice=shot_equilibrium_slice)
                                 theta_arc_target = (theta_arc_target + np.pi) % (2 * np.pi) - np.pi
                                 raw_data = psi_norm_target
                             except Exception as e:

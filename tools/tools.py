@@ -1281,63 +1281,571 @@ import numpy as np
 import flap
 import flap_nstx
 
+def read_equilibrium_data(shot=None, verbose=True):
+    """
+    Reads the EFIT02 equilibrium data objects needed for the flux coordinate
+    calculation of a shot.
+
+    This is the only function performing MDSplus reading, and it is meant to be
+    called once per shot by the parent routine. The resulting object is then
+    passed down to `get_equilibrium_slice` and `get_flux_coord`, so the slow
+    reading is never repeated for the individual structures.
+
+    Args:
+        shot (int): Experimental shot number.
+        verbose (bool, optional): Print a message when the reading fails.
+            Defaults to True.
+
+    Returns:
+        dict or None: Dictionary with the 'psi_rz', 'r_axis', 'z_axis',
+        'psi_axis' and 'psi_bdry' flap data objects, or None if the
+        equilibrium data is not available for the shot.
+    """
+    signals = {'psi_rz': r'\EFIT02::\PSIRZ',
+               'r_axis': r'\EFIT02::\RMAXIS',
+               'z_axis': r'\EFIT02::\ZMAXIS',
+               'psi_axis': r'\EFIT02::\SSIMAG',
+               'psi_bdry': r'\EFIT02::\SSIBRY'}
+
+    equilibrium = {}
+    try:
+        for key, signal_name in signals.items():
+            equilibrium[key] = flap.get_data('NSTX_MDSPlus',
+                                             name=signal_name,
+                                             exp_id=shot,
+                                             object_name=f'{key.upper()}_FOR_COORD_{shot}')
+    except Exception as e:
+        if verbose:
+            print(f'The EFIT02 equilibrium data is unavailable for shot #{shot}: {e}')
+            print('The flux coordinates are going to be filled with NaNs.')
+        return None
+
+    return equilibrium
+
+
+def snap_to_equilibrium_time(equilibrium=None, time=None, shot=None, verbose=True):
+    """
+    Snaps a requested time onto the nearest EFIT reconstruction time.
+
+    EFIT is reconstructed on a coarse time base (typically every 1ms), while
+    every tracked structure asks for the equilibrium at its own mean time.
+    Snapping onto the reconstruction times keeps the results of the structures
+    belonging to the same EFIT sample identical.
+
+    Args:
+        equilibrium (dict): Output of `read_equilibrium_data`.
+        time (float): Requested time.
+        shot (int, optional): Shot number, only used in the message.
+        verbose (bool, optional): Print a message when the time base cannot be
+            determined. Defaults to True.
+
+    Returns:
+        float or None: The nearest EFIT time, or the unchanged input if the
+        time base cannot be determined.
+    """
+    if time is None or equilibrium is None:
+        return time
+
+    try:
+        efit_time = equilibrium['psi_rz'].coordinate('Time')[0]
+        efit_time = np.unique(np.asarray(efit_time, dtype=float).ravel())
+        return float(efit_time[np.argmin(np.abs(efit_time - float(time)))])
+    except Exception as e:
+        if verbose:
+            print(f'The EFIT time base of shot #{shot} cannot be determined: {e}')
+        return time
+
+
+def get_equilibrium_slice(equilibrium=None, time=None, shot=None, verbose=True):
+    """
+    Returns the time sliced equilibrium quantities of a shot.
+
+    Args:
+        equilibrium (dict): Output of `read_equilibrium_data`.
+        time (float): Time of the equilibrium slice.
+        shot (int, optional): Shot number, only used in the messages.
+        verbose (bool, optional): Print a message when the slicing fails.
+            Defaults to True.
+
+    Returns:
+        dict or None: Dictionary with 'R_grid', 'z_grid', 'psi_grid', 'R_axis',
+        'Z_axis', 'psi_axis' and 'psi_bdry', or None if the equilibrium is not
+        available.
+    """
+    if equilibrium is None:
+        return None
+
+    #Snap onto the EFIT time base so that all the structures falling between
+    #two reconstructions get consistent results.
+    time = snap_to_equilibrium_time(equilibrium=equilibrium, time=time,
+                                    shot=shot, verbose=verbose)
+
+    try:
+        psi_rz_obj = copy.deepcopy(equilibrium['psi_rz']).slice_data(slicing={'Time': time})
+
+        sliced = {'R_grid': psi_rz_obj.coordinate('Device R')[0][:, 0],
+                  'z_grid': psi_rz_obj.coordinate('Device z')[0][0, :],
+                  'psi_grid': psi_rz_obj.data,
+                  'R_axis': copy.deepcopy(equilibrium['r_axis']).slice_data(slicing={'Time': time}).data,
+                  'Z_axis': float(copy.deepcopy(equilibrium['z_axis']).slice_data(slicing={'Time': time}).data),
+                  'psi_axis': float(copy.deepcopy(equilibrium['psi_axis']).slice_data(slicing={'Time': time}).data),
+                  'psi_bdry': float(copy.deepcopy(equilibrium['psi_bdry']).slice_data(slicing={'Time': time}).data),
+                  }
+    except Exception as e:
+        if verbose:
+            print(f'The EFIT02 equilibrium of shot #{shot} cannot be sliced at {time}s: {e}')
+        return None
+
+    return sliced
+
+
+from matplotlib.path import Path as _matplotlib_path
+from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+from scipy.spatial import Delaunay as _Delaunay
+
+
+def _select_flux_contour(contours, R_grid_1d, z_grid_1d, R_axis, Z_axis):
+    """
+    Picks the physically meaningful branch out of the contours belonging to one
+    psi level and converts it to physical (R, z) coordinates.
+
+    A single psi level set is generally not a single curve: close to the
+    separatrix it splits into the core flux surface and the divertor legs
+    around the X-point. Selecting simply the longest branch (as the previous
+    implementation did) makes the choice flip between neighbouring frames,
+    which quantizes the resulting poloidal angle. Here the branch which
+    actually encircles the magnetic axis is preferred, and only if no such
+    branch exists is the one closest to the outboard midplane used.
+
+    Args:
+        contours (list): Output of `skimage.measure.find_contours` (index space).
+        R_grid_1d (np.ndarray): Physical R coordinates of the psi grid.
+        z_grid_1d (np.ndarray): Physical z coordinates of the psi grid.
+        R_axis (float): Major radius of the magnetic axis.
+        Z_axis (float): Vertical position of the magnetic axis.
+
+    Returns:
+        tuple or None: (R_contour, z_contour, is_closed) of the selected branch,
+        or None if no usable branch was found.
+    """
+    best_enclosing = None
+    best_enclosing_len = -1.0
+    best_fallback = None
+    best_fallback_dist = np.inf
+
+    for contour in contours:
+        if len(contour) < 4:
+            continue
+
+        R_c = np.interp(contour[:, 0], np.arange(len(R_grid_1d)), R_grid_1d)
+        z_c = np.interp(contour[:, 1], np.arange(len(z_grid_1d)), z_grid_1d)
+
+        #A contour is closed if skimage returned identical end points.
+        is_closed = (np.isclose(contour[0, 0], contour[-1, 0]) and
+                     np.isclose(contour[0, 1], contour[-1, 1]))
+
+        if is_closed:
+            polygon = _matplotlib_path(np.column_stack((R_c, z_c)))
+            if polygon.contains_point((R_axis, Z_axis)):
+                #Among the surfaces enclosing the axis the outermost one is the
+                #relevant flux surface for the requested psi value.
+                circumference = np.sum(np.hypot(np.diff(R_c), np.diff(z_c)))
+                if circumference > best_enclosing_len:
+                    best_enclosing_len = circumference
+                    best_enclosing = (R_c, z_c, True)
+                continue
+
+        #Open (SOL / divertor leg) branches: keep the one passing closest to the
+        #outboard midplane, which is where the GPI structures live.
+        omp_distance = np.min(np.hypot(R_c - R_axis, z_c - Z_axis) *
+                              np.where(R_c > R_axis, 1.0, 1e3))
+        if omp_distance < best_fallback_dist:
+            best_fallback_dist = omp_distance
+            best_fallback = (R_c, z_c, is_closed)
+
+    if best_enclosing is not None:
+        return best_enclosing
+    return best_fallback
+
+
+def _orient_and_reference_contour(R_c, z_c, is_closed, R_axis, Z_axis):
+    """
+    Applies a globally consistent orientation and theta=0 reference to a contour.
+
+    Both the direction of travel and the origin of the arc length must be
+    derived from a robust global property of the curve, otherwise near-ties
+    make the choice flip between frames and the resulting angle becomes
+    discretized. The direction is fixed from the total signed winding around
+    the magnetic axis (counter-clockwise) instead of comparing two neighbouring
+    samples, and the origin is the point where the curve crosses the outboard
+    midplane.
+
+    Args:
+        R_c (np.ndarray): R coordinates of the contour.
+        z_c (np.ndarray): z coordinates of the contour.
+        is_closed (bool): Whether the contour is a closed curve.
+        R_axis (float): Major radius of the magnetic axis.
+        Z_axis (float): Vertical position of the magnetic axis.
+
+    Returns:
+        tuple: (R_c, z_c, s_cumulative, s_total, s_reference) with the contour
+        oriented counter-clockwise and the arc length origin at the OMP.
+    """
+    geometric_angle = np.arctan2(z_c - Z_axis, R_c - R_axis)
+
+    #Global orientation: the net winding decides, not a single sample pair.
+    net_winding = np.sum(np.diff(np.unwrap(geometric_angle)))
+    if net_winding < 0:
+        R_c = R_c[::-1]
+        z_c = z_c[::-1]
+        geometric_angle = geometric_angle[::-1]
+
+    if is_closed:
+        #Roll the closed curve so that it starts at the outboard midplane.
+        outboard = R_c > R_axis
+        if np.any(outboard):
+            candidate_indices = np.where(outboard)[0]
+            start_index = candidate_indices[np.argmin(np.abs(geometric_angle[candidate_indices]))]
+        else:
+            start_index = int(np.argmax(R_c))
+
+        R_c = np.roll(R_c, -start_index)
+        z_c = np.roll(z_c, -start_index)
+        #Close the curve explicitly so the arc length spans the full loop.
+        R_c = np.append(R_c, R_c[0])
+        z_c = np.append(z_c, z_c[0])
+        geometric_angle = np.arctan2(z_c - Z_axis, R_c - R_axis)
+
+    segment_lengths = np.hypot(np.diff(R_c), np.diff(z_c))
+    s_cumulative = np.insert(np.cumsum(segment_lengths), 0, 0.0)
+    s_total = s_cumulative[-1]
+
+    if s_total <= 0:
+        return None
+
+    if is_closed:
+        s_reference = 0.0
+    else:
+        #Open branch: reference the arc length to its OMP crossing so that the
+        #angle stays comparable with the closed surfaces.
+        outboard = R_c > R_axis
+        if np.any(outboard):
+            candidate_indices = np.where(outboard)[0]
+            reference_index = candidate_indices[np.argmin(np.abs(geometric_angle[candidate_indices]))]
+        else:
+            reference_index = int(np.argmax(R_c))
+        s_reference = s_cumulative[reference_index]
+
+    return (R_c, z_c, s_cumulative, s_total, s_reference)
+
+
+def _build_theta_map(equilibrium,
+                     n_levels=200,
+                     psi_norm_range=(0.02, 1.6),
+                     ):
+    """
+    Builds a continuous poloidal angle map theta(R, z) for one equilibrium slice.
+
+    The map is constructed once for a whole time slice by tracing a family of
+    flux surfaces with a consistent branch selection, orientation and arc length
+    origin, and then interpolating the resulting scattered angle samples. This
+    replaces the previous per-point contour tracing, where every structure
+    position triggered an independent `find_contours` call whose branch choice,
+    direction and origin could differ from point to point and therefore
+    quantized the angle onto a few discrete values.
+
+    The angle is interpolated through its cosine and sine components so the
+    0 <-> 2pi seam does not leak into the interpolation.
+
+    Args:
+        equilibrium (dict): Output of `get_equilibrium_slice`.
+        n_levels (int, optional): Number of traced flux surfaces. Defaults to 200.
+        psi_norm_range (tuple, optional): Normalized flux range covered by the
+            traced surfaces. Defaults to (0.02, 1.6). The upper limit has to
+            reach well into the SOL, otherwise the structures sitting outside
+            the traced family fall back to nearest neighbour interpolation,
+            which reintroduces exactly the staircase-like quantization this
+            map is meant to remove.
+
+    Returns:
+        dict or None: Interpolators for the cosine and sine of the angle plus a
+        nearest neighbour fallback, or None if no surface could be traced.
+    """
+    R_grid_1d = equilibrium['R_grid']
+    z_grid_1d = equilibrium['z_grid']
+    psi_grid_2d = equilibrium['psi_grid']
+    R_axis = float(np.atleast_1d(equilibrium['R_axis'])[0])
+    Z_axis = equilibrium['Z_axis']
+    psi_axis = equilibrium['psi_axis']
+    psi_bdry = equilibrium['psi_bdry']
+
+    sample_points = []
+    sample_cos = []
+    sample_sin = []
+
+    for psi_norm_level in np.linspace(psi_norm_range[0], psi_norm_range[1], n_levels):
+        psi_level = psi_axis + psi_norm_level * (psi_bdry - psi_axis)
+
+        contours = skimage.measure.find_contours(psi_grid_2d, psi_level)
+        if not contours:
+            continue
+
+        selected = _select_flux_contour(contours, R_grid_1d, z_grid_1d, R_axis, Z_axis)
+        if selected is None:
+            continue
+
+        oriented = _orient_and_reference_contour(*selected, R_axis=R_axis, Z_axis=Z_axis)
+        if oriented is None:
+            continue
+
+        R_c, z_c, s_cumulative, s_total, s_reference = oriented
+
+        theta_c = 2 * np.pi * np.mod((s_cumulative - s_reference) / s_total, 1.0)
+
+        sample_points.append(np.column_stack((R_c, z_c)))
+        sample_cos.append(np.cos(theta_c))
+        sample_sin.append(np.sin(theta_c))
+
+    if not sample_points:
+        return None
+
+    points = np.vstack(sample_points)
+    cos_values = np.concatenate(sample_cos)
+    sin_values = np.concatenate(sample_sin)
+
+    # The Delaunay triangulation dominates the cost of building the map, and it
+    # only depends on the sample positions. Building it once and reusing it for
+    # both the cosine and the sine interpolator halves the build time.
+    triangulation = _Delaunay(points)
+
+    return {'cos_linear': LinearNDInterpolator(triangulation, cos_values),
+            'sin_linear': LinearNDInterpolator(triangulation, sin_values),
+            'cos_nearest': NearestNDInterpolator(points, cos_values),
+            'sin_nearest': NearestNDInterpolator(points, sin_values),
+            }
+
+
+def get_theta_map(equilibrium_slice=None, shot=None, time=None, verbose=True):
+    """
+    Builds the poloidal angle map of an already sliced equilibrium.
+
+    Args:
+        equilibrium_slice (dict): Output of `get_equilibrium_slice`.
+        shot (int, optional): Shot number, only used in the message.
+        time (float, optional): Time of the slice, only used in the message.
+        verbose (bool, optional): Print a message when the map cannot be built.
+            Defaults to True.
+
+    Returns:
+        dict or None: The angle map built by `_build_theta_map`, or None if the
+        equilibrium is unavailable or the map cannot be built.
+    """
+    if equilibrium_slice is None:
+        return None
+
+    try:
+        return _build_theta_map(equilibrium_slice)
+    except Exception as e:
+        if verbose:
+            print(f'The poloidal angle map cannot be built for shot #{shot} at {time}s: {e}')
+        return None
+
+
+def fold_poloidal_angle(theta):
+    """
+    Folds a poloidal angle from [0, 2pi) into [0, pi/2].
+
+    This is the legacy behaviour of `get_flux_coord`. It is lossy: the two
+    reflections map four physically different poloidal positions onto the same
+    value and clamp the traces at the fold axes, so it should only be used for
+    reproducing older results.
+
+    Args:
+        theta (np.ndarray): Poloidal angle in radians.
+
+    Returns:
+        np.ndarray: The folded angle.
+    """
+    theta = np.asarray(theta, dtype=float)
+    folded_theta = np.copy(theta)
+
+    finite_mask = np.isfinite(theta)
+    if np.any(finite_mask):
+        folded = np.mod(theta[finite_mask], 2 * np.pi)
+        #Fold [pi, 2pi) down onto [0, pi) (reflection about the midplane)
+        folded = np.where(folded > np.pi, 2 * np.pi - folded, folded)
+        #Fold (pi/2, pi] onto [0, pi/2] (reflection about the vertical axis)
+        folded = np.where(folded > np.pi / 2, np.pi - folded, folded)
+        folded_theta[finite_mask] = folded
+
+    return folded_theta
+
+
+#Approximate GPI field of view, only used for the sanity check of the angles.
+#Derived from `spatial_calibration_coeffs`: R = 1.34..1.64 m, z = 0.07..0.32 m.
+GPI_FOV_THETA_LIMITS = (0.0, 0.7)
+
+
+def get_geometric_poloidal_angle(R_target, z_target, R_axis, Z_axis):
+    """
+    Returns the geometric poloidal angle measured from the magnetic axis.
+
+    theta = atan2(z - z_axis, R - R_axis), i.e. zero at the outboard midplane
+    and increasing upwards.
+
+    Unlike the arc length based angle this is defined everywhere, both inside
+    and outside the separatrix, it needs no contour tracing, no branch
+    selection and no arc length normalization. That makes it the appropriate
+    choice for an outboard midplane diagnostic such as GPI, whose field of view
+    lies largely in the SOL where closed flux surfaces simply do not exist.
+
+    Args:
+        R_target (np.ndarray): Major radius coordinates of the targets.
+        z_target (np.ndarray): Vertical coordinates of the targets.
+        R_axis (float): Major radius of the magnetic axis.
+        Z_axis (float): Vertical position of the magnetic axis.
+
+    Returns:
+        np.ndarray: The poloidal angle in radians, wrapped into [0, 2pi).
+    """
+    return np.mod(np.arctan2(np.asarray(z_target, dtype=float) - Z_axis,
+                             np.asarray(R_target, dtype=float) - R_axis),
+                  2 * np.pi)
+
+
+def check_gpi_theta_range(theta, shot=None, limits=GPI_FOV_THETA_LIMITS, verbose=True):
+    """
+    Warns if the poloidal angles fall outside the range the GPI field of view
+    can physically produce.
+
+    The GPI field of view covers roughly R = 1.34..1.64 m and z = 0.07..0.32 m
+    on the low field side, which corresponds to a geometric poloidal angle of
+    about 0.12..0.67 rad around a typical NSTX magnetic axis. Angles far
+    outside this band mean that the angle definition or the equilibrium is
+    wrong, so this check is meant to surface such errors immediately instead of
+    letting them show up in a plot.
+
+    Args:
+        theta (np.ndarray): Poloidal angles in radians.
+        shot (int, optional): Shot number, only used in the message.
+        limits (tuple, optional): Accepted (min, max) angle in radians.
+            Defaults to `GPI_FOV_THETA_LIMITS`.
+        verbose (bool, optional): Print the warning. Defaults to True.
+
+    Returns:
+        bool: True if all the finite angles are inside the limits.
+    """
+    theta = np.asarray(theta, dtype=float)
+    finite_theta = theta[np.isfinite(theta)]
+
+    if len(finite_theta) == 0:
+        return True
+
+    #The angle is wrapped into [0, 2pi), so a point slightly below the midplane
+    #shows up just under 2pi. Map it back onto a small negative angle before
+    #comparing against the limits.
+    signed_theta = np.where(finite_theta > np.pi, finite_theta - 2 * np.pi, finite_theta)
+
+    outside = (signed_theta < limits[0] - 0.2) | (signed_theta > limits[1] + 0.2)
+    if np.any(outside):
+        if verbose:
+            print(f'Warning: {np.count_nonzero(outside)}/{len(finite_theta)} poloidal '
+                  f'angles of shot #{shot} lie outside the range the GPI field of view '
+                  f'can produce ({limits[0]:.2f}..{limits[1]:.2f} rad). '
+                  f'Observed {signed_theta.min():.2f}..{signed_theta.max():.2f} rad.')
+        return False
+
+    return True
+
+
 def get_flux_coord(shot=None,
                    time=None,
                    R_target=None, 
-                   z_target=None):
+                   z_target=None,
+                   equilibrium=None,
+                   equilibrium_slice=None,
+                   theta_map=None,
+                   theta_method='geometric',
+                   fold_angle=False,
+                   check_theta_range=True,
+                   verbose=True):
     """
-    Calculates the normalized poloidal flux and arc-length poloidal angle 
-    for a specific list of absolute (R, Z) points.
+    Calculates the normalized poloidal flux and the poloidal angle for a
+    specific list of absolute (R, Z) points.
+    
+    The EFIT equilibrium is expected to be read once by the parent routine and
+    passed in through `equilibrium` (or, already sliced, through
+    `equilibrium_slice`), so that the slow MDSplus reading is not repeated for
+    every structure. If nothing is passed, the equilibrium is read here as a
+    convenience. If the equilibrium data is not available on the server, NaN
+    arrays are returned instead of raising an exception.
+    
+    Two angle definitions are available:
+    
+    - 'geometric' (default): theta = atan2(z - z_axis, R - R_axis). Defined
+      everywhere, including the SOL, and directly comparable to the geometric
+      position of the structures. This is the appropriate choice for GPI, whose
+      field of view is on the low field side and lies mostly outside the
+      separatrix.
+    - 'arclength': the normalized arc length along the flux surface, evaluated
+      from a theta(R, z) map (see `get_theta_map`). Only meaningful on
+      closed flux surfaces; outside the separatrix the arc length is normalized
+      by a grid clipped curve length, which makes the value arbitrary. It is
+      also strongly compressed with respect to the geometric angle on shaped
+      surfaces (a geometric 0.35 rad maps to ~0.21 rad at kappa = 2.2).
     
     Args:
         shot (int): Experimental shot number.
         time (float): Time slice to extract equilibrium data.
         R_target (np.ndarray): 1D array of Target Major Radius coordinates (from center of torus).
         z_target (np.ndarray): 1D array of Target Vertical coordinates.
+        equilibrium (dict, optional): Output of `read_equilibrium_data`. Read
+            here if neither this nor `equilibrium_slice` is given.
+        equilibrium_slice (dict, optional): Output of `get_equilibrium_slice`.
+            Takes precedence over `equilibrium`, avoiding the re-slicing.
+        theta_map (dict, optional): Output of `get_theta_map`, only used when
+            `theta_method` is 'arclength'. Built here if not given.
+        theta_method (str, optional): Either 'geometric' or 'arclength'.
+            Defaults to 'geometric'.
+        fold_angle (bool, optional): Fold the angle into [0, pi/2] the way the
+            original implementation did. Lossy, only kept for reproducing older
+            results. Defaults to False.
+        check_theta_range (bool, optional): Warn if the resulting angles cannot
+            be produced by the GPI field of view. Defaults to True.
+        verbose (bool, optional): Print a message when the equilibrium reading
+            fails. Defaults to True.
         
     Returns:
-        dict: 'psi_norm' and 'theta_arc' arrays corresponding to the target points.
+        tuple: ('psi_norm', 'theta') arrays corresponding to the target points.
     """
+    if theta_method not in ['geometric', 'arclength']:
+        raise ValueError("theta_method can only be 'geometric' or 'arclength'.")
+    
     R_target = np.atleast_1d(R_target)
     Z_target = np.atleast_1d(z_target)
     
     # =========================================================================
-    # 1. Read data for flux coordinate calculation
+    # 1. Obtain the equilibrium slice (passed in by the parent routine)
     # =========================================================================
-    psi_rz_obj = flap.get_data('NSTX_MDSPlus',
-                               name=r'\EFIT02::\PSIRZ',
-                               exp_id=shot,
-                               object_name='PSIRZ_FOR_COORD'
-                               ).slice_data(slicing={'Time': time})
+    if equilibrium_slice is None:
+        if equilibrium is None:
+            equilibrium = read_equilibrium_data(shot=shot, verbose=verbose)
+        equilibrium_slice = get_equilibrium_slice(equilibrium=equilibrium,
+                                                  time=time,
+                                                  shot=shot,
+                                                  verbose=verbose)
     
-    R_grid_1d = psi_rz_obj.coordinate('Device R')[0][:, 0]
-    z_grid_1d = psi_rz_obj.coordinate('Device z')[0][0, :]
-    psi_grid_2d = psi_rz_obj.data
+    if equilibrium_slice is None:
+        nan_array = np.full(len(R_target), np.nan)
+        return (nan_array, np.full(len(R_target), np.nan))
     
-    # Extract structural scalars (wrapped in float() to unpack single-element arrays)
-    R_axis = flap.get_data('NSTX_MDSPlus',
-                                 name=r'\EFIT02::\RMAXIS',
-                                 exp_id=shot,
-                                 object_name='RMAXIS_FOR_COORD'
-                                 ).slice_data(slicing={'Time': time}).data
-                                 
-    Z_axis = float(flap.get_data('NSTX_MDSPlus',
-                                 name=r'\EFIT02::\ZMAXIS',
-                                 exp_id=shot,
-                                 object_name='ZMAXIS_FOR_COORD'
-                                 ).slice_data(slicing={'Time': time}).data)
-                                 
-    psi_axis = float(flap.get_data('NSTX_MDSPlus',
-                                   name=r'\EFIT02::\SSIMAG',
-                                   exp_id=shot,
-                                   object_name='PSI0_FOR_COORD'
-                                   ).slice_data(slicing={'Time': time}).data)
-                                   
-    psi_bdry = float(flap.get_data('NSTX_MDSPlus',
-                                   name=r'\EFIT02::\SSIBRY',
-                                   exp_id=shot,
-                                   object_name='PSIBDY_FOR_COORD'
-                                   ).slice_data(slicing={'Time': time}).data)
+    R_grid_1d = equilibrium_slice['R_grid']
+    z_grid_1d = equilibrium_slice['z_grid']
+    psi_grid_2d = equilibrium_slice['psi_grid']
+    
+    psi_axis = equilibrium_slice['psi_axis']
+    psi_bdry = equilibrium_slice['psi_bdry']
+    
     # =========================================================================
     # 2. Interpolate psi at the target locations
     # =========================================================================
@@ -1349,66 +1857,60 @@ def get_flux_coord(shot=None,
     psi_target = interp_func(target_coords)
     # Calculate Normalized Flux
     psi_norm_target = (psi_target - psi_axis) / (psi_bdry - psi_axis)
-    # =========================================================================
-    # 3. Trace the contour for each point to calculate physical arc length
-    # =========================================================================
-    theta_arc_target = np.zeros_like(psi_target)
     
-    for i, (r_pt, z_pt, psi_val) in enumerate(zip(R_target, Z_target, psi_target)):
-        if np.isnan(psi_val):
-            theta_arc_target[i] = np.nan
-            continue
-            
-        # If the point is exactly on the axis, theta is degenerate
-        if np.isclose(psi_val, psi_axis, atol=1e-5):
-            theta_arc_target[i] = 0.0
-            continue
-            
-        # Find the contour for this specific psi value
-        contours = skimage.measure.find_contours(psi_grid_2d, psi_val)
-        if not contours:
-            theta_arc_target[i] = np.nan
-            continue
-            
-        # Assume the longest contour is our closed flux surface
-        contour = max(contours, key=len)
+    # =========================================================================
+    # 3. Poloidal angle
+    # =========================================================================
+    if theta_method == 'geometric':
+        theta_target = get_geometric_poloidal_angle(R_target,
+                                                    Z_target,
+                                                    float(np.atleast_1d(equilibrium_slice['R_axis'])[0]),
+                                                    equilibrium_slice['Z_axis'])
+    else:
+        if theta_map is None:
+            theta_map = get_theta_map(equilibrium_slice=equilibrium_slice,
+                                      shot=shot, time=time, verbose=verbose)
         
-        # Map skimage pixel indices back to physical absolute R, Z coordinates
-        # (Assuming psi_grid_2d is shape [len(R), len(Z)])
-        R_idx, Z_idx = contour[:, 0], contour[:, 1]
-        R_c = np.interp(R_idx, np.arange(len(R_grid_1d)), R_grid_1d)
-        Z_c = np.interp(Z_idx, np.arange(len(z_grid_1d)), z_grid_1d)
-        
-        # Find Outboard Midplane (OMP) to use as theta = 0
-        # Since R is measured from the center, the outboard side is strictly R > R_axis
-        omp_mask = R_c > R_axis
-        if np.any(omp_mask):
-            omp_idx = np.where(omp_mask)[0][np.argmin(np.abs(Z_c[omp_mask] - Z_axis))]
+        if theta_map is None:
+            theta_target = np.full(len(R_target), np.nan)
         else:
-            # Fallback for highly distorted topologies
-            omp_idx = np.argmax(R_c)
+            cos_target = theta_map['cos_linear'](target_coords)
+            sin_target = theta_map['sin_linear'](target_coords)
             
-        # Roll arrays to start at the OMP
-        R_c = np.roll(R_c, -omp_idx)
-        Z_c = np.roll(Z_c, -omp_idx)
-        
-        # Ensure standard counter-clockwise orientation (Z should increase initially)
-        if len(Z_c) > 1 and Z_c[1] < Z_c[0]:
-            R_c = np.insert(R_c[1:][::-1], 0, R_c[0])
-            Z_c = np.insert(Z_c[1:][::-1], 0, Z_c[0])
+            # Points falling just outside the traced surface family are filled
+            # from the nearest neighbour interpolator instead of being dropped
+            # to NaN. This fallback is piecewise constant, so it can
+            # reintroduce a staircase-like quantization.
+            outside = ~np.isfinite(cos_target) | ~np.isfinite(sin_target)
+            if np.any(outside):
+                cos_target[outside] = theta_map['cos_nearest'](target_coords[outside])
+                sin_target[outside] = theta_map['sin_nearest'](target_coords[outside])
+                if verbose and np.count_nonzero(outside) > 0.1 * len(R_target):
+                    print(f'Warning: {np.count_nonzero(outside)}/{len(R_target)} points of '
+                          f'shot #{shot} lie outside the traced flux surfaces, their '
+                          f'poloidal angle is nearest neighbour interpolated.')
             
-        # Calculate cumulative arc lengths along this specific surface
-        dR = np.diff(R_c)
-        dZ = np.diff(Z_c)
-        ds = np.sqrt(dR**2 + dZ**2)
-        s_cumulative = np.insert(np.cumsum(ds), 0, 0.0)
-        s_total = s_cumulative[-1]
+            theta_target = np.mod(np.arctan2(sin_target, cos_target), 2 * np.pi)
         
-        # Find exactly where our target blob sits on this contour
-        distances = (R_c - r_pt)**2 + (Z_c - z_pt)**2
-        closest_idx = np.argmin(distances)
-        
-        # Normalize the distance to [0, 2pi]
-        theta_arc_target[i] = 2 * np.pi * (s_cumulative[closest_idx] / s_total)
-        
-    return (psi_norm_target, theta_arc_target)
+        # The arc length angle is meaningless outside the separatrix, where the
+        # curve is open and its length depends on the EFIT grid boundary.
+        open_surface = np.isfinite(psi_norm_target) & (psi_norm_target > 1.0)
+        if np.any(open_surface):
+            theta_target[open_surface] = np.nan
+            if verbose:
+                print(f'Warning: {np.count_nonzero(open_surface)}/{len(R_target)} points of '
+                      f'shot #{shot} lie outside the separatrix, where the arc length '
+                      f"angle is undefined. Use theta_method='geometric' instead.")
+    
+    # The angle is meaningless where psi itself could not be interpolated.
+    theta_target[~np.isfinite(psi_target)] = np.nan
+    
+    # =========================================================================
+    # 4. Optional legacy folding into [0, pi/2]
+    # =========================================================================
+    if fold_angle:
+        theta_target = fold_poloidal_angle(theta_target)
+    elif check_theta_range:
+        check_gpi_theta_range(theta_target, shot=shot, verbose=verbose)
+
+    return (psi_norm_target, theta_target)
