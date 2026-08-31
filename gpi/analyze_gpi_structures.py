@@ -1176,6 +1176,8 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
     else:
         if 'keys_to_plot' not in list(options.keys()):
             raise ValueError('keys_to_plot and figsize need to be in the options dictuionary for plotting the example results')
+        if options.get('markersize') is not None:
+            markersize = options.get('markersize')
             
     set_matplotlib_for_publication(labelsize=8,
                                     linewidth=0.2,
@@ -1218,7 +1220,7 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
     if options.get('subplot_label_location'):
         subplot_label_location=options.get('subplot_label_location')
     else:
-        subplot_label_location=-0.1
+        subplot_label_location=[-0.1,0.9]
     
     for ind, key in enumerate(keys_to_plot):
         ax = axes[ind]
@@ -1254,7 +1256,7 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
                     time_mask = (time_vec >= plot_time_range[0]*1e3) & (time_vec <= plot_time_range[1]*1e3)
                 else:
                     time_mask = (time_vec >= time_range[0]*1e3) & (time_vec <= time_range[1]*1e3)
-                    
+                
                 masked_time = time_vec[time_mask]
                 masked_data = metric_array.value[time_mask]
 
@@ -1275,7 +1277,11 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
                     
         
         if options_with_labels:
-            ax.set_ylabel(f"{options['keys_to_plot'][key]['label']} [{options['keys_to_plot'][key]['unit']}]", fontsize=8)
+            unit=options['keys_to_plot'][key]['unit']
+            if unit == '' or unit is None:
+                ax.set_ylabel(f"{options['keys_to_plot'][key]['label']}", fontsize=8)
+            else:
+                ax.set_ylabel(f"{options['keys_to_plot'][key]['label']} [{unit}]", fontsize=8)
             if options['keys_to_plot'][key]['range'] is not None:
                 ax.set_ylim(options['keys_to_plot'][key]['range'])
         else:
@@ -1283,7 +1289,10 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
                 ax.set_ylabel(f"{metric_ref.plot_label} [{metric_ref.unit}]", fontsize=8)
             else:
                 ax.set_ylabel(metric_ref.plot_label, fontsize=8)
-                    
+                
+        if options['keys_to_plot'][key].get('hline_at') is not None:
+            ax.axhline(y=options['keys_to_plot'][key].get('hline_at'), color='red', linestyle='--')
+            
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
         if ind < nplot-1:
             ax.xaxis.label.set_visible(False)
@@ -1295,8 +1304,8 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
         if options.get('hide_y_labels'):
             ax.yaxis.label.set_visible(False)
             ax.set_yticklabels([])
-            
-        ax.text(subplot_label_location, 0.9, f"({subplot_labels[ind]})", transform=ax.transAxes, size=8)
+        
+        ax.text(subplot_label_location[0], subplot_label_location[1], f"({subplot_labels[ind]})", transform=ax.transAxes, size=8)
         ax.set_xlabel('Time [ms]', fontsize=8)
         
         if plot_time_range is not None:

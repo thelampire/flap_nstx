@@ -175,11 +175,12 @@ def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3],
                     cond_arr = None
                     if condition_key == 'Normalized flux coordinate': cond_arr = raw_psi_norm
                     elif condition_key == 'Poloidal angle': cond_arr = raw_theta_arc
-                    # Using np.gradient preserves the original array length so we no longer need np.nan padding
+                    # np.diff is used the same way as for the other differential
+                    # keys, hence these arrays are one datapoint shorter
                     elif condition_key == 'Poloidal angular velocity': 
-                        cond_arr = ((np.gradient(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
+                        cond_arr = ((np.diff(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
                     elif condition_key == 'Normalized flux coordinate velocity': 
-                        cond_arr = np.gradient(raw_psi_norm) / 2.5e-6
+                        cond_arr = np.diff(raw_psi_norm) / 2.5e-6
                     elif condition_key == 'Lifetime': cond_arr = np.arange(len(structure.regular_parameters['Intensity'].value)) * 2.5e-6
                     elif condition_key in structure.regular_parameters: cond_arr = structure.regular_parameters[condition_key].value
                     elif condition_key in structure.differential_parameters: cond_arr = structure.differential_parameters[condition_key].value
@@ -209,15 +210,15 @@ def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3],
                         raw_data = raw_theta_arc
                     
                     # ===============================================================
-                    # Velocity Calculations using centered np.gradient (dt = 2.5e-6)
+                    # Velocity Calculations using np.diff (dt = 2.5e-6)
                     # ===============================================================
                     elif key == 'Poloidal angular velocity':
                         # Wrap to [-pi, pi] safely
-                        raw_data = ((np.gradient(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
-                        is_differential = False # gradient returns length N, so we don't pad!
+                        raw_data = ((np.diff(raw_theta_arc) + np.pi) % (2 * np.pi) - np.pi) / 2.5e-6
+                        is_differential = True # np.diff returns length N-1
                     elif key == 'Normalized flux coordinate velocity':
-                        raw_data = np.gradient(raw_psi_norm) / 2.5e-6
-                        is_differential = False # gradient returns length N, so we don't pad!
+                        raw_data = np.diff(raw_psi_norm) / 2.5e-6
+                        is_differential = True # np.diff returns length N-1
                     # ===============================================================
                     
                     elif key == 'Lifetime': 

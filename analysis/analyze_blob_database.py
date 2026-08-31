@@ -63,101 +63,6 @@ FLUX_STRUCTURE_KEYS = ['Normalized flux coordinate',
                        'Normalized flux coordinate velocity']
 
 
-def _add_flux_parameters_to_saved_file(shot,
-                                       time_range,
-                                       str_finding_method='watershed',
-                                       normalize='simple',
-                                       remove_interlaced_structures=True,
-                                       theta_method='geometric',
-                                       overwrite=False,
-                                       ):
-    """
-    Adds the flux coordinate based keys to an already calculated structure file.
-
-    The structure finding and the tracking are NOT repeated, the tracked dataset is
-    restored from the file written by `analyze_gpi_structures` and only the keys
-    listed in `FLUX_STRUCTURE_KEYS` are calculated (via
-    `calculate_flux_structure_keys`) and saved back into the same file(s).
-
-    Args:
-        shot (int): Shot number.
-        time_range (list): The [start, end] time range the file was calculated for.
-        str_finding_method (str, optional): Segmentation method used for the saved
-            file ('watershed' or 'contour'). Defaults to 'watershed'.
-        normalize (str, optional): Normalization used for the saved file, needed for
-            reconstructing the filename. Defaults to 'simple'.
-        remove_interlaced_structures (bool, optional): Interlace setting used for the
-            saved file, needed for reconstructing the filename. Defaults to True.
-        theta_method (str, optional): Poloidal angle definition, 'geometric' or
-            'arclength'. Defaults to 'geometric'.
-        overwrite (bool, optional): Recalculate the flux keys even if they are already
-            present in the file. Defaults to False.
-
-    Returns:
-        bool: True if the file was (re)written, False otherwise.
-    """
-
-    comment = ''
-    if normalize is not None:
-        comment += normalize
-    if remove_interlaced_structures:
-        comment += '_nointer'
-    comment += '_' + str_finding_method
-
-    base_filename = nstx_filename(exp_id=shot,
-                                  working_directory=wd + '/processed_data',
-                                  time_range=time_range,
-                                  purpose='structure char',
-                                  comment=comment)
-
-    pickle_filename = base_filename + '.pickle'
-    hdf5_filename = base_filename + '.h5'
-
-    if not os.path.exists(pickle_filename):
-        print(f'  {pickle_filename} does not exist, nothing to extend.')
-        return False
-
-    try:
-        with open(pickle_filename, 'rb') as f:
-            tracked_dataset = pickle.load(f)
-    except Exception as e:
-        print(f'  Could not load {pickle_filename}: {e}')
-        return False
-
-    if getattr(tracked_dataset, 'mode', None) != 'tracked' or not tracked_dataset.tracked_structures:
-        print(f'  {pickle_filename} does not contain tracked structures, skipping.')
-        return False
-
-    if not overwrite:
-        first_struct = tracked_dataset.tracked_structures[0]
-        existing_keys = (list(first_struct.regular_parameters.keys()) +
-                         list(first_struct.differential_parameters.keys()))
-        if all(key in existing_keys for key in FLUX_STRUCTURE_KEYS):
-            print('  Flux parameters are already available in the file, skipping.')
-            return False
-
-    try:
-        tracked_dataset = calculate_flux_structure_keys(tracked_dataset,
-                                                        exp_id=shot,
-                                                        theta_method=theta_method)
-    except Exception as e:
-        print(f'  Could not calculate the flux parameters for #{shot}: {e}')
-        return False
-
-    with open(pickle_filename, 'wb') as f:
-        pickle.dump(tracked_dataset, f)
-    print(f'  Flux parameters saved into {pickle_filename}')
-
-    if os.path.exists(hdf5_filename):
-        try:
-            tracked_dataset.save_hdf5(hdf5_filename)
-            print(f'  Flux parameters saved into {hdf5_filename}')
-        except Exception as e:
-            print(f'  Could not update {hdf5_filename}: {e}')
-
-    return True
-
-
 def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                str_finding_method='watershed',
                                plot=False,
@@ -331,7 +236,6 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             
             print(f'Shot took {execution_time:.1f}s. Estimated time remaining: {remaining_hours:.2f} hours.\n')
 
-
 def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         n_bins=51,
                                         pdf=False,
@@ -348,9 +252,53 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         analyze_l_mode_only=False,
                                         filtered_blob_db=False, 
                                         plot_LH_diff=False,
+                                        analyze_lh_diff=False,
                                         save_data_for_publication=False,
                                         ):
+    """analyze_lh_diff=True performs the full L/H comparison in one call: the
+    L-mode and the H-mode data are aggregated (and cached) first, then the
+    L/H difference plots are made from the cached data. With nocalc=True the
+    aggregation is skipped and only the plotting is done from the cached data.
+    """
     import matplotlib
+
+    # --- 0. One-shot L/H comparison ---
+    if analyze_lh_diff:
+        common_kwargs = dict(time_range_around_peak=time_range_around_peak,
+                             n_bins=n_bins,
+                             calc_mean_distribution=calc_mean_distribution,
+                             recalc_tracking=recalc_tracking,
+                             min_structure_lifetime=min_structure_lifetime,
+                             str_finding_method=str_finding_method,
+                             filtered_blob_db=filtered_blob_db,
+                             )
+
+        # Step 1&2: aggregate the L-mode and the H-mode data into their pickles.
+        # Skipped for nocalc=True, the cached data are used for the plotting.
+        if not nocalc:
+            for mode_kwargs in ({'analyze_l_mode_only': True},
+                                {'analyze_h_mode_only': True}):
+                calculate_blob_parameter_histograms(pdf=False,
+                                                    plot=False,
+                                                    plot_for_publication=plot_for_publication,
+                                                    save_data_into_txt=False,
+                                                    nocalc=False,
+                                                    plot_LH_diff=False,
+                                                    save_data_for_publication=False,
+                                                    **mode_kwargs,
+                                                    **common_kwargs)
+
+        # Step 3: plot the L/H difference from the cached data
+        return calculate_blob_parameter_histograms(pdf=pdf,
+                                                   pdf_filename=pdf_filename,
+                                                   plot=plot,
+                                                   plot_for_publication=plot_for_publication,
+                                                   save_data_into_txt=save_data_into_txt,
+                                                   nocalc=True,
+                                                   analyze_l_mode_only=True,
+                                                   plot_LH_diff=True,
+                                                   save_data_for_publication=save_data_for_publication,
+                                                   **common_kwargs)
     
     if pdf:
         matplotlib.use('agg')
@@ -368,8 +316,9 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
     pickle_filename = f"{wd}/processed_data/blob_database_full_data_{mean_str}_{str_finding_method}"
     if analyze_l_mode_only: pickle_filename += '_l_mode'
     elif analyze_h_mode_only: pickle_filename += '_h_mode'
+    
     pickle_filename += '.pickle'
-    print(pickle_filename)
+    
     # --- 2. Data Extraction & Aggregation ---
     if not os.path.exists(pickle_filename) or not nocalc:
         
@@ -400,7 +349,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                 _time_range = list(blob_database['time'][ind])
             else:
                 blob_time = blob_database['time'][ind]
-                _time_range = [blob_time - time_range_around_peak[0], 
+                _time_range = [blob_time + time_range_around_peak[0], 
                                blob_time + time_range_around_peak[1]]
             try:
                 # Assumes read_blob_data returns the new StructureDataset object
@@ -566,6 +515,56 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                             'Lifetime':2.5e-6,
                             }
 
+        def _prepare(data, key, multiplier=1.):
+            """Strip NaNs, scale and wrap angular parameters into [0,pi)."""
+            data = np.asarray(data, dtype=float)
+            data = data[~np.isnan(data)] * multiplier
+            if key in ['Angle fit', 'Angle ALI']:
+                data = np.mod(data, np.pi)
+            return data
+
+        def _plot_histogram(ax, data, key, hist_range=None, **kwargs):
+            """Plot a normalized histogram using the key specific binning."""
+            if len(data) == 0:
+                return None, None
+            if key in discrete_step_size:
+                step_size = discrete_step_size[key]
+                bins = np.arange(np.floor(np.min(data)) - step_size/2,
+                                 np.ceil(np.max(data)) + step_size,
+                                 step_size)[0:101]
+            else:
+                bins = n_bins
+            n, bin_edges, _ = ax.hist(data,
+                                      bins=bins,
+                                      weights=np.ones_like(data)/len(data),
+                                      range=hist_range,
+                                      **kwargs)
+            return n, bin_edges
+
+        def _load_lh_mode_data():
+            """Load the separately calculated L and H mode datasets."""
+            data = []
+            for mode in ['l_mode', 'h_mode']:
+                filename = (f"{wd}/processed_data/blob_database_full_data_"
+                            f"{mean_str}_{str_finding_method}_{mode}.pickle")
+                with open(filename, 'rb') as f:
+                    data.append(pickle.load(f))
+            return data
+
+        if plot_LH_diff:
+            try:
+                data_l_mode, data_h_mode = _load_lh_mode_data()
+            except FileNotFoundError as e:
+                print(f"Could not load the L/H mode comparison files: {e}")
+                return full_data
+
+        def _get_datasets(key, multiplier=1.):
+            """Return the (label, data, color) triplets to be plotted for a key."""
+            if plot_LH_diff:
+                return [('L mode', _prepare(data_l_mode[key], key, multiplier), 'blue'),
+                        ('H mode', _prepare(data_h_mode[key], key, multiplier), 'orange')]
+            return [(None, _prepare(full_data[key], key, multiplier), None)]
+
         if plot_for_publication:
             multiplier = {
                 'Area': 1e4, 
@@ -598,62 +597,23 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
             
             labels = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
 
-            if not plot_LH_diff:
-                suffix = '_L_mode' if analyze_l_mode_only else '_H_mode' if analyze_h_mode_only else ''
-                pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}_{suffix}.pdf")
-                fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
-
-                for ind, key in enumerate(target_keys):
-                    data = full_data[key][~np.isnan(full_data[key])] * multiplier[key]
-                    ax = axes[ind // 2, ind % 2]
-                    
-                    if key == 'Angle fit' or key == 'Angle ALI':
-                        data = np.mod(data, np.pi)
-
-                    hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
-                    n, bins, _ = ax.hist(data, 
-                                         bins=n_bins, 
-                                         weights=np.ones_like(data)/len(data), 
-                                         range=hist_range)
-
-                    if save_data_for_publication:
-                        with open(f"{wd}/{labels[ind]}_db_histogram_{key}.txt", 'w+') as file1:
-                            for i in range(len(n)):
-                                file1.write(f"{(bins[1:] + bins[:-1])[i]/2}\t{n[i]}\n")
-
-                    plt.locator_params(axis='y', nbins=5)
-                    ax.set_xlabel(f"{xlabel[key][0]} {xlabel[key][1]}")
-                    ax.set_ylabel('Relative frequency')
-                    ax.set_title(f"Histogram of \n {xlabel[key][0]}")
-                    ax.text(-0.4, 1.1, f"({labels[ind]})", transform=ax.transAxes, size=9)
-                    if ind % 2 == 1:
-                        ax.axvline(x=0, color='red')
-
-                plt.tight_layout(pad=0.1)
-                pdf_page.savefig()
-                pdf_page.close()
-                plt.close(fig)
-
+            if plot_LH_diff:
+                suffix = 'LH_diff'
             else:
-                # Plot L and H mode differences
-                l_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_l_mode.pickle"
-                h_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_h_mode.pickle"
-                
-                with open(l_file, 'rb') as f: data_l_mode = pickle.load(f)
-                with open(h_file, 'rb') as f: data_h_mode = pickle.load(f)
+                mode_str = '_L_mode' if analyze_l_mode_only else '_H_mode' if analyze_h_mode_only else ''
+                suffix = f"_{mode_str}"
 
-                pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}LH_diff.pdf")
-                fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
+            pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}{suffix}.pdf")
+            fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
 
-                for ind, key in enumerate(target_keys):
-                    l_data = data_l_mode[key][~np.isnan(data_l_mode[key])] * multiplier[key]
-                    h_data = data_h_mode[key][~np.isnan(data_h_mode[key])] * multiplier[key]
+            for ind, key in enumerate(target_keys):
+                ax = axes[ind // 2, ind % 2]
+                hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
+                datasets = _get_datasets(key, multiplier=multiplier[key])
 
-                    if key == 'Angle fit' or key == 'Angle ALI':
-                        l_data = np.mod(l_data.astype(float), np.pi)
-                        h_data = np.mod(h_data.astype(float), np.pi)
-
+                if plot_LH_diff:
                     # Output LaTeX Table string
+                    l_data, h_data = datasets[0][1], datasets[1][1]
                     values = [np.mean(l_data), np.mean(h_data),
                               np.sqrt(np.var(l_data)), np.sqrt(np.var(h_data)),
                               scipy.stats.skew(l_data), scipy.stats.skew(h_data),
@@ -662,165 +622,72 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                     formatted = " & ".join(f"{v:.3f}" for v in values)
                     print(f"{xlabel[key][0]} {xlabel[key][1]} & {formatted} \\\\")
 
-                    ax = axes[ind // 2, ind % 2]
-                    hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
+                for mode_name, data, _color in datasets:
+                    hist_kwargs = {'alpha': 0.5, 'label': mode_name} if plot_LH_diff else {}
+                    n, bins = _plot_histogram(ax, data, key, hist_range=hist_range, **hist_kwargs)
 
-                    # Loop through L and H mode for concise plotting
-                    for mode_name, dataset in [('L mode', l_data), ('H mode', h_data)]:
-                        if key in discrete_step_size.keys():
-                            step_size = discrete_step_size[key]  
-                            
-                            # Find the absolute min and max of your data
-                            min_val = np.floor(np.min(dataset))
-                            max_val = np.ceil(np.max(dataset))
-                            
-                            # Generate explicit bin edges shifted by half a step
-                            discrete_bins = np.arange(min_val - step_size/2, max_val + step_size, step_size)
-                            if len(discrete_bins) > 101:
-                                discrete_bins=discrete_bins[0:101]
-                            # Pass the array to the 'bins' argument instead of an integer!
-                            ax.hist(dataset, 
-                                    bins=discrete_bins, 
-                                    weights=np.ones_like(dataset)/len(dataset),
-                                    range=hist_range, 
-                                    alpha=0.5,
-                                    label=mode_name)
-                        else:
-                            ax.hist(dataset, 
-                                    bins=51, 
-                                    weights=np.ones_like(dataset)/len(dataset),
-                                    range=hist_range, 
-                                    alpha=0.5, 
-                                    label=mode_name)
+                    if save_data_for_publication and not plot_LH_diff and n is not None:
+                        with open(f"{wd}/{labels[ind]}_db_histogram_{key}.txt", 'w+') as file1:
+                            for i in range(len(n)):
+                                file1.write(f"{(bins[1:] + bins[:-1])[i]/2}\t{n[i]}\n")
 
-
-                    plt.locator_params(axis='y', nbins=5)
-                    ax.set_xlabel(f"{xlabel[key][0]} {xlabel[key][1]}")
-                    ax.set_ylabel('Relative frequency')
-                    ax.set_title(f"Histogram of \n {xlabel[key][0]}")
-                    ax.text(-0.4, 1.1, f"({labels[ind]})", transform=ax.transAxes, size=9)
+                plt.locator_params(axis='y', nbins=5)
+                ax.set_xlabel(f"{xlabel[key][0]} {xlabel[key][1]}")
+                ax.set_ylabel('Relative frequency')
+                ax.set_title(f"Histogram of \n {xlabel[key][0]}")
+                ax.text(-0.4, 1.1, f"({labels[ind]})", transform=ax.transAxes, size=9)
+                if plot_LH_diff:
                     ax.legend(fontsize=5)
-                    if ind % 2 == 1:
-                        ax.axvline(x=0, color='red')
+                if ind % 2 == 1:
+                    ax.axvline(x=0, color='red')
 
-                plt.tight_layout(pad=0.1)
-                pdf_page.savefig()
-                pdf_page.close()
-                plt.close(fig)
+            plt.tight_layout(pad=0.1)
+            pdf_page.savefig()
+            pdf_page.close()
+            plt.close(fig)
 
         else:
-            # Standard single plots
+            # Standard single plots, L and H mode overlapping when plot_LH_diff is set
             if pdf:
                 pdf_page = PdfPages(pdf_filename)
-            if not plot_LH_diff:
-                # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
-                keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(full_data.keys())
-                
-                for key in keys_to_plot:
-                    clean_data = full_data[key][~np.isnan(full_data[key])]
-                    try:
-                        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-                        ax.hist(clean_data, 
-                                bins=51)
-                        ax.set_xlabel(f"{key} bins")
-                        ax.set_ylabel('Relative frequency')
-                        ax.set_title(f"Histogram of {key}")
-                        if key in ranges:
-                            ax.set_xlim(ranges[key])
-                        
-                        if pdf:
-                            pdf_page.savefig()
-                        plt.close(fig)
-                    except Exception:
-                        print(f"Failed to plot {key}")
-                
-                if pdf:
-                    pdf_page.close()
-            else:
-                # Standard single plots with L-mode and H-mode overlapping for ALL keys
-                l_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_l_mode.pickle"
-                h_file = f"{wd}/processed_data/blob_database_full_data_nomean_{str_finding_method}_h_mode.pickle"
-                
-                try:
-                    with open(l_file, 'rb') as f: data_l_mode = pickle.load(f)
-                    with open(h_file, 'rb') as f: data_h_mode = pickle.load(f)
-                except FileNotFoundError as e:
-                    print(f"Could not load L/H mode comparison files for single plotting: {e}")
-                    return full_data
-    
-                if pdf:
-                    pdf_page = PdfPages(pdf_filename)
-                
-                # Safe fallback to iterate through absolutely every key available
-                keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(data_l_mode.keys())
-                
-                for key in keys_to_plot:
-                    if key not in data_l_mode or key not in data_h_mode:
-                        continue
-    
-                    # Strip NaNs
-                    l_data = data_l_mode[key][~np.isnan(data_l_mode[key])]
-                    h_data = data_h_mode[key][~np.isnan(data_h_mode[key])]
-    
-                    # Ensure all angular keys are properly wrapped to [0, pi]
-                    # if 'Angle' in key:
-                    #     l_data = np.mod(l_data.astype(float), np.pi)
-                    #     h_data = np.mod(h_data.astype(float), np.pi)
-    
-                    try:
-                        fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-                        hist_range = ranges[key] if key in ranges else None
-    
-                        # Loop through L and H mode for concise overlapping plotting
-                        for mode_name, dataset, color in [('L mode', l_data, 'blue'), ('H mode', h_data, 'orange')]:
-                            if key in discrete_step_size.keys():
-                                step_size = discrete_step_size[key]  
-                                
-                                # Find the absolute min and max of your data
-                                min_val = np.floor(np.min(dataset))
-                                max_val = np.ceil(np.max(dataset))
-                                
-                                # Generate explicit bin edges shifted by half a step
-                                discrete_bins = np.arange(min_val - step_size/2, max_val + step_size, step_size)
-                                if len(discrete_bins) > 101:
-                                    discrete_bins=discrete_bins[0:101]
-                                # Pass the array to the 'bins' argument instead of an integer!
-                                ax.hist(dataset, 
-                                        bins=discrete_bins, 
-                                        weights=np.ones_like(dataset)/len(dataset),
-                                        range=hist_range, 
-                                        alpha=0.5,
-                                        color=color,
-                                        label=mode_name)
-                            else:
-                                if len(dataset) > 0:
-                                    ax.hist(dataset, 
-                                            bins=51, 
-                                            weights=np.ones_like(dataset)/len(dataset),
-                                            range=hist_range, 
-                                            alpha=0.5,
-                                            color=color,
-                                            label=mode_name)
 
-    
-                        ax.set_xlabel(f"{key} bins")
-                        ax.set_ylabel('Relative frequency')
-                        ax.set_title(f"Histogram of {key}")
+            # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
+            default_keys = data_l_mode.keys() if plot_LH_diff else full_data.keys()
+            keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(default_keys)
+
+            for key in keys_to_plot:
+                if plot_LH_diff and (key not in data_l_mode or key not in data_h_mode):
+                    continue
+                if not plot_LH_diff and key not in full_data:
+                    continue
+
+                try:
+                    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
+                    hist_range = ranges[key] if key in ranges else None
+
+                    for mode_name, data, color in _get_datasets(key):
+                        hist_kwargs = ({'alpha': 0.5, 'color': color, 'label': mode_name}
+                                       if plot_LH_diff else {})
+                        _plot_histogram(ax, data, key, hist_range=hist_range, **hist_kwargs)
+
+                    ax.set_xlabel(f"{key} bins")
+                    ax.set_ylabel('Relative frequency')
+                    ax.set_title(f"Histogram of {key}")
+                    if plot_LH_diff:
                         ax.legend(fontsize=7)
-                        
-                        if key in ranges:
-                            ax.set_xlim(ranges[key])
-                        
-                        plt.tight_layout(pad=0.1)
-                        if pdf:
-                            pdf_page.savefig(fig)
-                        plt.close(fig)
-                        
-                    except Exception as e:
-                        print(f"Failed to plot {key}: {e}")
-                
-                if pdf:
-                    pdf_page.close()
+                    if key in ranges:
+                        ax.set_xlim(ranges[key])
+
+                    plt.tight_layout(pad=0.1)
+                    if pdf:
+                        pdf_page.savefig(fig)
+                    plt.close(fig)
+
+                except Exception as e:
+                    print(f"Failed to plot {key}: {e}")
+
+            if pdf:
+                pdf_page.close()
 
 
     return full_data
@@ -3062,3 +2929,97 @@ def plot_conditional_evolution_matrices(dt=2.5e-6,
     print(f"Generated {plots_generated} comparison plots.")
     print(f"Skipped {plots_filtered} pairs due to R² < {min_r_squared}.")
     print(f"Saved to: {pdf_filename}")
+    
+def _add_flux_parameters_to_saved_file(shot,
+                                       time_range,
+                                       str_finding_method='watershed',
+                                       normalize='simple',
+                                       remove_interlaced_structures=True,
+                                       theta_method='geometric',
+                                       overwrite=False,
+                                       ):
+    """
+    Adds the flux coordinate based keys to an already calculated structure file.
+
+    The structure finding and the tracking are NOT repeated, the tracked dataset is
+    restored from the file written by `analyze_gpi_structures` and only the keys
+    listed in `FLUX_STRUCTURE_KEYS` are calculated (via
+    `calculate_flux_structure_keys`) and saved back into the same file(s).
+
+    Args:
+        shot (int): Shot number.
+        time_range (list): The [start, end] time range the file was calculated for.
+        str_finding_method (str, optional): Segmentation method used for the saved
+            file ('watershed' or 'contour'). Defaults to 'watershed'.
+        normalize (str, optional): Normalization used for the saved file, needed for
+            reconstructing the filename. Defaults to 'simple'.
+        remove_interlaced_structures (bool, optional): Interlace setting used for the
+            saved file, needed for reconstructing the filename. Defaults to True.
+        theta_method (str, optional): Poloidal angle definition, 'geometric' or
+            'arclength'. Defaults to 'geometric'.
+        overwrite (bool, optional): Recalculate the flux keys even if they are already
+            present in the file. Defaults to False.
+
+    Returns:
+        bool: True if the file was (re)written, False otherwise.
+    """
+
+    comment = ''
+    if normalize is not None:
+        comment += normalize
+    if remove_interlaced_structures:
+        comment += '_nointer'
+    comment += '_' + str_finding_method
+
+    base_filename = nstx_filename(exp_id=shot,
+                                  working_directory=wd + '/processed_data',
+                                  time_range=time_range,
+                                  purpose='structure char',
+                                  comment=comment)
+
+    pickle_filename = base_filename + '.pickle'
+    hdf5_filename = base_filename + '.h5'
+
+    if not os.path.exists(pickle_filename):
+        print(f'  {pickle_filename} does not exist, nothing to extend.')
+        return False
+
+    try:
+        with open(pickle_filename, 'rb') as f:
+            tracked_dataset = pickle.load(f)
+    except Exception as e:
+        print(f'  Could not load {pickle_filename}: {e}')
+        return False
+
+    if getattr(tracked_dataset, 'mode', None) != 'tracked' or not tracked_dataset.tracked_structures:
+        print(f'  {pickle_filename} does not contain tracked structures, skipping.')
+        return False
+
+    if not overwrite:
+        first_struct = tracked_dataset.tracked_structures[0]
+        existing_keys = (list(first_struct.regular_parameters.keys()) +
+                         list(first_struct.differential_parameters.keys()))
+        if all(key in existing_keys for key in FLUX_STRUCTURE_KEYS):
+            print('  Flux parameters are already available in the file, skipping.')
+            return False
+
+    try:
+        tracked_dataset = calculate_flux_structure_keys(tracked_dataset,
+                                                        exp_id=shot,
+                                                        theta_method=theta_method)
+    except Exception as e:
+        print(f'  Could not calculate the flux parameters for #{shot}: {e}')
+        return False
+
+    with open(pickle_filename, 'wb') as f:
+        pickle.dump(tracked_dataset, f)
+    print(f'  Flux parameters saved into {pickle_filename}')
+
+    if os.path.exists(hdf5_filename):
+        try:
+            tracked_dataset.save_hdf5(hdf5_filename)
+            print(f'  Flux parameters saved into {hdf5_filename}')
+        except Exception as e:
+            print(f'  Could not update {hdf5_filename}: {e}')
+
+    return True

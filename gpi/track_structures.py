@@ -516,9 +516,9 @@ def calculate_flux_structure_keys(dataset, exp_id=None, time=None,
             'Normalized flux coordinate velocity'  [1/s]
             'Poloidal angular velocity'            [rad/s]
 
-    The derivatives are calculated with np.gradient, hence they keep the length
-    of the original array (they are NOT shortened like the np.diff based keys in
-    calculate_differential_structure_keys).
+    The derivatives are calculated with np.diff, hence they are one datapoint
+    shorter than the arrays they are calculated from, the same way as the
+    differential keys in calculate_differential_structure_keys.
 
     Args:
         dataset (StructureDataset): Tracked dataset to be extended.
@@ -635,24 +635,23 @@ def calculate_flux_structure_keys(dataset, exp_id=None, time=None,
             plot_label='$\\theta_{geom}$' if theta_method == 'geometric' else '$\\theta_{arc}$',
             unit='rad')
 
-        # 3. Velocities in flux coordinates (np.gradient keeps the array length)
+        # 3. Velocities in flux coordinates. np.diff is used the same way as in
+        # calculate_differential_structure_keys, hence the velocities are one
+        # datapoint shorter than the coordinates they are calculated from.
         if n_time < 2:
             continue
 
-        psi_velocity = np.gradient(psi_norm, time_arr)
-        # The stored angle spans the full [0, 2pi) range, so the derivative has
-        # to be taken on the unwrapped trace, otherwise the 0 <-> 2pi seam shows
+        dt_arr = np.diff(time_arr)
+
+        psi_velocity = np.diff(psi_norm) / dt_arr
+        # The stored angle spans the full [0, 2pi) range, so the differences
+        # have to be wrapped into [-pi, pi], otherwise the 0 <-> 2pi seam shows
         # up as a huge artificial spike. The folded angle is not periodic in the
-        # same sense, hence unwrapping is skipped in that legacy case.
-        if fold_angle:
-            theta_velocity = np.gradient(theta_arc, time_arr)
-        else:
-            finite_mask = np.isfinite(theta_arc)
-            theta_velocity = np.full(n_time, np.nan)
-            if np.count_nonzero(finite_mask) > 1:
-                unwrapped_theta = np.unwrap(theta_arc[finite_mask])
-                theta_velocity[finite_mask] = np.gradient(unwrapped_theta,
-                                                          time_arr[finite_mask])
+        # same sense, hence the wrapping is skipped in that legacy case.
+        delta_theta = np.diff(theta_arc)
+        if not fold_angle:
+            delta_theta = (delta_theta + np.pi) % (2 * np.pi) - np.pi
+        theta_velocity = delta_theta / dt_arr
 
         differential_parameters['Normalized flux coordinate velocity'] = MetricArray(
             value=psi_velocity,

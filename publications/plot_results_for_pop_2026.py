@@ -124,9 +124,10 @@ def plot_results_for_pop_2026(plot_figure=2,
                                                     'multiplier':1}
         
         options['keys_to_plot']['Normalized flux coordinate']={'label':r'$\psi_{norm}$',
-                                                    'unit':'',
+                                                    'unit':None,
                                                     'range':[0.6,2.0],#[1.37,1.6],
-                                                    'multiplier':1}
+                                                    'multiplier':1,
+                                                    'hline_at':1.0,}
                          
         options['keys_to_plot']['Centroid poloidal']={'label':'z',
                                                       'unit':'m',
@@ -135,9 +136,9 @@ def plot_results_for_pop_2026(plot_figure=2,
     
                                  
         options['keys_to_plot']['Poloidal angle']={'label':r'$\theta$',
-                                                      'unit':'rad',
-                                                      'range':[0.,1.],#[0.05,0.35],
-                                                      'multiplier':1}        
+                                                   'unit':'rad',
+                                                   'range':[0.,1.],#[0.05,0.35],
+                                                   'multiplier':1}        
         
         # options['keys_to_plot']['Velocity radial centroid']={'label':'$v_{rad}$',
         #                                                      'unit':'km/s',
@@ -164,8 +165,8 @@ def plot_results_for_pop_2026(plot_figure=2,
         options['fig_axes']=(fig,axes[:,0])
         options['hide_y_labels']=False
         options['subplot_labels']=abc[0:nplot]
-        options['title']='L-mode spatial evolution #141998'
-        options['subplot_label_location']=-0.2
+        options['title']='L-mode #141998'
+        options['subplot_label_location']=[-0.4,0.9]
         pdf_pages=PdfPages(wd+'/plots/fig4_lh_single_shot.pdf')
         
         window_length=1e-3
@@ -188,8 +189,8 @@ def plot_results_for_pop_2026(plot_figure=2,
         options['hide_y_labels']=True
         options['fig_axes']=(fig,axes[:,1])
         options['subplot_labels']=abc[nplot:2*nplot]
-        options['title']='H-mode spatial evolution #141319'
-        options['subplot_label_location']=-0.07
+        options['title']='H-mode #141319'
+        options['subplot_label_location']=[-0.15,0.9]
         
         analyze_gpi_structures(exp_id=141319,
                                time_range=[0.527, 0.547],
@@ -206,6 +207,164 @@ def plot_results_for_pop_2026(plot_figure=2,
                                plot_example_results_options=options
                                )
         
-        # fig.tight_layout(pad=0.1)
+        fig.tight_layout(pad=0.1)
         pdf_pages.savefig()
         pdf_pages.close()
+        
+    if plot_figure == 5:
+        
+        pdf_pages=PdfPages(wd+'/plots/fig5_lh_single_shot_vel.pdf')
+        
+        options={}
+        options['keys_to_plot']={} 
+        
+        options['keys_to_plot']['Velocity radial centroid']={'label':'$v_{rad}$',
+                                                             'unit':'km/s',
+                                                             'range':[-5,5],
+                                                             'multiplier':1e-3,
+                                                             'hline_at':0.,}
+        
+        options['keys_to_plot']['Normalized flux coordinate velocity']={'label':'$\\partial_{t} \\psi_{N}$',
+                                                             'unit':'1/ms',
+                                                             'range':[-15,15],
+                                                             'multiplier':1e-3,
+                                                             'hline_at':0.}
+        
+       
+        options['keys_to_plot']['Velocity poloidal centroid']={'label':'$v_{pol}$',
+                                                               'unit':'km/s',
+                                                               'range':[-10,10],
+                                                               'multiplier':1e-3,
+                                                               'hline_at':0.}
+        
+        options['keys_to_plot']['Poloidal angular velocity']={'label':'$\\partial_{t} \\theta$',
+                                                               'unit':'krad/s',
+                                                               'range':[-20,20],
+                                                               'multiplier':1e-3,
+                                                               'hline_at':0.}
+        
+        nplot=len(list(options['keys_to_plot'].keys()))
+        fig, axes=plt.subplots(nplot,2, figsize=[8.5/2.54,2*nplot/2.54])
+        options['markersize']=0.1
+        options['fig_axes']=(fig,axes[:,0])
+        options['hide_y_labels']=False
+        options['subplot_labels']=abc[0:nplot]
+        options['title']='L-mode #141998'
+        options['subplot_label_location']=[-0.3,0.9]
+        
+        window_length=1e-3
+        
+        analyze_gpi_structures(exp_id=141998,
+                               time_range=[0.215,0.235],
+                               plot_time_range=[0.222,0.222+window_length],
+                               ignore_side_structures=True,
+                               pdf=False, plot=True,
+                               plot_str_by_str=True,
+                               plot_for_publication=True,
+                               min_structure_lifetime=10,
+                               nocalc=True,
+                               plot_scatter=True,
+                               plot_tracking=True,
+                               plot_example_results=True,
+                               plot_example_results_options=options
+                               )
+        
+        options['hide_y_labels']=True
+        options['fig_axes']=(fig,axes[:,1])
+        options['subplot_labels']=abc[nplot:2*nplot]
+        options['title']='H-mode #141319'
+        options['subplot_label_location']=[-0.1, 0.9]
+        
+        analyze_gpi_structures(exp_id=141319,
+                               time_range=[0.527, 0.547],
+                               plot_time_range=[0.530, 0.530+window_length],
+                               ignore_side_structures=True,
+                               pdf=False, plot=True,
+                               plot_str_by_str=True,
+                               plot_for_publication=True,
+                               min_structure_lifetime=10,
+                               nocalc=True,
+                               plot_scatter=True,
+                               plot_tracking=True,
+                               plot_example_results=True,
+                               plot_example_results_options=options
+                               )
+        
+        fig.tight_layout(pad=0.1)
+        pdf_pages.savefig()
+        pdf_pages.close()
+        
+    if plot_figure == 6:
+        
+        pdf_pages=PdfPages(wd+'/plots/fig6_lh_single_shot_rotation.pdf')
+        
+        options={}
+        options['keys_to_plot']={}
+        
+        options['keys_to_plot']['Angle fit']={'label':r'$\phi$',
+                                              'unit':'rad',
+                                              'range':[-2,2],
+                                              'multiplier':1,
+                                              'hline_at':0.}
+        
+        options['keys_to_plot']['Angular velocity angle fit']={'label':r'$\omega$',
+                                                               'unit':'krad/s',
+                                                               'range':[-100,100],
+                                                               'multiplier':1e-3,
+                                                               'hline_at':0.}
+        nplot=len(list(options['keys_to_plot'].keys()))
+        fig, axes=plt.subplots(nplot,2, figsize=[8.5/2.54,2*nplot/2.54])
+        
+        options['fig_axes']=(fig,axes[:,0])
+        options['hide_y_labels']=False
+        options['subplot_labels']=abc[0:nplot]
+        options['title']='L-mode #141998'
+        options['subplot_label_location']=[-0.3,0.9]
+        
+        print(abc[0:nplot])
+        
+        window_length=1e-3
+        
+        analyze_gpi_structures(exp_id=141998,
+                               time_range=[0.215,0.235],
+                               plot_time_range=[0.222,0.222+window_length],
+                               ignore_side_structures=True,
+                               pdf=False, plot=True,
+                               plot_str_by_str=True,
+                               plot_for_publication=True,
+                               min_structure_lifetime=10,
+                               nocalc=True,
+                               plot_scatter=True,
+                               plot_tracking=True,
+                               plot_example_results=True,
+                               plot_example_results_options=options
+                               )
+        
+        options['hide_y_labels']=True
+        options['fig_axes']=(fig,axes[:,1])
+        options['subplot_labels']=abc[nplot:2*nplot]
+        options['title']='H-mode #141319'
+        options['subplot_label_location']=[-0.1, 0.9]
+        
+        analyze_gpi_structures(exp_id=141319,
+                               time_range=[0.527, 0.547],
+                               plot_time_range=[0.530, 0.530+window_length],
+                               ignore_side_structures=True,
+                               pdf=False, plot=True,
+                               plot_str_by_str=True,
+                               plot_for_publication=True,
+                               min_structure_lifetime=10,
+                               nocalc=True,
+                               plot_scatter=True,
+                               plot_tracking=True,
+                               plot_example_results=True,
+                               plot_example_results_options=options
+                               )
+        
+        fig.tight_layout(pad=0.1)
+        pdf_pages.savefig()
+        pdf_pages.close()
+        
+    if plot_figure == 7:
+        pass
+        
