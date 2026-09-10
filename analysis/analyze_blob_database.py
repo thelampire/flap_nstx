@@ -23,12 +23,15 @@ flap_nstx.register('NSTX_GPI')
 from flap_nstx.analysis import read_all_blob_data, read_blob_data, read_all_plasma_data
 from flap_nstx.analysis import read_blob_database_file, read_blob_lh_mode_database_file
 from flap_nstx.analysis import return_interesting_key_pairs
+from flap_nstx.analysis import flatten_blob_data, blob_data_shot_lengths
 
 from flap_nstx.tools import plot_pearson_matrix, calculate_corr_acceptance_levels
+from flap_nstx.tools import place_subplot_labels
 from flap_nstx.tools import correlation, mutual_information, get_flux_coord
 from flap_nstx.tools import read_equilibrium_data, get_equilibrium_slice
 from flap_nstx.tools import filename as nstx_filename
 from flap_nstx.gpi import calculate_flux_structure_keys
+from flap_nstx.gpi import calculate_differential_structure_keys
 
 import flap_mdsplus
 
@@ -42,6 +45,7 @@ flap.config.read(file_name=fn)
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import numpy as np
@@ -62,6 +66,9 @@ FLUX_STRUCTURE_KEYS = ['Normalized flux coordinate',
                        'Poloidal angular velocity',
                        'Normalized flux coordinate velocity']
 
+SIZE_FIT_DIFF_STRUCTURE_KEYS = ['Size radial fit diff',
+                                'Size poloidal fit diff']
+
 
 def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                str_finding_method='watershed',
@@ -77,6 +84,8 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                shot_range=None,  # <-- NEW PARAMETER
                                add_flux_parameters_only=False,
                                overwrite_flux_parameters=False,
+                               add_size_fit_diff_parameters_only=False,
+                               overwrite_size_fit_diff_parameters=False,
                                theta_method='geometric',
                                ):
     
@@ -123,6 +132,16 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
         overwrite_flux_parameters (bool, optional): If True, the flux coordinate based 
             keys are recalculated even if they are already present in the saved file. 
             Only used when `add_flux_parameters_only` is True. Defaults to False.
+        add_size_fit_diff_parameters_only (bool, optional): If True, no structure 
+            finding or tracking is performed. The already existing result files of each 
+            shot are loaded and only the fitted size differential keys ('Size radial fit 
+            diff', 'Size poloidal fit diff') are calculated from the already saved 
+            'Size radial fit' and 'Size poloidal fit' parameters and written back into 
+            the very same files. Defaults to False.
+        overwrite_size_fit_diff_parameters (bool, optional): If True, the fitted size 
+            differential keys are recalculated even if they are already present in the 
+            saved file. Only used when `add_size_fit_diff_parameters_only` is True. 
+            Defaults to False.
         theta_method (str, optional): Poloidal angle definition. 'geometric' (default)
             is defined over the whole GPI field of view, 'arclength' is only valid on
             closed flux surfaces.
@@ -203,6 +222,12 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
                                                    str_finding_method=str_finding_method,
                                                    theta_method=theta_method,
                                                    overwrite=overwrite_flux_parameters)
+            elif add_size_fit_diff_parameters_only:
+                print(f'Adding size fit differential parameters to shot #{int(shot)} for window {time_range}...')
+                _add_size_fit_diff_parameters_to_saved_file(int(shot),
+                                                            time_range,
+                                                            str_finding_method=str_finding_method,
+                                                            overwrite=overwrite_size_fit_diff_parameters)
             elif calculate_for_lh_study and download_data_only:
                 print(f'Downloading shot #{int(shot)}...')
                 try:
@@ -236,7 +261,7 @@ def calculate_all_blob_results(time_range_around_peak=[-5e-3,15e-3],
             
             print(f'Shot took {execution_time:.1f}s. Estimated time remaining: {remaining_hours:.2f} hours.\n')
 
-def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
+def calculate_blob_parameter_histograms(time_range_around_peak=[-5e-3, 15e-3],
                                         n_bins=51,
                                         pdf=False,
                                         pdf_filename=None,
@@ -254,11 +279,45 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                         plot_LH_diff=False,
                                         analyze_lh_diff=False,
                                         save_data_for_publication=False,
+                                        options=None,
                                         ):
-    """analyze_lh_diff=True performs the full L/H comparison in one call: the
+    """Calculate and plot the histograms of the blob parameter database.
+
+    analyze_lh_diff=True performs the full L/H comparison in one call: the
     L-mode and the H-mode data are aggregated (and cached) first, then the
     L/H difference plots are made from the cached data. With nocalc=True the
     aggregation is skipped and only the plotting is done from the cached data.
+
+    The plotting is configured through the options dictionary the same way as
+    in flap_nstx.gpi.analyze_gpi_structures._plot_example_results:
+
+        keys_to_plot (list or dict): The parameters to be plotted. A list only
+            sets the plotted keys, a dictionary also sets their appearance:
+            {'Area': {'label':'Area',        #Label on the x axis
+                      'unit':'cm^2',         #Unit shown in brackets, '' or None for none
+                      'range':[0,60],        #Histogram range in the plotted units
+                      'multiplier':1e4,      #Scaling applied to the raw data
+                      'vline_at':0.0,        #Vertical line at the given x value
+                      'pi_ticks':True,       #Label the x axis in multiples of pi
+                      'pi_tick_step':np.pi/4,#Tick spacing, automatic when not given
+                      }}
+            The pi based ticks are switched on by default for the angle keys.
+        figsize (tuple): Figure size in inches.
+        fig_axes (tuple): (fig, axes) to plot into instead of creating a new
+            figure. Enables plotting into an externally managed figure.
+        nrow, ncol (int): Subplot grid shape when the figure is created here.
+        subplot_labels (list): Subplot labels, defaults to a,b,c,...
+        subplot_label_y (float): vertical position of the subplot labels in
+            axes coordinates. The horizontal position is calculated from the
+            extent of the axes decorations.
+        title (str): Title placed on the first subplot.
+        hide_y_labels (bool): Hide the y axis labels and ticklabels.
+        n_bins (int): Overrides the n_bins keyword.
+        plot_legend (bool): Force the L/H mode legend on or off. By default
+            the legend is drawn everywhere except in the rightmost column of
+            a multi column figure, where it would overlap the histograms.
+        legend_fontsize (float): Font size of the L/H mode legend.
+        pdf_filename (str): Overrides the automatic pdf filename.
     """
     import matplotlib
 
@@ -285,6 +344,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                                     nocalc=False,
                                                     plot_LH_diff=False,
                                                     save_data_for_publication=False,
+                                                    options=options,
                                                     **mode_kwargs,
                                                     **common_kwargs)
 
@@ -298,6 +358,7 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                                    analyze_l_mode_only=True,
                                                    plot_LH_diff=True,
                                                    save_data_for_publication=save_data_for_publication,
+                                                   options=options,
                                                    **common_kwargs)
     
     if pdf:
@@ -385,34 +446,43 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                                                            shot=shot)
 
             # --- OOP DATA EXTRACTION ---
+            norm_flux_failed=False
             for structure in blob_results.tracked_structures:
                 n_str += 1
                 for key in analyzed_keys:
                     
                     # Safely extract the data and dynamically check if it's differential
+                    
                     if key == 'Normalized flux coordinate' or key == 'Poloidal angle':
-                        if key == 'Normalized flux coordinate':
-                            try:
-                                norm_flux_failed=False
-                                psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
-                                                                                   time=np.mean(blob_database['time'][ind]),
-                                                                                   R_target=structure.regular_parameters['Centroid radial'].value,
-                                                                                   z_target=structure.regular_parameters['Centroid poloidal'].value,
-                                                                                   equilibrium_slice=shot_equilibrium_slice)
-                                theta_arc_target = (theta_arc_target + np.pi) % (2 * np.pi) - np.pi
-                                raw_data = psi_norm_target
-                            except Exception as e:
-                                print(f'Exception occurred at read_data_for_analyze_blob_database.py at line 157: {e}')
-                                raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
-                                raw_data[:]=np.nan
-                                print(shot,np.mean(blob_database['time'][ind]))
-                                norm_flux_failed=True
-                        else:
-                            if norm_flux_failed:
-                                raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
-                                raw_data[:]=np.nan
+                        if not norm_flux_failed:
+                            if key == 'Normalized flux coordinate':
+                                try:
+                                    psi_norm_target, theta_arc_target = get_flux_coord(shot=shot,
+                                                                                       time=np.mean(blob_database['time'][ind]),
+                                                                                       R_target=structure.regular_parameters['Centroid radial'].value,
+                                                                                       z_target=structure.regular_parameters['Centroid poloidal'].value,
+                                                                                       equilibrium_slice=shot_equilibrium_slice)
+                                    if np.isnan(psi_norm_target[0]) or np.isnan(theta_arc_target[0]):
+                                        norm_flux_failed=True
+                                    else:
+                                        theta_arc_target = (theta_arc_target + np.pi) % (2 * np.pi) - np.pi
+                                        raw_data = psi_norm_target
+                                except Exception as e:
+                                    print(f'Exception occurred at read_data_for_analyze_blob_database.py at line 157: {e}')
+                                    raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
+                                    raw_data[:]=np.nan
+                                    print(shot,np.mean(blob_database['time'][ind]))
+                                    norm_flux_failed=True
                             else:
-                                raw_data = theta_arc_target
+                                if norm_flux_failed:
+                                    raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
+                                    raw_data[:]=np.nan
+                                else:
+                                    raw_data = theta_arc_target
+                        else:
+                            #This prevents reading the magnetic field for every single structure once reading it once failed
+                            raw_data = copy.deepcopy(structure.regular_parameters['Centroid radial'].value)
+                            raw_data[:]=np.nan
                             
                     elif key == 'Lifetime':
                         raw_data = np.arange(len(structure.regular_parameters['Centroid radial'].value))*2.5e-6
@@ -467,9 +537,9 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                 'Size poloidal diff': [-25e3, 25e3],
                 'Intensity':[0,2000],
                 'Signed area':[-0.01, 0.01],
-                'Angle ALI': [-np.pi,np.pi],
+                'Angle ALI': [np.pi/4,3*np.pi/4],
                 'Curvature':[0, 1000],
-                'Angle fit': [-np.pi,np.pi],
+                'Angle fit': [np.pi/4,3*np.pi/4],
                 
                 'Position radial fit': [1.4, 1.7], 
                 'Position poloidal fit': [0., 0.35],
@@ -516,12 +586,55 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                             }
 
         def _prepare(data, key, multiplier=1.):
-            """Strip NaNs, scale and wrap angular parameters into [0,pi)."""
+            """Strip NaNs, wrap angular parameters into [pi/4,3pi/4) and scale.
+
+            The fitted ellipse angles are pi periodic and the tracking applies a
+            fringe jump correction to them, so the raw values can be several
+            multiples of pi away from the principal branch. They are folded onto
+            a single pi/2 wide branch before any scaling is applied, the same
+            convention which is used for the angle correlations.
+            """
             data = np.asarray(data, dtype=float)
-            data = data[~np.isnan(data)] * multiplier
+            data = data[~np.isnan(data)]
             if key in ['Angle fit', 'Angle ALI']:
-                data = np.mod(data, np.pi)
-            return data
+                # data = np.mod(data + np.pi/2, np.pi) - np.pi/2
+                pass
+            return data * multiplier
+
+        def _set_pi_ticks(ax, hist_range, step=None):
+            """Label the x axis with multiples of pi instead of plain numbers."""
+            from fractions import Fraction
+
+            def _pi_label(value):
+                frac = Fraction(value/np.pi).limit_denominator(24)
+                if frac == 0:
+                    return '0'
+                num, den = frac.numerator, frac.denominator
+                sign = '-' if num < 0 else ''
+                num = abs(num)
+                numerator = r'\pi' if num == 1 else rf'{num}\pi'
+                # The inline form is used instead of \frac, the stacked
+                # fractions are too tall for a single column figure.
+                return rf'${sign}{numerator}$' if den == 1 else rf'${sign}{numerator}/{den}$'
+
+            if hist_range is None:
+                low, high = ax.get_xlim()
+            else:
+                low, high = hist_range
+
+            if step is None:
+                # Keep the number of the labels low, they are wide on a
+                # single column figure.
+                for candidate in [np.pi/4, np.pi/2, np.pi, 2*np.pi]:
+                    step = candidate
+                    if (high - low)/step <= 4.001:
+                        break
+
+            first = np.ceil(low/step - 1e-9)
+            last = np.floor(high/step + 1e-9)
+            ticks = np.arange(first, last + 1) * step
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([_pi_label(tick) for tick in ticks])
 
         def _plot_histogram(ax, data, key, hist_range=None, **kwargs):
             """Plot a normalized histogram using the key specific binning."""
@@ -565,51 +678,125 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                         ('H mode', _prepare(data_h_mode[key], key, multiplier), 'orange')]
             return [(None, _prepare(full_data[key], key, multiplier), None)]
 
-        if plot_for_publication:
-            multiplier = {
-                'Area': 1e4, 
-                'Area diff': 1e4, 
-                'Angle fit': 1, 
-                'Angular velocity angle fit': 1e-3,
-                'Roundness': 1, 
-                'Roundness diff': 1e3, 
-                'Total curvature': 1, 
-                'Total curvature diff': 1e3
-            }
-            xlabel = {
-                'Area': ['Area', '[$\\rm cm^2$]'], 
-                'Area diff': ['$\\rm\\Delta$Area', '[$\\rm cm^2$]'],
-                'Angle fit': ['Angle', '[rad]'], 
-                'Angular velocity angle fit': ['$\\rm\\omega$', '[krad/s]'],
-                'Roundness': ['Roundness', '[a.u.]'], 
-                'Roundness diff': ['$\\rm\\Delta$Roundness', '[a.u.]'],
-                'Total curvature': ['Curvature', '[a.u.]'], 
-                'Total curvature diff': ['$\\rm\\Delta$Curvature', '[a.u.]']
-            }
-            target_keys = ['Area', 
-                           'Area diff', 
-                           'Angle fit', 
-                           'Angular velocity angle fit',
-                           'Roundness', 
-                           'Roundness diff', 
-                           'Total curvature', 
-                           'Total curvature diff']
-            
-            labels = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+        # --- Plotting configuration, mirrors _plot_example_results ---
+        plot_options = {} if options is None else dict(options)
 
-            if plot_LH_diff:
-                suffix = 'LH_diff'
+        default_keys_to_plot = {
+            'Area':                        {'label': 'Area',            'unit': '$\\rm cm^2$',  'multiplier': 1e4},
+            'Area diff':                   {'label': '$\\rm\\Delta$Area', 'unit': '$\\rm cm^2$',  'multiplier': 1e4,  'vline_at': 0.},
+            'Angle fit':                   {'label': 'Angle',           'unit': 'rad',          'multiplier': 1},
+            'Angular velocity angle fit':  {'label': '$\\rm\\omega$',     'unit': 'krad/s',       'multiplier': 1e-3, 'vline_at': 0.},
+            'Roundness':                   {'label': 'Roundness',       'unit': 'a.u.',         'multiplier': 1},
+            'Roundness diff':              {'label': '$\\rm\\Delta$Roundness', 'unit': 'a.u.',   'multiplier': 1e3,  'vline_at': 0.},
+            'Total curvature':             {'label': 'Curvature',       'unit': 'a.u.',         'multiplier': 1},
+            'Total curvature diff':        {'label': '$\\rm\\Delta$Curvature', 'unit': 'a.u.',   'multiplier': 1e3,  'vline_at': 0.},
+            }
+
+        if 'keys_to_plot' not in plot_options:
+            if plot_for_publication:
+                plot_options['keys_to_plot'] = default_keys_to_plot
             else:
-                mode_str = '_L_mode' if analyze_l_mode_only else '_H_mode' if analyze_h_mode_only else ''
-                suffix = f"_{mode_str}"
+                # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
+                default_data = data_l_mode if plot_LH_diff else full_data
+                plot_options['keys_to_plot'] = (analyzed_keys
+                                                if 'analyzed_keys' in locals() and analyzed_keys
+                                                else list(default_data.keys()))
 
-            pdf_page = PdfPages(f"{wd}/plots/8hist_blob_db_LT{min_structure_lifetime}_{str_finding_method}{suffix}.pdf")
-            fig, axes = plt.subplots(4, 2, figsize=(8.5/2.54, 17/2.54))
+        if isinstance(plot_options['keys_to_plot'], dict):
+            keys_to_plot = list(plot_options['keys_to_plot'].keys())
+            options_with_labels = True
+        else:
+            keys_to_plot = list(plot_options['keys_to_plot'])
+            options_with_labels = False
 
-            for ind, key in enumerate(target_keys):
-                ax = axes[ind // 2, ind % 2]
-                hist_range = np.asarray(ranges[key]) * multiplier[key] if key in ranges else None
-                datasets = _get_datasets(key, multiplier=multiplier[key])
+        def _key_option(key, option, default=None):
+            """Read a per key plotting option from the options dictionary."""
+            if not options_with_labels:
+                return default
+            value = plot_options['keys_to_plot'][key].get(option, default)
+            return default if value is None else value
+
+        def _xlabel(key):
+            """Assemble the x axis label from the label and unit options."""
+            label = _key_option(key, 'label', key)
+            unit = _key_option(key, 'unit')
+            if unit in ['', None]:
+                return label
+            return f"{label} [{unit}]"
+
+        n_bins = plot_options.get('n_bins', n_bins)
+        subplot_labels = plot_options.get('subplot_labels', list(alc))
+
+        def _subplot_label(ind):
+            """Subplot label which doesn't run out for a high number of keys."""
+            if ind < len(subplot_labels):
+                return subplot_labels[ind]
+            return f"{subplot_labels[ind % len(subplot_labels)]}{ind // len(subplot_labels)}"
+        # Only the vertical position is set here, the horizontal one is
+        # calculated from the rendered extent of the axes decorations.
+        subplot_label_y = plot_options.get('subplot_label_y', 1.0)
+        legend_fontsize = plot_options.get('legend_fontsize', 5 if plot_for_publication else 7)
+        # The legends overlap the histograms in the rightmost column of a
+        # multi column figure, so they are omitted there by default. The
+        # plot_legend option forces them on or off everywhere.
+        plot_legend = plot_options.get('plot_legend')
+
+        # Only the publication plots put every key onto a single shared figure
+        single_figure = plot_for_publication or plot_options.get('fig_axes') is not None
+
+        if single_figure:
+            nplot = len(keys_to_plot)
+            ncol = plot_options.get('ncol', 2)
+            nrow = plot_options.get('nrow', int(np.ceil(nplot/ncol)))
+            figsize = plot_options.get('figsize', (8.5/2.54, 17/2.54))
+
+            if plot_options.get('fig_axes'):
+                fig, axes = plot_options['fig_axes']
+            else:
+                fig, axes = plt.subplots(nrow, ncol, figsize=figsize)
+            axes = np.asarray(axes).flatten()
+
+            if plot_options.get('pdf_filename'):
+                pdf_page = PdfPages(plot_options['pdf_filename'])
+            else:
+                if plot_LH_diff:
+                    suffix = 'LH_diff'
+                else:
+                    suffix = '_L_mode' if analyze_l_mode_only else '_H_mode' if analyze_h_mode_only else ''
+                pdf_page = PdfPages(f"{wd}/plots/{nplot}hist_blob_db_LT{min_structure_lifetime}_"
+                                    f"{str_finding_method}{suffix}.pdf")
+        else:
+            ncol = 1
+            figsize = plot_options.get('figsize', (8.5/2.54, 8.5/2.54))
+            if pdf:
+                pdf_page = PdfPages(plot_options.get('pdf_filename', pdf_filename))
+
+        def _plot_legend(ind):
+            """Legends are dropped from the rightmost column of a grid."""
+            if plot_legend is not None:
+                return plot_legend
+            if not single_figure or ncol < 2:
+                return True
+            return ind % ncol != ncol - 1
+
+        for ind, key in enumerate(keys_to_plot):
+            if plot_LH_diff and (key not in data_l_mode or key not in data_h_mode):
+                continue
+            if not plot_LH_diff and key not in full_data:
+                continue
+
+            try:
+                if single_figure:
+                    ax = axes[ind]
+                else:
+                    fig, ax = plt.subplots(figsize=figsize)
+
+                multiplier = _key_option(key, 'multiplier', 1.)
+                datasets = _get_datasets(key, multiplier=multiplier)
+
+                hist_range = _key_option(key, 'range')
+                if hist_range is None and key in ranges:
+                    hist_range = np.asarray(ranges[key]) * multiplier
 
                 if plot_LH_diff:
                     # Output LaTeX Table string
@@ -620,80 +807,72 @@ def calculate_blob_parameter_histograms(time_range_around_peak=5e-3,
                               scipy.stats.kurtosis(l_data), scipy.stats.kurtosis(h_data)
                               ]
                     formatted = " & ".join(f"{v:.3f}" for v in values)
-                    print(f"{xlabel[key][0]} {xlabel[key][1]} & {formatted} \\\\")
+                    print(f"{_xlabel(key)} & {formatted} \\\\")
 
-                for mode_name, data, _color in datasets:
+                for mode_name, data, color in datasets:
                     hist_kwargs = {'alpha': 0.5, 'label': mode_name} if plot_LH_diff else {}
+                    if plot_LH_diff and not single_figure:
+                        hist_kwargs['color'] = color
                     n, bins = _plot_histogram(ax, data, key, hist_range=hist_range, **hist_kwargs)
 
                     if save_data_for_publication and not plot_LH_diff and n is not None:
-                        with open(f"{wd}/{labels[ind]}_db_histogram_{key}.txt", 'w+') as file1:
+                        with open(f"{wd}/{_subplot_label(ind)}_db_histogram_{key}.txt", 'w+') as file1:
                             for i in range(len(n)):
                                 file1.write(f"{(bins[1:] + bins[:-1])[i]/2}\t{n[i]}\n")
 
-                plt.locator_params(axis='y', nbins=5)
-                ax.set_xlabel(f"{xlabel[key][0]} {xlabel[key][1]}")
+                xlabel = _xlabel(key)
+                ax.set_xlabel(xlabel)
                 ax.set_ylabel('Relative frequency')
-                ax.set_title(f"Histogram of \n {xlabel[key][0]}")
-                ax.text(-0.4, 1.1, f"({labels[ind]})", transform=ax.transAxes, size=9)
-                if plot_LH_diff:
-                    ax.legend(fontsize=5)
-                if ind % 2 == 1:
-                    ax.axvline(x=0, color='red')
+                ax.set_title(plot_options.get('title') if plot_options.get('title') and ind == 0
+                             else f"Histogram of {_key_option(key, 'label', key)}")
+                ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
 
-            plt.tight_layout(pad=0.1)
-            pdf_page.savefig()
-            pdf_page.close()
-            plt.close(fig)
+                if hist_range is not None:
+                    ax.set_xlim(hist_range)
+                pi_ticks = _key_option(key, 'pi_ticks', key in ['Angle fit', 'Angle ALI'])
+                if pi_ticks:
+                    pi_tick_step = _key_option(key, 'pi_tick_step')
+                    _set_pi_ticks(ax, hist_range, step=pi_tick_step)
+                if _key_option(key, 'vline_at') is not None:
+                    ax.axvline(x=_key_option(key, 'vline_at'), color='red')
 
-        else:
-            # Standard single plots, L and H mode overlapping when plot_LH_diff is set
-            if pdf:
-                pdf_page = PdfPages(pdf_filename)
+                if plot_LH_diff and _plot_legend(ind):
+                    ax.legend(fontsize=legend_fontsize)
 
-            # Safe fallback if analyzed_keys isn't defined (e.g. nocalc=True)
-            default_keys = data_l_mode.keys() if plot_LH_diff else full_data.keys()
-            keys_to_plot = analyzed_keys if 'analyzed_keys' in locals() and analyzed_keys else list(default_keys)
+                if plot_options.get('hide_y_labels'):
+                    ax.yaxis.label.set_visible(False)
+                    ax.set_yticklabels([])
 
-            for key in keys_to_plot:
-                if plot_LH_diff and (key not in data_l_mode or key not in data_h_mode):
-                    continue
-                if not plot_LH_diff and key not in full_data:
-                    continue
-
-                try:
-                    fig, ax = plt.subplots(figsize=(8.5/2.54, 8.5/2.54))
-                    hist_range = ranges[key] if key in ranges else None
-
-                    for mode_name, data, color in _get_datasets(key):
-                        hist_kwargs = ({'alpha': 0.5, 'color': color, 'label': mode_name}
-                                       if plot_LH_diff else {})
-                        _plot_histogram(ax, data, key, hist_range=hist_range, **hist_kwargs)
-
-                    ax.set_xlabel(f"{key} bins")
-                    ax.set_ylabel('Relative frequency')
-                    ax.set_title(f"Histogram of {key}")
-                    if plot_LH_diff:
-                        ax.legend(fontsize=7)
-                    if key in ranges:
-                        ax.set_xlim(ranges[key])
-
+                if not single_figure:
                     plt.tight_layout(pad=0.1)
                     if pdf:
                         pdf_page.savefig(fig)
                     plt.close(fig)
 
-                except Exception as e:
-                    print(f"Failed to plot {key}: {e}")
+            except Exception as e:
+                print(f"Failed to plot {key}: {e}")
 
-            if pdf:
-                pdf_page.close()
+        if single_figure:
+            plt.tight_layout(pad=0.1)
+            # The labels are placed after the layout is final, this way they
+            # end up next to the actual extent of the axes decorations.
+            place_subplot_labels(axes[0:len(keys_to_plot)],
+                                 labels=[_subplot_label(ind)
+                                         for ind in range(len(keys_to_plot))],
+                                 fontsize=9,
+                                 y=subplot_label_y)
+            pdf_page.savefig()
+            pdf_page.close()
+            if not plot_options.get('fig_axes'):
+                plt.close(fig)
+        elif pdf:
+            pdf_page.close()
 
 
     return full_data
 
 
-def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3,
+def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=[-5e-3,15e-3],
                                                      threshold_corr=False,
                                                      pdf=True,
                                                      pdf_filename=None,
@@ -709,7 +888,9 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                                                      analyze_h_mode_only=False,
                                                      analyze_l_mode_only=False,
                                                      analyze_lh_difference=False,
+                                                     plot_all_matrices_for_lh=False,
                                                      save_data_for_publication=False,
+                                                     options=None,
                                                      ):
     import matplotlib
     
@@ -735,7 +916,7 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
             pdf_filename = f"{wd}/plots/correlation_matrix_blob_blob_{str_finding_method}_{averaging}_{average[0]}_{average[1]}_{plasma_mode}.pdf"
 
     # --- 2. Define Target Keys ---
-    if plot_interesting_only:
+    if plot_interesting_only and options is None:
         analyzed_keys = ['Area', 
                          'Area diff', 
                          'Axes length major fit', 
@@ -759,15 +940,18 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                       '$\\rm \\Delta$Roundness', 
                       '$\\rm d_{rad}$', 
                       '$\\rm v_{rad}$']
+    elif not plot_interesting_only and options is not None:
+        analyzed_keys=options['keys_to_plot']['keys']
+        gpi_labels=options['keys_to_plot']['labels']
     else:
         analyzed_keys = None # Will be populated dynamically later
         gpi_labels = None
+        
 
     # --- 3. Internal Math Helper ---
     def _compute_corr_matrix(data_dict, keys, averaging):
         """Helper to calculate the Pearson matrix for a given data dictionary."""
         
-        # BUG FIX: Safely extract the data depending on the averaging mode!
         processed_data = {}
         for key in keys:
             if key not in data_dict:
@@ -776,16 +960,9 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
                 
             if averaging == 'no':
                 # Data is a list of dictionaries [{'shot':123, 'data':[1,2,3]}, ...]
-                # Flatten it into a 1D array
-                if len(data_dict[key]) > 0 and isinstance(data_dict[key][0], dict):
-                    try:
-                        processed_data[key] = np.concatenate([shot_dict['data'] for shot_dict in data_dict[key]])
-                    except Exception as e:
-                        print(e)
-                        print(key, data_dict[key])
-                        raise ValueError
-                else:
-                    processed_data[key] = np.array(data_dict[key])
+                # Shots without any structure carry a scalar np.nan, so flatten
+                # them safely into a single 1D array.
+                processed_data[key] = flatten_blob_data(data_dict[key])
             else:
                 # Data is already a 1D array of shot averages
                 processed_data[key] = np.array(data_dict[key])
@@ -849,24 +1026,24 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
     else:
         # Calculate L-mode
         full_data_l  =  read_all_blob_data(time_range_around_peak = time_range_around_peak,
-                                         min_structure_lifetime = min_structure_lifetime,
-                                         averaging = 'shot' if calc_mean_distribution else 'no',
-                                         nocalc = nocalc, 
-                                         recalc_tracking = recalc_tracking,
-                                         str_finding_method = str_finding_method,
-                                         read_l_mode_only = True, 
-                                         replicate_histogram2 = True
-                                         )   
+                                           min_structure_lifetime = min_structure_lifetime,
+                                           averaging = 'shot' if calc_mean_distribution else 'no',
+                                           nocalc = nocalc, 
+                                           recalc_tracking = recalc_tracking,
+                                           str_finding_method = str_finding_method,
+                                           read_l_mode_only = True, 
+                                           replicate_histogram2 = True
+                                           )   
         # Calculate H-mode
         full_data_h  =  read_all_blob_data(time_range_around_peak = time_range_around_peak,
-                                         min_structure_lifetime = min_structure_lifetime,
-                                         averaging = 'shot' if calc_mean_distribution else 'no',
-                                         nocalc = nocalc, 
-                                         recalc_tracking = recalc_tracking,
-                                         str_finding_method = str_finding_method,
-                                         read_h_mode_only = True, 
-                                         replicate_histogram2 = True
-                                         )
+                                           min_structure_lifetime = min_structure_lifetime,
+                                           averaging = 'shot' if calc_mean_distribution else 'no',
+                                           nocalc = nocalc, 
+                                           recalc_tracking = recalc_tracking,
+                                           str_finding_method = str_finding_method,
+                                           read_h_mode_only = True, 
+                                           replicate_histogram2 = True
+                                           )
         
         # BUG FIX: Handle the dynamic keys properly!
         plot_keys = analyzed_keys if plot_interesting_only else list(full_data_l.keys())
@@ -890,18 +1067,40 @@ def calculate_blob_blob_parameter_correlation_matrix(time_range_around_peak=5e-3
         charsize=5
     else:
         charsize=15
-    plot_pearson_matrix(correlation_matrix,
-                        xlabels = labels_to_plot,
-                        ylabels = labels_to_plot,
-                        colormap = colormap,
-                        figsize = (17/2.54 / (1 + plot_interesting_only), 
-                                   17/2.54 / (1 + plot_interesting_only)),
-                        charsize = charsize,
-                        charsize_score=charsize/1.5,
-                        plot_large = not plot_interesting_only,
-                        plot_colorbar = not plot_interesting_only,
-                        plot_values = True,
-                        )   
+    if plot_all_matrices_for_lh:
+        if options is not None and options.get('figsize'):
+            figsize=options['figsize']
+        else:
+            figsize=(8.5/2.54, 8.5*3/2.54)
+            
+        fig, ax=plt.subplots(3,1, figsize=figsize)
+        title=['L-mode', 'H-mode', 'L-H difference']
+        for ind, matrix in enumerate([corr_l, corr_h, correlation_matrix]):
+            plot_pearson_matrix(matrix,
+                                title=title[ind],
+                                xlabels = labels_to_plot,
+                                ylabels = labels_to_plot,
+                                colormap = colormap,
+                                charsize = charsize,
+                                charsize_score=charsize/1.5,
+                                plot_large = not plot_interesting_only,
+                                plot_colorbar = not plot_interesting_only,
+                                plot_values = True,
+                                fig_ax=(fig,ax[ind]),
+                                )   
+    else:
+        plot_pearson_matrix(correlation_matrix,
+                            xlabels = labels_to_plot,
+                            ylabels = labels_to_plot,
+                            colormap = colormap,
+                            figsize = (17/2.54 / (1 + plot_interesting_only), 
+                                       17/2.54 / (1 + plot_interesting_only)),
+                            charsize = charsize,
+                            charsize_score=charsize/1.5,
+                            plot_large = not plot_interesting_only,
+                            plot_colorbar = not plot_interesting_only,
+                            plot_values = True,
+                            )   
 
     if analyze_lh_difference:
         plt.tight_layout()
@@ -989,10 +1188,7 @@ def plot_blob_blob_parameter_trends(pdf = True,
         flat_dict = {}
         for k in data_dict.keys():
             if len(data_dict[k]) == 0: continue
-            if isinstance(data_dict[k][0], dict):
-                flat_dict[k] = np.concatenate([shot['data'] for shot in data_dict[k]])
-            else:
-                flat_dict[k] = np.array(data_dict[k])
+            flat_dict[k] = flatten_blob_data(data_dict[k])
         return flat_dict
 
     flat_data = _flatten_data(full_data)
@@ -1363,15 +1559,11 @@ def plot_blob_blob_parameter_predictive_power_score(threshold_corr=False,
     # --- 2. Data Processing & PPS Calculation ---
     if not nocalc or not os.path.exists(pickle_filename_pps):
         
-        # BUG FIX: Flatten the dictionary arrays safely!
         processed_data = {}
         for key in full_blob_data.keys():
             if len(full_blob_data[key]) == 0: continue
             
-            if isinstance(full_blob_data[key][0], dict):
-                processed_data[key] = np.concatenate([shot['data'] for shot in full_blob_data[key]])
-            else:
-                processed_data[key] = np.array(full_blob_data[key])
+            processed_data[key] = flatten_blob_data(full_blob_data[key])
                 
         df = pandas.DataFrame(processed_data)
 
@@ -1549,9 +1741,12 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                             d2 = data2_dict[key2]
                         else:
                             # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
-                            d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
-                            d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
-                            d2 = d2_expanded
+                            d1 = flatten_blob_data(data1_dict[key1])
+                            if len(data1_dict[key1]) > 0 and type(data1_dict[key1][0]) is dict:
+                                d2 = np.repeat(np.asarray(data2_dict[key2], dtype=float),
+                                               blob_data_shot_lengths(data1_dict[key1]))
+                            else:
+                                d2 = np.asarray(data2_dict[key2], dtype=float)
     
                         valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
                         d1, d2 = d1[valid_mask], d2[valid_mask]
@@ -1585,11 +1780,13 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                 
                 # Combine blob and plasma data into one flat dataframe
                 for key in gpi_labels:
-                    raw_df_dict[key] = full_blob_data[key] if averaging == 'shot' else np.concatenate([s['data'] for s in full_blob_data[key]])
+                    raw_df_dict[key] = full_blob_data[key] if averaging == 'shot' else flatten_blob_data(full_blob_data[key])
                 for key in plasma_labels:
                     # Assuming gpi_labels[0] has data we can use to map the lengths
                     ref_key = gpi_labels[0]
-                    raw_df_dict[key] = full_plasma_data[key] if averaging == 'shot' else np.concatenate([np.full(len(s['data']), full_plasma_data[key][i]) for i, s in enumerate(full_blob_data[ref_key])])
+                    raw_df_dict[key] = (full_plasma_data[key] if averaging == 'shot'
+                                        else np.repeat(np.asarray(full_plasma_data[key], dtype=float),
+                                                       blob_data_shot_lengths(full_blob_data[ref_key])))
     
                 df = pandas.DataFrame(raw_df_dict)
                 matrix_df = pps.matrix(df)[['x', 'y', 'ppscore']].pivot(columns='x', index='y', values='ppscore')
@@ -1719,9 +1916,12 @@ def calculate_blob_plasma_parameter_correlation_matrix(threshold_corr=False,
                                     d2 = data2_dict[key2]
                                 else:
                                     # Flatten the blob-by-blob nested structures to align with scalar plasma parameters
-                                    d1 = np.concatenate([shot['data'] for shot in data1_dict[key1]]) if type(data1_dict[key1][0]) is dict else data1_dict[key1]
-                                    d2_expanded = np.concatenate([np.full(len(shot['data']), data2_dict[key2][i]) for i, shot in enumerate(data1_dict[key1])]) if type(data1_dict[key1][0]) is dict else data2_dict[key2]
-                                    d2 = d2_expanded
+                                    d1 = flatten_blob_data(data1_dict[key1])
+                                    if len(data1_dict[key1]) > 0 and type(data1_dict[key1][0]) is dict:
+                                        d2 = np.repeat(np.asarray(data2_dict[key2], dtype=float),
+                                                       blob_data_shot_lengths(data1_dict[key1]))
+                                    else:
+                                        d2 = np.asarray(data2_dict[key2], dtype=float)
             
                                 valid_mask = ~np.isnan(d1) & ~np.isnan(d2)
                                 d1, d2 = d1[valid_mask], d2[valid_mask]
@@ -2930,6 +3130,91 @@ def plot_conditional_evolution_matrices(dt=2.5e-6,
     print(f"Skipped {plots_filtered} pairs due to R² < {min_r_squared}.")
     print(f"Saved to: {pdf_filename}")
     
+def _load_saved_structure_file(shot,
+                               time_range,
+                               str_finding_method='watershed',
+                               normalize='simple',
+                               remove_interlaced_structures=True,
+                               ):
+    """
+    Restores the tracked dataset of an already calculated structure file.
+
+    Args:
+        shot (int): Shot number.
+        time_range (list): The [start, end] time range the file was calculated for.
+        str_finding_method (str, optional): Segmentation method used for the saved
+            file ('watershed' or 'contour'). Defaults to 'watershed'.
+        normalize (str, optional): Normalization used for the saved file, needed for
+            reconstructing the filename. Defaults to 'simple'.
+        remove_interlaced_structures (bool, optional): Interlace setting used for the
+            saved file, needed for reconstructing the filename. Defaults to True.
+
+    Returns:
+        tuple: (tracked_dataset, pickle_filename, hdf5_filename). The dataset is
+            None when the file is missing, unreadable or doesn't contain tracked
+            structures.
+    """
+
+    comment = ''
+    if normalize is not None:
+        comment += normalize
+    if remove_interlaced_structures:
+        comment += '_nointer'
+    comment += '_' + str_finding_method
+
+    base_filename = nstx_filename(exp_id=shot,
+                                  working_directory=wd + '/processed_data',
+                                  time_range=time_range,
+                                  purpose='structure char',
+                                  comment=comment)
+
+    pickle_filename = base_filename + '.pickle'
+    hdf5_filename = base_filename + '.h5'
+
+    if not os.path.exists(pickle_filename):
+        print(f'  {pickle_filename} does not exist, nothing to extend.')
+        return None, pickle_filename, hdf5_filename
+
+    try:
+        with open(pickle_filename, 'rb') as f:
+            tracked_dataset = pickle.load(f)
+    except Exception as e:
+        print(f'  Could not load {pickle_filename}: {e}')
+        return None, pickle_filename, hdf5_filename
+
+    if getattr(tracked_dataset, 'mode', None) != 'tracked' or not tracked_dataset.tracked_structures:
+        print(f'  {pickle_filename} does not contain tracked structures, skipping.')
+        return None, pickle_filename, hdf5_filename
+
+    return tracked_dataset, pickle_filename, hdf5_filename
+
+
+def _save_structure_file(tracked_dataset,
+                         pickle_filename,
+                         hdf5_filename,
+                         message='Parameters',
+                         ):
+    """
+    Writes the extended dataset back into the pickle (and the hdf5, when it exists).
+
+    Returns:
+        bool: True, the pickle is always rewritten here.
+    """
+
+    with open(pickle_filename, 'wb') as f:
+        pickle.dump(tracked_dataset, f)
+    print(f'  {message} saved into {pickle_filename}')
+
+    if os.path.exists(hdf5_filename):
+        try:
+            tracked_dataset.save_hdf5(hdf5_filename)
+            print(f'  {message} saved into {hdf5_filename}')
+        except Exception as e:
+            print(f'  Could not update {hdf5_filename}: {e}')
+
+    return True
+
+
 def _add_flux_parameters_to_saved_file(shot,
                                        time_range,
                                        str_finding_method='watershed',
@@ -2964,35 +3249,14 @@ def _add_flux_parameters_to_saved_file(shot,
         bool: True if the file was (re)written, False otherwise.
     """
 
-    comment = ''
-    if normalize is not None:
-        comment += normalize
-    if remove_interlaced_structures:
-        comment += '_nointer'
-    comment += '_' + str_finding_method
+    tracked_dataset, pickle_filename, hdf5_filename = _load_saved_structure_file(
+        shot,
+        time_range,
+        str_finding_method=str_finding_method,
+        normalize=normalize,
+        remove_interlaced_structures=remove_interlaced_structures)
 
-    base_filename = nstx_filename(exp_id=shot,
-                                  working_directory=wd + '/processed_data',
-                                  time_range=time_range,
-                                  purpose='structure char',
-                                  comment=comment)
-
-    pickle_filename = base_filename + '.pickle'
-    hdf5_filename = base_filename + '.h5'
-
-    if not os.path.exists(pickle_filename):
-        print(f'  {pickle_filename} does not exist, nothing to extend.')
-        return False
-
-    try:
-        with open(pickle_filename, 'rb') as f:
-            tracked_dataset = pickle.load(f)
-    except Exception as e:
-        print(f'  Could not load {pickle_filename}: {e}')
-        return False
-
-    if getattr(tracked_dataset, 'mode', None) != 'tracked' or not tracked_dataset.tracked_structures:
-        print(f'  {pickle_filename} does not contain tracked structures, skipping.')
+    if tracked_dataset is None:
         return False
 
     if not overwrite:
@@ -3011,15 +3275,74 @@ def _add_flux_parameters_to_saved_file(shot,
         print(f'  Could not calculate the flux parameters for #{shot}: {e}')
         return False
 
-    with open(pickle_filename, 'wb') as f:
-        pickle.dump(tracked_dataset, f)
-    print(f'  Flux parameters saved into {pickle_filename}')
+    return _save_structure_file(tracked_dataset,
+                                pickle_filename,
+                                hdf5_filename,
+                                message='Flux parameters')
 
-    if os.path.exists(hdf5_filename):
-        try:
-            tracked_dataset.save_hdf5(hdf5_filename)
-            print(f'  Flux parameters saved into {hdf5_filename}')
-        except Exception as e:
-            print(f'  Could not update {hdf5_filename}: {e}')
 
-    return True
+def _add_size_fit_diff_parameters_to_saved_file(shot,
+                                                time_range,
+                                                str_finding_method='watershed',
+                                                normalize='simple',
+                                                remove_interlaced_structures=True,
+                                                overwrite=False,
+                                                ):
+    """
+    Adds the 'Size radial fit diff' and 'Size poloidal fit diff' differential keys
+    to an already calculated structure file.
+
+    Works the same way as `_add_flux_parameters_to_saved_file`: the structure
+    finding and the tracking are NOT repeated, the tracked dataset is restored from
+    the file written by `analyze_gpi_structures`, only the keys listed in
+    `SIZE_FIT_DIFF_STRUCTURE_KEYS` are calculated (via
+    `calculate_differential_structure_keys`) from the already saved 'Size radial fit'
+    and 'Size poloidal fit' regular parameters and the results are saved back into
+    the same file(s). The other differential keys are left untouched.
+
+    Args:
+        shot (int): Shot number.
+        time_range (list): The [start, end] time range the file was calculated for.
+        str_finding_method (str, optional): Segmentation method used for the saved
+            file ('watershed' or 'contour'). Defaults to 'watershed'.
+        normalize (str, optional): Normalization used for the saved file, needed for
+            reconstructing the filename. Defaults to 'simple'.
+        remove_interlaced_structures (bool, optional): Interlace setting used for the
+            saved file, needed for reconstructing the filename. Defaults to True.
+        overwrite (bool, optional): Recalculate the size fit differential keys even
+            if they are already present in the file. Defaults to False.
+
+    Returns:
+        bool: True if the file was (re)written, False otherwise.
+    """
+
+    tracked_dataset, pickle_filename, hdf5_filename = _load_saved_structure_file(
+        shot,
+        time_range,
+        str_finding_method=str_finding_method,
+        normalize=normalize,
+        remove_interlaced_structures=remove_interlaced_structures)
+
+    if tracked_dataset is None:
+        return False
+
+    if not overwrite:
+        first_struct = tracked_dataset.tracked_structures[0]
+        existing_keys = (list(first_struct.regular_parameters.keys()) +
+                         list(first_struct.differential_parameters.keys()))
+        if all(key in existing_keys for key in SIZE_FIT_DIFF_STRUCTURE_KEYS):
+            print('  Size fit differential parameters are already available in the file, skipping.')
+            return False
+
+    try:
+        tracked_dataset = calculate_differential_structure_keys(
+            tracked_dataset,
+            only_keys=SIZE_FIT_DIFF_STRUCTURE_KEYS)
+    except Exception as e:
+        print(f'  Could not calculate the size fit differential parameters for #{shot}: {e}')
+        return False
+
+    return _save_structure_file(tracked_dataset,
+                                pickle_filename,
+                                hdf5_filename,
+                                message='Size fit differential parameters')

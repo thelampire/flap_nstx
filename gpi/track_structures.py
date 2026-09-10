@@ -398,10 +398,19 @@ def _remove_orphans(dataset, test, min_structure_lifetime):
     return dataset
 
 
-def calculate_differential_structure_keys(dataset):
+def calculate_differential_structure_keys(dataset, only_keys=None):
     """
     Vectorized calculation of time-differential properties for all tracked structures.
     Safely handles both native MetricArrays and HDF5-loaded numpy arrays.
+
+    Args:
+        dataset (StructureDataset): Tracked dataset to be extended in place.
+        only_keys (list, optional): Restrict the calculation to the listed
+            differential keys. All the other keys (including the expansion
+            fractions) are left untouched, which makes it possible to add a
+            single missing key to an already calculated dataset without
+            overwriting the other differential parameters. Defaults to None,
+            i.e. every key is calculated.
     """
     import numpy as np
     from flap_nstx.tools import MetricArray  # Ensure this is imported if not globally available
@@ -427,7 +436,13 @@ def calculate_differential_structure_keys(dataset):
         'Velocity poloidal position fit': 'Position poloidal fit',
         'Angular velocity angle fit': 'Angle fit',
         'Elongation fit diff': 'Elongation fit',
+        'Size radial fit diff': 'Size radial fit',
+        'Size poloidal fit diff': 'Size poloidal fit',
     }
+
+    if only_keys is not None:
+        diff_map = {key: reg_key for key, reg_key in diff_map.items()
+                    if key in only_keys}
 
     for struct in dataset.tracked_structures:
         if not struct or len(struct.time) < 2:
@@ -471,7 +486,11 @@ def calculate_differential_structure_keys(dataset):
                 differential_parameters[diff_key] = rate
 
         # 2. Calculate Expansion Fractions (Area ratios)
-        if 'Area' in regular_parameters:
+        calc_expansion = (only_keys is None or
+                          'Expansion fraction area' in only_keys or
+                          'Expansion fraction axes fit' in only_keys)
+
+        if calc_expansion and 'Area' in regular_parameters:
             area_obj = regular_parameters['Area']
             area_val = area_obj.value if hasattr(area_obj, 'value') else area_obj
             res_val = (area_val[1:] / area_val[:-1]) ** 0.5
@@ -483,7 +502,9 @@ def calculate_differential_structure_keys(dataset):
                               unit='-')
             differential_parameters['Expansion fraction area'] = res
             
-        if 'Axes length minor fit' in regular_parameters and 'Axes length major fit' in regular_parameters:
+        if (calc_expansion and
+            'Axes length minor fit' in regular_parameters and
+            'Axes length major fit' in regular_parameters):
             minor_obj = regular_parameters['Axes length minor fit']
             minor_val = minor_obj.value if hasattr(minor_obj, 'value') else minor_obj
             
@@ -572,7 +593,7 @@ def calculate_flux_structure_keys(dataset, exp_id=None, time=None,
                                                      dict_label='Lifetime',
                                                      plot_label='$t_{life}$',
                                                      unit='s')
-
+        
         # 2. Flux coordinates of the structure centroid
         if ('Centroid radial' not in regular_parameters or
             'Centroid poloidal' not in regular_parameters):
@@ -694,6 +715,8 @@ def calculate_differential_structure_keys_old(dataset):
         'Velocity poloidal position fit': 'Position poloidal fit',
         'Angular velocity angle fit': 'Angle fit',
         'Elongation fit diff': 'Elongation fit',
+        'Size radial fit diff': 'Size radial fit',
+        'Size poloidal fit diff': 'Size poloidal fit',
     }
 
     for struct in dataset.tracked_structures:
@@ -761,7 +784,11 @@ def correct_structure_angle(structure_1, structure_2):
             v2 = structure_2.regular_parameters[key]
             
             if not (np.isnan(v1) or np.isnan(v2)):
-                corrected = fringe_jump_correction(np.asarray([v1, v2]), tolerance=0.5)
+                # tolerance=0.2 means only the jumps above 0.8*pi are corrected.
+                # A looser tolerance would correct the physical fast rotations
+                # of the structures as well, since only two samples are seen
+                # here a real rotation cannot be told apart from a branch jump.
+                corrected = fringe_jump_correction(np.asarray([v1, v2]), tolerance=0.2)
                 
                 # Directly update the raw float inside the dictionary!
                 structure_2.regular_parameters[key] = corrected[1]

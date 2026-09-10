@@ -9,6 +9,7 @@ from .tools import calculate_nstx_gpi_norm_coeff, calculate_nstx_gpi_reference,f
 from .tools import make_plot_cursor_format, signal_windowed_avg_err, kmeans, kmeanssample, cdist_sparse
 from .tools import randomsample, nearestcentres, Lqmetric, Kmeans, calculate_corr_acceptance_levels
 from .tools import plot_pearson_matrix, set_matplotlib_for_publication
+from .tools import place_subplot_labels
 from .tools import fringe_jump_correction, mutual_information, correlation
 from .tools import calculate_plasma_squareness, get_flux_coord
 from .tools import read_equilibrium_data, get_equilibrium_slice

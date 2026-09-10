@@ -302,7 +302,10 @@ class Polygon:
                 eigvalues, eigvectors = np.linalg.eig(mu)
                 eig_ind = np.argmax(eigvalues)
                 angle = np.arctan2(eigvectors[1, eig_ind], eigvectors[0, eig_ind])
-                return np.arcsin(np.sin(angle))
+                # The eigenvector sign is arbitrary, so the axis direction is pi
+                # periodic. It needs to be wrapped modularly, arcsin(sin(x))
+                # would mirror the angle instead of wrapping it.
+                return np.mod(angle + np.pi/2, np.pi) - np.pi/2
             except:
                 return np.nan
         return np.nan
@@ -551,6 +554,11 @@ class FitShape:
         M = np.linalg.solve(C, M)
 
         eigval, eigvec = np.linalg.eig(M)
+        # np.linalg.eig returns complex results for the non symmetric M even
+        # when the conic coefficients are real. The negligible imaginary part
+        # is dropped here, otherwise it propagates into every fitted parameter.
+        if np.iscomplexobj(eigvec):
+            eigvec = np.real(eigvec)
         con = 4 * eigvec[0] * eigvec[2] - eigvec[1]**2
         ak = eigvec[:, con > 0]
 
@@ -630,16 +638,16 @@ class FitShape:
         ]
 
         popt, _ = curve_fit(self.gaussian2D_fit_function, xdata, data, p0=initial_guess)
-        popt[5] = np.arcsin(np.sin(popt[5]))
+        popt[5] = np.mod(popt[5] + np.pi/2, np.pi) - np.pi/2
         self.popt = popt
         
         theta = self.popt[5]
         a, b = np.abs(np.array([self.popt[3], self.popt[4]]) * self._fwhm_to_sigma)
 
         if a < b:
-            self._axes_length, self._angle = np.array([a, b]), np.arcsin(np.sin(theta))
+            self._axes_length, self._angle = np.array([a, b]), np.mod(theta + np.pi/2, np.pi) - np.pi/2
         else:
-            self._axes_length, self._angle = np.array([b, a]), np.arcsin(np.sin(theta - np.pi/2))
+            self._axes_length, self._angle = np.array([b, a]), np.mod(theta, np.pi) - np.pi/2
         self._center = np.array([self.popt[1], self.popt[2]])
     
     @staticmethod

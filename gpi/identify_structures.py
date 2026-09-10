@@ -405,22 +405,30 @@ def validate_structure(struct, x_coord, y_coord, elongation_threshold,
         return False
 
     # 2. Elongation & Angle Wrapping Check
-    if struct.fit_elongation < elongation_threshold:
+    # The elongation is calculated from the ellipse axes and not from the
+    # axis aligned projected sizes. The projected sizes are equal for any
+    # structure tilted by +-pi/4 no matter how elongated it actually is, which
+    # would remove the angle of every structure around +-pi/4.
+    axes_length = struct.fit_axes_length
+    if np.any(np.isnan(axes_length)) or np.sum(axes_length) == 0:
+        axis_elongation = np.nan
+    else:
+        axis_elongation = np.abs(axes_length[0] - axes_length[1]) / np.sum(axes_length)
+
+    if np.isnan(axis_elongation) or axis_elongation < elongation_threshold:
         # If it's too circular, neutralize the angle
         struct._angle = np.nan 
     else:
-        # BUG FIX: Shift the angle so 0 radians is straight up (vertical)
-        # This completely eliminates the +pi/2 to -pi/2 wrapping jump!
+        # The fitted angles are pi periodic, they are wrapped onto a single
+        # branch without shifting them.
         if not np.isnan(struct._angle):
-            shifted_angle = struct._angle - (np.pi / 2)
-            struct._angle = (shifted_angle + np.pi/2) % np.pi - (np.pi/2)
+            struct._angle = np.mod(struct._angle + np.pi/2, np.pi) - np.pi/2
             
         # Also fix Angle ALI if the physics engine calculated it
         if 'Angle ALI' in struct.regular_parameters:
             ali = struct.regular_parameters['Angle ALI']
             if not np.isnan(ali):
-                shifted_ali = ali - (np.pi / 2)
-                struct.regular_parameters['Angle ALI'] = (shifted_ali + np.pi/2) % np.pi - (np.pi/2)
+                struct.regular_parameters['Angle ALI'] = np.mod(ali + np.pi/2, np.pi) - np.pi/2
                 
     # Sync the dictionary so downstream trackers see the modified angles!
     struct.update_regular_parameters()

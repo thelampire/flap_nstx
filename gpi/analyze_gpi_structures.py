@@ -26,6 +26,7 @@ from flap_nstx.gpi import (normalize_gpi,
                            calculate_flux_structure_keys,
                            _remove_orphans)
 from flap_nstx.tools import detrend_multidim, set_matplotlib_for_publication
+from flap_nstx.tools import place_subplot_labels
 from flap_nstx.tools import StructureDataset
 
 import flap_mdsplus
@@ -780,33 +781,33 @@ def analyze_gpi_structures(exp_id=None,                          #Shot number
     if return_results:
         return tracked_dataset
 
-def _fix_structure_angles(frame_properties):
+# def _fix_structure_angles(frame_properties):
 
-    """
-    Normalizes structure angles and recalculates the Angle of Least Inertia (ALI).
+#     """
+#     Normalizes structure angles and recalculates the Angle of Least Inertia (ALI).
 
     
 
-    This internal utility iterates through all structures in the provided frames. 
-    It normalizes the primary 'Angle' to strictly fall within the range [-pi, pi].
+#     This internal utility iterates through all structures in the provided frames. 
+#     It normalizes the primary 'Angle' to strictly fall within the range [-pi, pi].
 
-    Args:
-        frame_properties (dict): A dictionary containing frame-by-frame tracked 
-            structure data. Expected to contain:
-            - 'structures': A list of lists representing frames and their structures. 
-              Each structure must be a dictionary with keys: 'Angle', 'Center of gravity', 
-              'Data' (intensity), 'X coord', and 'Y coord'.
+#     Args:
+#         frame_properties (dict): A dictionary containing frame-by-frame tracked 
+#             structure data. Expected to contain:
+#             - 'structures': A list of lists representing frames and their structures. 
+#               Each structure must be a dictionary with keys: 'Angle', 'Center of gravity', 
+#               'Data' (intensity), 'X coord', and 'Y coord'.
 
-    Returns:
-        dict: The updated `frame_properties` dictionary with corrected 'Angle' and 
-    """    
+#     Returns:
+#         dict: The updated `frame_properties` dictionary with corrected 'Angle' and 
+#     """    
 
-    for i_frames, frame_structs in enumerate(frame_properties['structures']):
-        if frame_structs:
-            for struct in frame_structs:
-                struct['Regular parameters']['Angle fit'] = (struct['Regular parameters']['Angle fit'] + np.pi) % (2 * np.pi) - np.pi
+#     for i_frames, frame_structs in enumerate(frame_properties['structures']):
+#         if frame_structs:
+#             for struct in frame_structs:
+#                 struct['Regular parameters']['Angle fit'] = (struct['Regular parameters']['Angle fit'] + np.pi) % (2 * np.pi) - np.pi
 
-    return frame_properties
+#     return frame_properties
 
 
 
@@ -1216,12 +1217,48 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
         keys_to_plot=list(options['keys_to_plot'].keys())
         options_with_labels=True
     nplot=len(keys_to_plot)
-    
     if options.get('subplot_label_location'):
         subplot_label_location=options.get('subplot_label_location')
     else:
         subplot_label_location=[-0.1,0.9]
+    # The vertical position of the labels is a fraction of the axes height,
+    # the horizontal one is calculated from the rendered axes decorations.
+    # subplot_label_y=options.get('subplot_label_y', 1.0)
     
+    def _set_pi_ticks(ax, axis_range, step=None):
+        """Label the y axis with multiples of pi instead of plain numbers."""
+        from fractions import Fraction
+
+        def _pi_label(value):
+            frac = Fraction(value/np.pi).limit_denominator(24)
+            if frac == 0:
+                return '0'
+            num, den = frac.numerator, frac.denominator
+            sign = '-' if num < 0 else ''
+            num = abs(num)
+            numerator = r'\pi' if num == 1 else rf'{num}\pi'
+            # The inline form is used instead of \frac, the stacked fractions
+            # are too tall for a single column figure.
+            return rf'${sign}{numerator}$' if den == 1 else rf'${sign}{numerator}/{den}$'
+
+        if axis_range is None:
+            low, high = ax.get_ylim()
+        else:
+            low, high = axis_range
+
+        if step is None:
+            # Keep the number of the labels low, the panels are short.
+            for candidate in [np.pi/4, np.pi/2, np.pi, 2*np.pi]:
+                step = candidate
+                if (high - low)/step <= 4.001:
+                    break
+
+        first = np.ceil(low/step - 1e-9)
+        last = np.floor(high/step + 1e-9)
+        ticks = np.arange(first, last + 1) * step
+        ax.set_yticks(ticks)
+        ax.set_yticklabels([_pi_label(tick) for tick in ticks])
+
     for ind, key in enumerate(keys_to_plot):
         ax = axes[ind]
         
@@ -1235,9 +1272,10 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
         if metric_ref is None: continue
         if options_with_labels and options['keys_to_plot'][key].get('multiplier'):
             multiplier=options['keys_to_plot'][key].get('multiplier')
+            
         else:
             multiplier=1.0
-            
+        
         for ind_str, struct in enumerate(dataset.tracked_structures):
             if len(struct.time) > 0:
                 
@@ -1294,6 +1332,15 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
             ax.axhline(y=options['keys_to_plot'][key].get('hline_at'), color='red', linestyle='--')
             
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
+
+        # Angles are labelled in multiples of pi instead of plain numbers
+        if options_with_labels:
+            key_options = options['keys_to_plot'][key]
+            pi_ticks = key_options.get('pi_ticks', key in ['Angle fit', 'Angle ALI'])
+            if pi_ticks:
+                _set_pi_ticks(ax, key_options.get('range'),
+                              step=key_options.get('pi_tick_step'))
+
         if ind < nplot-1:
             ax.xaxis.label.set_visible(False)
             ax.set_xticklabels([])
@@ -1304,8 +1351,8 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
         if options.get('hide_y_labels'):
             ax.yaxis.label.set_visible(False)
             ax.set_yticklabels([])
-        
         ax.text(subplot_label_location[0], subplot_label_location[1], f"({subplot_labels[ind]})", transform=ax.transAxes, size=8)
+
         ax.set_xlabel('Time [ms]', fontsize=8)
         
         if plot_time_range is not None:
@@ -1318,7 +1365,14 @@ def _plot_example_results(exp_id=None, time_range=None, plot_time_range=None,
         
         fig.tight_layout(pad=0.1)
         if save_data_for_publication: file1.close()
-        
+
+    # The labels are placed after the panels are ready, this way they can be
+    # positioned next to the actual extent of the axes decorations.
+    # place_subplot_labels(axes[0:nplot],
+    #                      labels=subplot_labels[0:nplot],
+    #                      fontsize=8,
+    #                      y=subplot_label_y)
+
     if pdf:
        pdf_pages.savefig()
        pdf_pages.close()

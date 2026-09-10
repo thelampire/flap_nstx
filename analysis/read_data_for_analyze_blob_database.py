@@ -41,6 +41,38 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 fig_dir='/plots'
 
 
+def blob_data_to_array(shot_entry):
+    """Convert a single {'shot':..., 'data':...} entry into a 1D array.
+
+    Shots without any valid structure are stored with a scalar np.nan data
+    field, which would break np.concatenate, so they are promoted to a
+    single element array here.
+    """
+    data = shot_entry['data'] if isinstance(shot_entry, dict) else shot_entry
+
+    return np.atleast_1d(np.asarray(data))
+
+
+def flatten_blob_data(shot_data_list):
+    """Flatten a shot-by-shot blob data list into a single 1D array."""
+    if not isinstance(shot_data_list, (list, tuple)) or len(shot_data_list) == 0:
+        return np.atleast_1d(np.asarray(shot_data_list, dtype=float))
+    if not isinstance(shot_data_list[0], dict):
+        return np.atleast_1d(np.asarray(shot_data_list))
+
+    return np.concatenate([blob_data_to_array(shot_entry) for shot_entry in shot_data_list])
+
+
+def blob_data_shot_lengths(shot_data_list):
+    """Number of blobs flatten_blob_data() returns for each shot."""
+    if not isinstance(shot_data_list, (list, tuple)) or len(shot_data_list) == 0:
+        return []
+    if not isinstance(shot_data_list[0], dict):
+        return [1] * len(shot_data_list)
+
+    return [len(blob_data_to_array(shot_entry)) for shot_entry in shot_data_list]
+
+
 def read_all_blob_data(time_range_around_peak=[-5e-3, 15e-3], 
                        nocalc=False,
                        recalc_tracking=False,

@@ -22,6 +22,7 @@ wd=flap.config.get_all_section('Module NSTX_GPI')['Working directory']
 import matplotlib.pyplot as plt
 
 import numpy as np
+import string
 
 from scipy.signal import find_peaks_cwt
 from scipy.spatial.distance import cdist  # $scipy/spatial/distance.py
@@ -1056,6 +1057,189 @@ def set_matplotlib_for_publication(labelsize=8.,
     plt.rcParams['ytick.minor.width'] = linewidth/2
     plt.rcParams['ytick.minor.size'] = minor_ticksize
     plt.rcParams['legend.fontsize'] = labelsize
+
+def place_subplot_labels(axes,
+                         labels=None,
+                         label_format='({})',
+                         fontsize=8.,
+                         pad_points=3.,
+                         y=1.0,
+                         va='top',
+                         make_room=True,
+                         n_iteration=5,
+                         **text_kwargs):
+    """Place the (a), (b), ... subplot labels next to the axes dynamically.
+
+    The horizontal position of the labels is calculated from the actual extent
+    of the axes decorations (tick labels, axis labels), therefore the labels
+    never overlap with the content of the plots regardless of how wide the
+    tick labels are. All the labels of a call are put into the same column
+    (the one belonging to the widest axes decoration) and each of them sits at
+    the same relative height of its own axes, hence the labels are equidistant
+    for equidistant subplots.
+
+    The placement is repeated before every rendering of the figure, so a
+    tight_layout() call or a resize done after this function cannot break it.
+
+    Parameters:
+        axes (list): the axes the labels belong to, in reading order.
+        labels (list): the label texts, e.g. ['a','b']. Defaults to a,b,c,...
+        label_format (str): format string applied to each label text.
+        fontsize (float): font size of the labels.
+        pad_points (float): gap between the axes decorations and the labels.
+        y (float): vertical position of the labels in axes coordinates.
+        va (str): vertical alignment of the labels.
+        make_room (bool): if True, the subplot parameters are adjusted so the
+            labels fit next to the axes. Call the function after the final
+            tight_layout() call, that would overwrite the adjustment.
+        n_iteration (int): maximum number of iterations for making room.
+
+    Return:
+        The list of the created matplotlib Text objects.
+    """
+    axes = [ax for ax in np.asarray(axes).flatten() if ax is not None]
+    if len(axes) == 0:
+        return []
+
+    if labels is None:
+        labels = [string.ascii_lowercase[ind % 26] for ind in range(len(axes))]
+    if len(labels) < len(axes):
+        raise ValueError('Not enough subplot labels for the number of axes.')
+
+    # Axes sitting in different columns of the grid need their own label
+    # column, otherwise every label would be placed next to the leftmost
+    # axes and would overlap the panels of the columns on the right.
+    columns = {}
+    for ind, ax in enumerate(axes):
+        columns.setdefault(round(ax.get_position().x0, 6), []).append(ind)
+
+    if len(columns) > 1:
+        texts = [None]*len(axes)
+        for x_column in sorted(columns):
+            indices = columns[x_column]
+            column_texts = place_subplot_labels([axes[ind] for ind in indices],
+                                                labels=[labels[ind] for ind in indices],
+                                                label_format=label_format,
+                                                fontsize=fontsize,
+                                                pad_points=pad_points,
+                                                y=y,
+                                                va=va,
+                                                make_room=make_room,
+                                                n_iteration=n_iteration,
+                                                **text_kwargs)
+            for ind, text in zip(indices, column_texts):
+                texts[ind] = text
+        return texts
+
+    fig = axes[0].figure
+
+    texts = []
+    for label in labels[0:len(axes)]:
+        text = fig.text(0., 0., label_format.format(label),
+                        size=fontsize,
+                        ha='right',
+                        va=va,
+                        **text_kwargs)
+        # The labels are excluded from the layout calculations, otherwise they
+        # would push themselves further and further away from the axes.
+        text.set_in_layout(False)
+        texts.append(text)
+
+    def _label_column(renderer):
+        """Left edge (figure coords) of the label column and its width."""
+        inverse = fig.transFigure.inverted()
+        x_axes = min(ax.get_tightbbox(renderer).transformed(inverse).x0
+                     for ax in axes)
+        pad = pad_points/72./fig.get_figwidth()
+        width = max(text.get_window_extent(renderer).transformed(inverse).width
+                    for text in texts)
+        return x_axes - pad, width
+
+    def _free_space(renderer, x_label):
+        """Free space on the left of the label column in figure coordinates.
+
+        The space is either limited by the edge of the figure or by the
+        decorations of the axes sitting in a column left of the labelled ones.
+        """
+        inverse = fig.transFigure.inverted()
+        x_group = min(ax.get_position().x0 for ax in axes)
+        x_left = 0.
+        for other in fig.axes:
+            if other in axes or other.get_position().x1 > x_group:
+                continue
+            x_left = max(x_left,
+                         other.get_tightbbox(renderer).transformed(inverse).x1)
+        return x_label - x_left
+
+    def _make_room(renderer):
+        """Rearrange the subplots so the label column fits next to the axes.
+
+        The figure margin (leftmost group of axes) or the gap between the
+        columns (any other group) is widened by the part of the labels which
+        doesn't fit into the free space. Both keep the axes equally sized.
+        """
+        for _ in range(n_iteration):
+            x_label, width = _label_column(renderer)
+            missing = width - _free_space(renderer, x_label)
+            if missing < 1e-3:
+                break
+            subplotpars = fig.subplotpars
+            if (min(ax.get_position().x0 for ax in axes) ==
+                    min(other.get_position().x0 for other in fig.axes)):
+                fig.subplots_adjust(left=subplotpars.left + missing)
+            else:
+                # wspace is measured in units of the average axes width.
+                average_width = np.mean([other.get_position().width
+                                         for other in fig.axes])
+                fig.subplots_adjust(wspace=subplotpars.wspace +
+                                    missing/average_width)
+            renderer = _get_figure_renderer(fig)
+        return renderer
+
+    def _reposition(renderer):
+        """Put every label into the same column, next to its own axes."""
+        x_label, _ = _label_column(renderer)
+        for ax, text in zip(axes, texts):
+            position = ax.get_position()
+            text.set_position((x_label, position.y0 + y*position.height))
+
+    def _place(renderer):
+        """Make room for the labels and put them next to their axes."""
+        if make_room:
+            renderer = _make_room(renderer)
+        _reposition(renderer)
+
+    _place(_get_figure_renderer(fig))
+
+    # The placement is repeated right before every rendering, this way a
+    # tight_layout() call, a resize of the figure or a moved axes done after
+    # this function cannot break the alignment. The placement is based on the
+    # rendered extents, so repeating it doesn't move anything once it's good.
+    placers = getattr(fig, '_subplot_label_placers', None)
+    if placers is None:
+        placers = []
+        fig._subplot_label_placers = placers
+        original_draw = fig.draw
+
+        def draw(draw_renderer, *args, **kwargs):
+            for place in placers:
+                place(draw_renderer)
+            return original_draw(draw_renderer, *args, **kwargs)
+
+        fig.draw = draw
+    placers.append(_place)
+
+    return texts
+
+
+def _get_figure_renderer(fig):
+    """Return a renderer for the figure, working for every backend."""
+    try:
+        return fig.canvas.get_renderer()
+    except AttributeError:
+        from matplotlib.backend_bases import _get_renderer
+        return _get_renderer(fig)
+
 
 def fringe_jump_correction(data,                                                #Data input
                            fringe_size=np.pi,                                 #Size of the jumps need to be corrected

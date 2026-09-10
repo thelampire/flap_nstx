@@ -382,9 +382,11 @@ class Polygon:
                 eig_ind=np.argmax(eigvalues)
                 
                 
-                angle=np.arctan2(eigvectors[1,eig_ind]/
+                angle=np.arctan2(eigvectors[1,eig_ind],
                                  eigvectors[0,eig_ind])
-                return np.arcsin(np.sin(angle))
+                # The eigenvector sign is arbitrary, so the axis direction is pi
+                # periodic and needs to be wrapped modularly.
+                return np.mod(angle + np.pi/2, np.pi) - np.pi/2
             
             #   return np.arctan2(eigvectors[1,eig_ind],
             #                     eigvectors[0,eig_ind])

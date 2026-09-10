@@ -264,10 +264,10 @@ class FitEllipse:
 
         if a < b:
             self._axes_length=np.asarray([a,b])
-            self._angle=np.arcsin(np.sin(theta))
+            self._angle=np.mod(theta + np.pi/2, np.pi) - np.pi/2
         else:
             self._axes_length=np.asarray([b,a])
-            self._angle=np.arcsin(np.sin(theta))+np.pi/2
+            self._angle=np.mod(theta, np.pi) - np.pi/2
 
     def _calculate_angle_linalg_v0(self):
         p=self._parameters
@@ -325,7 +325,7 @@ class FitGaussian:
 
         try:
             popt, _ = curve_fit(gaussian2D_fit_function, xdata, data, p0=initial_guess)
-            popt[5] = np.arcsin(np.sin(popt[5]))
+            popt[5] = np.mod(popt[5] + np.pi/2, np.pi) - np.pi/2
             self.popt = popt
         except Exception as e:
             if self._verbose: print(f'Gaussian fitting failed: {e}')
@@ -337,10 +337,10 @@ class FitGaussian:
 
         if a < b:
             self._axes_length = np.array([a, b])
-            self._angle = np.arcsin(np.sin(theta))
+            self._angle = np.mod(theta + np.pi/2, np.pi) - np.pi/2
         else:
             self._axes_length = np.array([b, a])
-            self._angle = np.arcsin(np.sin(theta - np.pi/2))
+            self._angle = np.mod(theta, np.pi) - np.pi/2
 
         self._center = np.array([self.popt[1], self.popt[2]])
 
